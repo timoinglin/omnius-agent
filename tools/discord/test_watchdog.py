@@ -3501,6 +3501,33 @@ try:
           "[switch]$NoWinget" in _inst0
           and "(Test-Cmd 'winget') -and (-not $NoWinget)" in _inst0)
 
+    # == a direct install must not claim success it did not have ==============
+    # 2026-08-15, first real run of these routes: Move-Item failed with "Could
+    # not find a part of the path" and the very next line said "[OK] Node
+    # v24.19.0 installed". Two causes, both fixed here. The script runs with
+    # ErrorActionPreference 'Continue', so a failing cmdlet prints red and
+    # CARRIES ON - the try/catch around it was decorative until each installer
+    # set 'Stop' for itself.
+    for _fn in ("Install-NodeDirect", "Install-FfmpegDirect"):
+        _body = _inst0[_inst0.index(f"function {_fn}"):]
+        _body = _body[:_body.index("\nfunction ", 10)]
+        check(f"{_fn}: failures reach the catch instead of scrolling past",
+              "$ErrorActionPreference = 'Stop'" in _body)
+        check(f"...and it verifies the binary before reporting success",
+              "throw" in _body and _body.index("Test-Path") < _body.rindex("Write-Status 'OK'"))
+    # The other half: Move-Item does not create intermediate directories, and
+    # Node runs BEFORE the ffmpeg step that used to create the parent - so it
+    # failed on every machine where ffmpeg had not been installed first.
+    check("a portable tool creates its own parent directory",
+          "New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent)" in _inst0)
+    # gyan.dev serves from one host and crawled at 7 MB of 106 in a VM; the
+    # identical zip sits behind GitHub's CDN, which is where winget gets it.
+    check("ffmpeg comes from the CDN copy, with the direct site as fallback",
+          "GyanD/codexffmpeg/releases/latest" in _inst0
+          and "gyan.dev/ffmpeg/builds" in _inst0)
+    check("...and takes the essentials build, not the 240 MB full one",
+          "essentials_build" in _inst0)
+
     # == a SYSTEM shell has no user profile ==================================
     # 2026-08-15, on a real machine: the Claude CLI installer died with
     # `EPERM: mkdir 'C:\WINDOWS\system32\config\systemprofile\.cache'`. That

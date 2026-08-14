@@ -340,43 +340,79 @@ function Install-NodeDirect {
   $zip = Get-Download "https://nodejs.org/dist/$($lts.version)/$name.zip" "$name.zip"
   if (-not $zip) { return }
   $dest = Join-Path $env:LOCALAPPDATA 'Omnius\node'
+  $tmp = Join-Path $env:TEMP ('node-unpack-' + [guid]::NewGuid().ToString('N').Substring(0,8))
   try {
+    # Function-scoped, and it is what makes the catch below reachable: this
+    # script runs with ErrorActionPreference 'Continue', so a failing cmdlet
+    # prints red and CARRIES ON. That is how a failed Move-Item was followed by
+    # "[OK] Node installed" in the same breath (2026-08-15).
+    $ErrorActionPreference = 'Stop'
     Write-Status '..' 'unpacking Node'
-    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue }
-    $tmp = Join-Path $env:TEMP ('node-unpack-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+    # Move-Item does not create intermediate directories, so the FIRST tool to
+    # land in %LOCALAPPDATA%\Omnius has to make it. Node runs before ffmpeg,
+    # which is the one that used to create it - so on a machine where ffmpeg
+    # had not run yet, this failed every time and nowhere else.
+    New-Item -ItemType Directory -Force -Path (Split-Path $dest -Parent) | Out-Null
     Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
     Move-Item (Join-Path $tmp $name) $dest -Force
+    if (-not (Test-Path (Join-Path $dest 'node.exe'))) { throw "no node.exe under $dest" }
     [void](Add-ToUserPath $dest ' (Node, installed by Omnius)')
     Write-Status 'OK' ("Node {0} installed to {1}" -f $lts.version, $dest)
   } catch {
-    Write-Status 'X' ("could not unpack Node: {0}" -f $_.Exception.Message)
+    Write-Status 'X' ("could not install Node: {0}" -f $_.Exception.Message)
   } finally {
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 
+function Get-FfmpegSource {
+  # SAME BUILD, FASTER HOST. gyan.dev is the site ffmpeg.org links to, but it
+  # serves from one machine: in a VM it crawled at 7 MB of 106 while the rest of
+  # the install waited (2026-08-15). The identical zip is published as a GitHub
+  # release by the same builder, behind GitHub's CDN - which is where winget's
+  # own manifest points, and why winget's ffmpeg felt instant on the same day.
+  #
+  # "essentials" rather than "full": it carries ffmpeg, ffprobe and ffplay,
+  # which is everything whisper, /watch and the transcribe desk call. The full
+  # build is 240 MB for codecs nothing here asks for.
+  try {
+    $rel = Invoke-RestMethod 'https://api.github.com/repos/GyanD/codexffmpeg/releases/latest' `
+                             -UseBasicParsing -TimeoutSec 60 -Headers @{ 'User-Agent' = 'omnius-install' }
+    $a = $rel.assets | Where-Object { $_.name -match 'essentials_build\.zip$' } | Select-Object -First 1
+    if ($a) { return @{ Url = $a.browser_download_url; Name = $a.name } }
+  } catch { }
+  # The original URL stays as the fallback: no API, no rate limit, and always
+  # the current release. Slower, but it works when GitHub's API does not.
+  return @{ Url  = 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip'
+            Name = 'ffmpeg-release-essentials.zip' }
+}
+
 function Install-FfmpegDirect {
   # ffmpeg ships no installer: it is a zip of static binaries, which is why this
-  # one needs no admin and no package manager at all. gyan.dev is the Windows
-  # build ffmpeg.org itself links to, and the URL is stable (always the current
-  # release), so there is no version to discover.
-  $zip = Get-Download 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' 'ffmpeg-release-essentials.zip'
+  # one needs no admin and no package manager at all.
+  $src = Get-FfmpegSource
+  $zip = Get-Download $src.Url $src.Name
   if (-not $zip) { return }
   $tmp = Join-Path $env:TEMP ('ffmpeg-unpack-' + [guid]::NewGuid().ToString('N').Substring(0,8))
   try {
+    $ErrorActionPreference = 'Stop'          # see Install-NodeDirect
     Write-Status '..' 'unpacking ffmpeg'
     Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
     $bin = Get-ChildItem -Path $tmp -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
-    if (-not $bin) { Write-Status 'X' 'no ffmpeg.exe inside the archive'; return }
+    if (-not $bin) { throw 'no ffmpeg.exe inside the archive' }
     New-Item -ItemType Directory -Force -Path $script:OmniusBin | Out-Null
     # ffprobe travels with it: whisper and the transcribe desk both call it, and
     # an ffmpeg without ffprobe fails later and confusingly.
     Copy-Item (Join-Path $bin.DirectoryName '*.exe') $script:OmniusBin -Force
+    if (-not (Test-Path (Join-Path $script:OmniusBin 'ffmpeg.exe'))) {
+      throw "nothing landed in $script:OmniusBin"
+    }
     [void](Add-ToUserPath $script:OmniusBin ' (portable tools Omnius installed)')
     Write-Status 'OK' ("ffmpeg + ffprobe installed to {0}" -f $script:OmniusBin)
   } catch {
-    Write-Status 'X' ("could not unpack ffmpeg: {0}" -f $_.Exception.Message)
+    Write-Status 'X' ("could not install ffmpeg: {0}" -f $_.Exception.Message)
   } finally {
     Remove-Item $zip -Force -ErrorAction SilentlyContinue
     Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
