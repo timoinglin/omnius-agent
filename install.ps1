@@ -419,6 +419,69 @@ function Install-FfmpegDirect {
   }
 }
 
+function Test-PyImport([string]$module) {
+  # -> $null when the import works, otherwise the ERROR TEXT.
+  #
+  # The old check was `python -c "import x" 2>nul`, which decided pass/fail
+  # correctly and threw away the one line that explains a failure. On a fresh
+  # Windows 10 VM (2026-08-15) pymupdf and faster-whisper both reported FAILED
+  # with nothing above them - pip had actually succeeded, and the packages
+  # could not LOAD. Never hide the reason for a failure you are about to report.
+  $out = & cmd /c "python -c ""import $module"" 2>&1"
+  if ($LASTEXITCODE -eq 0) { return $null }
+  return (($out | Out-String).Trim())
+}
+
+function Install-VcRedist {
+  # The Microsoft Visual C++ 2015-2022 runtime. A bare Windows does not have it,
+  # and Python ships only vcruntime140.dll - not vcruntime140_1.dll, which every
+  # C++ extension built with VS2019 or later needs. The symptom is exactly what
+  # that VM showed: pip installs fine, then `import` dies with "DLL load failed
+  # while importing ...". It hits the two packages here that ARE C++ - pymupdf
+  # and ctranslate2 (under faster-whisper) - and leaves the pure-Python ones
+  # working, which is why the failure looks so arbitrary.
+  #
+  # aka.ms/vs/17/release is Microsoft's own permanent link to the current build.
+  $exe = Get-Download 'https://aka.ms/vs/17/release/vc_redist.x64.exe' 'vc_redist.x64.exe'
+  if (-not $exe) { return $false }
+  Write-Status '..' 'installing the Microsoft Visual C++ runtime (Windows will ask for administrator rights)'
+  try {
+    $p = Start-Process -FilePath $exe -PassThru -ArgumentList '/quiet','/norestart'
+    $code = Wait-Installer $p 'VC++ runtime'
+    # 3010 = success, reboot advised. Not an error, and not worth a reboot here:
+    # the DLLs are in place the moment the installer finishes.
+    if ($null -ne $code -and $code -notin 0, 3010) {
+      Write-Status '!' ("the VC++ runtime installer exited with code {0}" -f $code)
+      return $false
+    }
+    return $true
+  } catch {
+    Write-Status 'X' ("could not install the VC++ runtime: {0}" -f $_.Exception.Message)
+    return $false
+  } finally { Remove-Item $exe -Force -ErrorAction SilentlyContinue }
+}
+
+function Resolve-PyImport([string]$module, [string]$label) {
+  # Import, and if it fails SAY WHY - then fix the one cause we can fix.
+  # -> $true if the module ends up importable.
+  $err = Test-PyImport $module
+  if (-not $err) { return $true }
+  $err -split "`n" | Select-Object -Last 3 | ForEach-Object {
+    if ($_.Trim()) { Write-Host ("       {0}" -f $_.Trim()) }
+  }
+  if ($err -match 'DLL load failed' -and -not $CheckOnly) {
+    Write-Status 'i' ("{0} installed, but Windows is missing the C++ runtime it needs" -f $label)
+    if (Ask-YesNo 'install the Microsoft Visual C++ runtime now (25 MB, from microsoft.com)') {
+      if (Install-VcRedist) {
+        $err = Test-PyImport $module
+        if (-not $err) { return $true }
+        Write-Status '!' 'still not loading - the output above is what it says now'
+      }
+    }
+  }
+  return $false
+}
+
 function Ask-YesNo([string]$question, [switch]$DefaultNo) {
   if ($CheckOnly) { return $false }
   if ($DefaultNo) {
@@ -779,16 +842,16 @@ foreach ($dep in @(
     # reader. It also renders pages to images, which is the no-key way to put
     # a scan in front of the agent's eyes.
     @{ Name = 'pymupdf';  Import = 'fitz';   Why = 'reading PDFs (invoices, docs)' })) {
-  cmd /c "python -c ""import $($dep.Import)"" 2>nul" | Out-Null
-  if ($LASTEXITCODE -eq 0) {
+  # One way to test an import, everywhere: a PRESENCE probe simply ignores
+  # the error text that a FAILURE report needs (Test-PyImport).
+  if (-not (Test-PyImport $dep.Import)) {
     Write-Status 'OK' "$($dep.Name) already installed"
   } elseif ($CheckOnly) {
     Write-Status '!' "$($dep.Name) missing - needed for $($dep.Why)"
   } else {
     Write-Status '..' "pip install $($dep.Name)"
     cmd /c "python -m pip install --quiet $($dep.Name)"
-    cmd /c "python -c ""import $($dep.Import)"" 2>nul" | Out-Null
-    if ($LASTEXITCODE -eq 0) { Write-Status 'OK' "$($dep.Name) installed" }
+    if (Resolve-PyImport $dep.Import $dep.Name) { Write-Status 'OK' "$($dep.Name) installed" }
     else { Write-Status 'X' "$($dep.Name) FAILED - $($dep.Why) will not work" }
   }
 }
@@ -837,24 +900,26 @@ if ($CheckOnly) {
 }
 
 # whisper: local speech-to-text (default engine: faster-whisper)
-cmd /c "python -c ""import faster_whisper"" 2>nul" | Out-Null
-if ($LASTEXITCODE -eq 0) {
+if (-not (Test-PyImport 'faster_whisper')) {
   Write-Status 'OK' 'faster-whisper already installed'
 } elseif ($CheckOnly) {
   Write-Status '!' 'faster-whisper not installed yet'
 } else {
   Write-Status '..' 'pip install faster-whisper'
   cmd /c "python -m pip install --quiet faster-whisper"
-  cmd /c "python -c ""import faster_whisper"" 2>nul" | Out-Null
-  if ($LASTEXITCODE -eq 0) { Write-Status 'OK' 'faster-whisper installed' }
-  else { Write-Status 'X' 'faster-whisper install failed - audio transcription unavailable' }
+  # ctranslate2 rides under this one, and it is the C++ extension most likely to
+  # need the VC++ runtime - so this is usually where a bare Windows shows it.
+  if (Resolve-PyImport 'faster_whisper' 'faster-whisper') {
+    Write-Status 'OK' 'faster-whisper installed'
+  } else {
+    Write-Status 'X' 'faster-whisper install failed - audio transcription unavailable'
+  }
 }
 
 # whisper model pre-warm (best-effort): download once so the first voice note is fast.
 # The model cache is machine-local and does NOT travel in the zip.
 if (-not $CheckOnly) {
-  cmd /c "python -c ""import faster_whisper"" 2>nul" | Out-Null
-  if ($LASTEXITCODE -eq 0) {
+  if (-not (Test-PyImport 'faster_whisper')) {
     Write-Status '..' 'pre-warming whisper model (first time only, ~140MB)'
     cmd /c "python tools\whisper\prewarm.py" | Out-Null
     if ($LASTEXITCODE -eq 0) { Write-Status 'OK' 'whisper model cached' }
@@ -868,8 +933,7 @@ if (-not $CheckOnly) {
 # tethered connection should not silently pull a browser.
 # Deliberately NOT the tool for anything behind a login: that is the Claude
 # Chrome extension, which uses the real browser and its real sessions.
-cmd /c "python -c ""import playwright"" 2>nul" | Out-Null
-$havePw = ($LASTEXITCODE -eq 0)
+$havePw = (-not (Test-PyImport 'playwright'))
 if ($havePw) {
   Write-Status 'OK' 'playwright already installed'
 } elseif ($CheckOnly) {
@@ -877,8 +941,7 @@ if ($havePw) {
 } else {
   Write-Status '..' 'pip install playwright'
   cmd /c "python -m pip install --quiet playwright"
-  cmd /c "python -c ""import playwright"" 2>nul" | Out-Null
-  $havePw = ($LASTEXITCODE -eq 0)
+  $havePw = Resolve-PyImport 'playwright' 'playwright'
   if ($havePw) { Write-Status 'OK' 'playwright installed' }
   else { Write-Status 'X' 'playwright install failed - headless browsing unavailable' }
 }

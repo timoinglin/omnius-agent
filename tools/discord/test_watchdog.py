@@ -3528,6 +3528,33 @@ try:
     check("...and takes the essentials build, not the 240 MB full one",
           "essentials_build" in _inst0)
 
+    # == never report a failure whose reason you just threw away =============
+    # 2026-08-15, fresh Windows 10 VM: "pymupdf FAILED" and "faster-whisper
+    # install failed" with NOTHING above them. pip had succeeded - the packages
+    # could not LOAD - and the check that decided this ran the import with
+    # `2>nul`, discarding the one line that said why.
+    check("a failing import prints its error instead of discarding it",
+          '"import $module"" 2>&1' in _inst0 and "function Test-PyImport" in _inst0)
+    # Scoped to IMPORT probes: a silent `git clone` is fine, a silent import is
+    # what made two failures unexplainable. Presence probes go through the same
+    # helper and simply ignore the text it returns, so there is one way to ask.
+    _hidden = re.findall(r'python -c ""import [^"]*"" 2>nul', _inst0)
+    check("...and no import check still sends its stderr to nul",
+          not _hidden, f"{_hidden}")
+    # The cause, and the one part of it we can actually fix: C++ extensions
+    # (pymupdf, ctranslate2 under faster-whisper) need the MSVC runtime, which a
+    # bare Windows lacks - Python ships vcruntime140.dll but not
+    # vcruntime140_1.dll. Pure-Python packages install fine beside them, which
+    # is why the failure looks arbitrary.
+    check("a DLL-load failure offers the runtime that fixes it",
+          "DLL load failed" in _inst0 and "vc_redist.x64.exe" in _inst0)
+    check("...from Microsoft's own permanent link",
+          "aka.ms/vs/17/release/vc_redist.x64.exe" in _inst0)
+    check("...treating 3010 (reboot advised) as success, not failure",
+          "0, 3010" in _inst0)
+    check("...and re-testing the import afterwards rather than assuming",
+          "still not loading" in _inst0)
+
     # == a SYSTEM shell has no user profile ==================================
     # 2026-08-15, on a real machine: the Claude CLI installer died with
     # `EPERM: mkdir 'C:\WINDOWS\system32\config\systemprofile\.cache'`. That
