@@ -3418,6 +3418,13 @@ try:
     check("...including the py launcher, which otherwise waits on an elevation "
           "prompt it cannot show",
           "InstallLauncherAllUsers=0" in _inst0)
+    # The slowest step in the install, and most of it is dead weight here: the
+    # stdlib test suite, CHM docs, tkinter (nothing here draws a window), debug
+    # binaries. Every skipped file is one Defender does not scan on write.
+    check("...and skips the components nothing in this workspace uses",
+          all(f"Include_{k}=0" in _inst0 for k in ("test", "doc", "tcltk", "debug", "symbols")))
+    check("...while keeping pip and the dev headers a source build needs",
+          "Include_pip=1" in _inst0 and "Include_dev=1" in _inst0)
     check("...and it runs /passive, so there is a visible progress bar",
           "'/passive'" in _inst0)
     # Silence for minutes is indistinguishable from a hang. Both halves matter:

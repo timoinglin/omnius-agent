@@ -290,11 +290,21 @@ function Install-PythonDirect {
   # /passive rather than /quiet: it shows Python's own progress window, no
   # clicking required. This installer is run by a person at a keyboard, and a
   # visible bar beats a silent five minutes.
-  Write-Status '..' 'installing Python (per-user, no administrator rights needed)'
+  # The component list is trimmed because this is the slowest step of the whole
+  # install and most of what it copies is dead weight here: the stdlib test
+  # suite, the CHM docs, tkinter (nothing in this workspace draws a window - the
+  # notes app is HTTP), debug binaries and symbols. Measured cause, not a guess:
+  # in a Windows Sandbox every one of those thousands of small files is scanned
+  # on write, and "Installing Python 3.13.15 Executables" sat at two minutes.
+  # pip stays (obviously) and so does Include_dev - headers and libs are what a
+  # package needs when no wheel exists for it and it has to build.
+  Write-Status '..' 'installing Python (per-user, no administrator rights needed - a few minutes on a fresh machine)'
   try {
     $p = Start-Process -FilePath $exe -PassThru `
          -ArgumentList '/passive','InstallAllUsers=0','PrependPath=1', `
-                       'InstallLauncherAllUsers=0','Include_pip=1','Include_test=0'
+                       'InstallLauncherAllUsers=0','Include_pip=1','Include_dev=1', `
+                       'Include_test=0','Include_doc=0','Include_tcltk=0', `
+                       'Include_debug=0','Include_symbols=0'
     $code = Wait-Installer $p 'Python'
     if ($null -ne $code -and $code -ne 0) { Write-Status '!' ("the Python installer exited with code {0}" -f $code) }
   } catch { Write-Status 'X' ("could not run the Python installer: {0}" -f $_.Exception.Message) }
