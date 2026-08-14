@@ -46,10 +46,32 @@ function Install-Omnius {
   }
 
   Write-Host "  [..] finding the latest release of $repo"
-  $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" `
-                           -Headers @{ 'User-Agent' = 'omnius-get' }
+  # A repo with no published release answers 404 here, and with
+  # $ErrorActionPreference='Stop' that reaches the user as a raw web exception
+  # on the one command the README tells everybody to run. Say what happened and
+  # what to do instead - cloning is a complete install, just without the zip.
+  $rel = $null
+  try {
+    $rel = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" `
+                             -Headers @{ 'User-Agent' = 'omnius-get' }
+  } catch {
+    $code = $null
+    try { $code = [int]$_.Exception.Response.StatusCode } catch { }
+    if ($code -eq 404) {
+      Write-Host '  [X] no release published yet.' -ForegroundColor Red
+      Write-Host '      Install from source instead - same thing, minus the zip:'
+      Write-Host ("      git clone https://github.com/{0}.git `"{1}`"" -f $repo, $Path)
+      Write-Host ("      cd `"{0}`" ; .\install.bat" -f $Path)
+    } else {
+      Write-Host ("  [X] could not reach GitHub: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    }
+    return
+  }
   $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
-  if (-not $asset) { Write-Host '  [X] the latest release has no zip asset.' -ForegroundColor Red; return }
+  if (-not $asset) {
+    Write-Host ("  [X] release {0} has no zip asset - build one with pack.bat, or clone instead." -f $rel.tag_name) -ForegroundColor Red
+    return
+  }
   Write-Host ("  [OK] {0}  ({1:N1} MB, release {2})" -f $asset.name, ($asset.size / 1MB), $rel.tag_name)
 
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ("omnius-get-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))

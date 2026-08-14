@@ -84,6 +84,32 @@ function Test-Claude {
   return (Test-Path (Join-Path $script:ClaudeBin 'claude.exe'))
 }
 
+function Add-ToUserPath([string]$dir, [string]$note = '') {
+  # User scope, append only, idempotent - and it also fixes THIS process, so
+  # everything later in the script can shell out to what we just installed
+  # without asking the user to open a new window.
+  if (-not (Test-Path $dir)) { return $false }
+  $user = [Environment]::GetEnvironmentVariable('Path','User')
+  if ($null -eq $user) { $user = '' }
+  foreach ($p in ($user -split ';' | Where-Object { $_ -ne '' })) {
+    if ($p.TrimEnd('\') -ieq $dir.TrimEnd('\')) {
+      if ($env:Path -notlike "*$dir*") { $env:Path = "$dir;$env:Path" }
+      return $true                                                # already there
+    }
+  }
+  $new = if ($user -eq '') { $dir } else { $user.TrimEnd(';') + ';' + $dir }
+  try {
+    [Environment]::SetEnvironmentVariable('Path', $new, 'User')
+    $script:PathChanged = $true
+    $env:Path = "$dir;$env:Path"
+    Write-Status 'OK' ("added {0} to your user PATH{1}" -f $dir, $note)
+    return $true
+  } catch {
+    Write-Status '!' ("could not add {0} to PATH: {1}" -f $dir, $_.Exception.Message)
+    return $false
+  }
+}
+
 function Add-ClaudeToUserPath {
   # The official installer does NOT edit PATH. Its own closing note, verbatim
   # on a clean Windows 11 (2026-08-14): "Native installation exists but
@@ -92,23 +118,140 @@ function Add-ClaudeToUserPath {
   #
   # Making him click through that dialog is exactly the kind of step this
   # installer exists to remove - and without it EVERY later piece breaks, since
-  # the watchdog, the bridge and fleet_ops all resolve `claude` on PATH. So we
-  # do it: user scope only, append only, and only when the binary is really
-  # there. Idempotent - a second run finds it already present and says nothing.
+  # the watchdog, the bridge and fleet_ops all resolve `claude` on PATH.
   if (-not (Test-Path (Join-Path $script:ClaudeBin 'claude.exe'))) { return }
-  $user = [Environment]::GetEnvironmentVariable('Path','User')
-  if ($null -eq $user) { $user = '' }
-  $parts = $user -split ';' | Where-Object { $_ -ne '' }
-  foreach ($p in $parts) {
-    if ($p.TrimEnd('\') -ieq $script:ClaudeBin.TrimEnd('\')) { return }   # already there
-  }
-  $new = if ($user -eq '') { $script:ClaudeBin } else { $user.TrimEnd(';') + ';' + $script:ClaudeBin }
+  [void](Add-ToUserPath $script:ClaudeBin ' (the Claude installer does not)')
+}
+
+# --- installing WITHOUT winget ------------------------------------------------
+# A clean Windows Sandbox has no winget at all, and winget is also absent on
+# plenty of Windows 10 boxes and every machine where App Installer was removed.
+# Before this, that was a dead end: three "missing - fix, then re-run" lines and
+# an installer that could not install anything (2026-08-14, run in a sandbox).
+# The Claude CLI already proved the alternative works - it installs from its own
+# URL, no package manager involved. So every REQUIRED tool now has a direct
+# route to the same place winget would have got it from:
+#
+#   git     the official Git for Windows installer, newest release from GitHub
+#   python  python.org's own installer, per-user (no admin, and it sets PATH)
+#   ffmpeg  the static build ffmpeg.org points Windows users at, unzipped
+#
+# Anything portable lands here rather than in the workspace: binaries must not
+# travel in the backup zip, and a machine is disposable while the repo is not.
+$script:OmniusBin = Join-Path $env:LOCALAPPDATA 'Omnius\bin'
+
+function Get-Download([string]$url, [string]$name) {
+  $dst = Join-Path $env:TEMP $name
+  # PowerShell 5.1 draws a progress bar per chunk, which turns a 100 MB
+  # download into a multi-minute crawl. Off is not cosmetic here.
+  $prev = $ProgressPreference
+  $ProgressPreference = 'SilentlyContinue'
   try {
-    [Environment]::SetEnvironmentVariable('Path', $new, 'User')
-    $script:PathChanged = $true
-    Write-Status 'OK' ("added {0} to your user PATH (the Claude installer does not)" -f $script:ClaudeBin)
+    Write-Status '..' ("downloading {0}" -f $name)
+    Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 900
+    return $dst
   } catch {
-    Write-Status '!' ("could not add {0} to PATH: {1}" -f $script:ClaudeBin, $_.Exception.Message)
+    Write-Status 'X' ("download failed ({0}): {1}" -f $name, $_.Exception.Message)
+    return $null
+  } finally { $ProgressPreference = $prev }
+}
+
+function Install-GitDirect {
+  $rel = $null
+  try {
+    $rel = Invoke-RestMethod 'https://api.github.com/repos/git-for-windows/git/releases/latest' `
+                             -UseBasicParsing -TimeoutSec 60 -Headers @{ 'User-Agent' = 'omnius-install' }
+  } catch { Write-Status 'X' ("could not reach the Git for Windows release feed: {0}" -f $_.Exception.Message); return }
+  $asset = $rel.assets | Where-Object { $_.name -match '^Git-.*-64-bit\.exe$' } | Select-Object -First 1
+  if (-not $asset) { Write-Status 'X' 'no 64-bit Git installer in the latest release'; return }
+  $exe = Get-Download $asset.browser_download_url $asset.name
+  if (-not $exe) { return }
+  # Git installs machine-wide, so Windows will raise a UAC prompt. Say so first:
+  # an elevation dialog nobody expected looks like the installer misbehaving.
+  Write-Status '..' 'installing Git (Windows will ask for administrator rights)'
+  try {
+    $p = Start-Process -FilePath $exe -Wait -PassThru `
+         -ArgumentList '/VERYSILENT','/NORESTART','/NOCANCEL','/SP-','/SUPPRESSMSGBOXES'
+    if ($p.ExitCode -ne 0) { Write-Status '!' ("the Git installer exited with code {0}" -f $p.ExitCode) }
+  } catch { Write-Status 'X' ("could not run the Git installer: {0}" -f $_.Exception.Message) }
+  Remove-Item $exe -Force -ErrorAction SilentlyContinue
+}
+
+function Get-PythonInstallerUrl {
+  # Discovered, not pinned: a hard-coded version rots the day it is superseded,
+  # and python.org keeps every release directory forever.
+  #
+  # The order is NOT "newest wins". This Python has to run faster-whisper,
+  # ctranslate2, onnxruntime and playwright, and those ship compiled wheels that
+  # trail a brand-new Python by months - so the newest series is the one most
+  # likely to fail at `pip install`, loudly and late. 3.13 first (current, wheels
+  # everywhere), 3.12 as the conservative fallback, 3.14 only if neither exists.
+  # Keep this in step with the WingetId above so both routes land on the same
+  # series; a machine with winget and one without should not end up different.
+  #
+  # The window is 6 deep per series because a series keeps getting SOURCE-only
+  # security releases after its last Windows binary: 3.12 stopped shipping
+  # installers at 3.12.10 and has four source-only releases stacked on top of
+  # it (checked 2026-08-14). A 3-deep probe silently skipped the whole series.
+  try {
+    $listing = (Invoke-WebRequest 'https://www.python.org/ftp/python/' -UseBasicParsing -TimeoutSec 60).Content
+  } catch { Write-Status 'X' ("could not reach python.org: {0}" -f $_.Exception.Message); return $null }
+  $all = [regex]::Matches($listing, '(?<v>3\.\d+\.\d+)/') | ForEach-Object { $_.Groups['v'].Value } | Select-Object -Unique
+  foreach ($series in @('3.13','3.12','3.14')) {
+    $cands = @($all | Where-Object { $_ -like "$series.*" } |
+               Sort-Object { [version]$_ } -Descending | Select-Object -First 6)
+    foreach ($v in $cands) {
+      $url = "https://www.python.org/ftp/python/$v/python-$v-amd64.exe"
+      try {
+        $r = Invoke-WebRequest $url -Method Head -UseBasicParsing -TimeoutSec 30
+        if ($r.StatusCode -eq 200) { return $url }
+      } catch { }                                   # 404 = source-only release
+    }
+  }
+  return $null
+}
+
+function Install-PythonDirect {
+  $url = Get-PythonInstallerUrl
+  if (-not $url) { Write-Status 'X' 'no Windows installer found on python.org'; return }
+  $exe = Get-Download $url (Split-Path $url -Leaf)
+  if (-not $exe) { return }
+  # InstallAllUsers=0 keeps this out of Program Files, so there is NO UAC prompt
+  # and no admin requirement. PrependPath=1 is what makes `python` resolve
+  # afterwards - without it the install succeeds and every later step still fails.
+  Write-Status '..' 'installing Python (per-user, no administrator rights needed)'
+  try {
+    $p = Start-Process -FilePath $exe -Wait -PassThru `
+         -ArgumentList '/quiet','InstallAllUsers=0','PrependPath=1','Include_pip=1','Include_test=0'
+    if ($p.ExitCode -ne 0) { Write-Status '!' ("the Python installer exited with code {0}" -f $p.ExitCode) }
+  } catch { Write-Status 'X' ("could not run the Python installer: {0}" -f $_.Exception.Message) }
+  Remove-Item $exe -Force -ErrorAction SilentlyContinue
+}
+
+function Install-FfmpegDirect {
+  # ffmpeg ships no installer: it is a zip of static binaries, which is why this
+  # one needs no admin and no package manager at all. gyan.dev is the Windows
+  # build ffmpeg.org itself links to, and the URL is stable (always the current
+  # release), so there is no version to discover.
+  $zip = Get-Download 'https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip' 'ffmpeg-release-essentials.zip'
+  if (-not $zip) { return }
+  $tmp = Join-Path $env:TEMP ('ffmpeg-unpack-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+  try {
+    Write-Status '..' 'unpacking ffmpeg'
+    Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+    $bin = Get-ChildItem -Path $tmp -Recurse -Filter 'ffmpeg.exe' -File | Select-Object -First 1
+    if (-not $bin) { Write-Status 'X' 'no ffmpeg.exe inside the archive'; return }
+    New-Item -ItemType Directory -Force -Path $script:OmniusBin | Out-Null
+    # ffprobe travels with it: whisper and the transcribe desk both call it, and
+    # an ffmpeg without ffprobe fails later and confusingly.
+    Copy-Item (Join-Path $bin.DirectoryName '*.exe') $script:OmniusBin -Force
+    [void](Add-ToUserPath $script:OmniusBin ' (portable tools Omnius installed)')
+    Write-Status 'OK' ("ffmpeg + ffprobe installed to {0}" -f $script:OmniusBin)
+  } catch {
+    Write-Status 'X' ("could not unpack ffmpeg: {0}" -f $_.Exception.Message)
+  } finally {
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
   }
 }
 
@@ -145,18 +288,24 @@ if (-not $CheckOnly) {
 
 # --- prerequisites ------------------------------------------------------------
 $haveWinget = Test-Cmd 'winget'
-if (-not $haveWinget) { Write-Status '!' 'winget not available - guided installs disabled, manual URLs will be shown' }
+if (-not $haveWinget) {
+  Write-Status '!' 'winget not available - installing required tools directly from their official sites instead'
+}
 
 $tools = @(
-  @{ Name='git';    Label='Git';              WingetId='Git.Git';                   Required=$true;  Url='https://git-scm.com';            Why='version control - the system runs on it' },
+  @{ Name='git';    Label='Git';              WingetId='Git.Git';                   Required=$true;  Url='https://git-scm.com';            Why='version control - the system runs on it'; Direct={ Install-GitDirect }; DirectFrom='github.com/git-for-windows' },
   @{ Name='claude'; Label='Claude Code CLI';  Installer='claude'; Test={ Test-Claude }; Required=$true;  Url='https://claude.com/claude-code'; Why='the agent runtime' },
-  @{ Name='python'; Label='Python 3.10+';     WingetId='Python.Python.3.12';        Required=$true;  Url='https://python.org';             Why='daybook + watchdog + whisper'; Test={ Test-Python } },
+  # 3.13, not 3.12: 3.12 stopped shipping Windows installers at 3.12.10 (April
+  # 2025) and only gets source-only security releases now, so pinning it means a
+  # fresh install gets an ever-older Python. Kept in step with the series order
+  # in Get-PythonInstallerUrl - both routes must land on the same Python.
+  @{ Name='python'; Label='Python 3.10+';     WingetId='Python.Python.3.13';        Required=$true;  Url='https://python.org';             Why='daybook + watchdog + whisper'; Test={ Test-Python }; Direct={ Install-PythonDirect }; DirectFrom='python.org' },
   @{ Name='node';   Label='Node.js LTS';      WingetId='OpenJS.NodeJS.LTS';         Required=$false; Url='https://nodejs.org';             Why='remotion video rendering' },
   # Promoted to REQUIRED 2026-08-06. It was optional when voice notes were the
   # only user; since then /watch, whisper and the whole tool.transcribe desk all
   # shell out to it, and every one of them dies with an unhelpful error if it is
   # absent. A missing ffmpeg is not a reduced install, it is a broken one.
-  @{ Name='ffmpeg'; Label='ffmpeg';           WingetId='Gyan.FFmpeg';               Required=$true;  Url='https://ffmpeg.org';             Why='voice notes, video analysis, meeting transcription' },
+  @{ Name='ffmpeg'; Label='ffmpeg';           WingetId='Gyan.FFmpeg';               Required=$true;  Url='https://ffmpeg.org';             Why='voice notes, video analysis, meeting transcription'; Direct={ Install-FfmpegDirect }; DirectFrom='gyan.dev (the build ffmpeg.org links to)'; Test={ (Test-Cmd 'ffmpeg') -or (Test-Path (Join-Path $script:OmniusBin 'ffmpeg.exe')) } },
   @{ Name='wt';     Label='Windows Terminal'; WingetId='Microsoft.WindowsTerminal'; Required=$false; Url='Microsoft Store';                Why='tabbed terminals for the fleet' }
 )
 
@@ -209,6 +358,20 @@ foreach ($t in $tools) {
 
   if ($attempted) { Refresh-Path }
   $present = if ($t['Test']) { & $t['Test'] } else { Test-Cmd $t.Name }
+
+  # The direct route, when winget is absent OR when it ran and left the tool
+  # missing anyway. That second case is not theoretical: on 2026-08-14 winget
+  # found Node and ffmpeg in two sources, called them ambiguous and installed
+  # neither. A package manager that fails is no reason for the install to fail.
+  if (-not $present -and $t['Direct']) {
+    if (Ask-Install ("{0} directly from {1}" -f $t.Label, $t['DirectFrom'])) {
+      $attempted = $true
+      try { & $t['Direct'] } catch { Write-Status 'X' ("{0}: {1}" -f $t.Label, $_.Exception.Message) }
+      Refresh-Path
+      $present = if ($t['Test']) { & $t['Test'] } else { Test-Cmd $t.Name }
+    }
+  }
+
   if ($present) {
     Write-Status 'OK' ("{0} ready" -f $t.Label)
   } else {

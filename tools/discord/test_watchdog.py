@@ -3388,10 +3388,45 @@ try:
           _inst0.index("Add-ClaudeToUserPath") < _inst0.index("function Add-ClaudeToUserPath")
           or "Add-ClaudeToUserPath\n    }" in _inst0)
     check("...appending, never replacing, the existing user PATH",
-          "$user.TrimEnd(';') + ';' + $script:ClaudeBin" in _inst0,
+          "$user.TrimEnd(';') + ';' + $dir" in _inst0,
           "clobbering PATH on someone's work laptop is unrecoverable")
     check("...and is idempotent, so a second run does not stack duplicates",
           "already there" in _inst0)
+
+    # == a machine without winget must still be installable ===================
+    # 2026-08-14, run in a clean Windows Sandbox: no winget there, so the
+    # installer printed "guided installs disabled", three "missing" lines and
+    # "fix, then re-run" - an installer that could not install anything. The
+    # Claude CLI in the same run installed fine from its own URL, which is the
+    # proof that a package manager was never required.
+    check("winget missing is not a dead end - there is a direct route",
+          "Install-GitDirect" in _inst0 and "Install-PythonDirect" in _inst0
+          and "Install-FfmpegDirect" in _inst0)
+    check("...offered when winget is absent OR when winget ran and failed anyway",
+          "if (-not $present -and $t['Direct'])" in _inst0,
+          "winget called node and ffmpeg ambiguous and installed neither")
+    for _src in ("https://www.python.org/ftp/python/",
+                 "api.github.com/repos/git-for-windows/git/releases/latest",
+                 "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"):
+        check(f"...from the official source ({_src.split('/')[2]})", _src in _inst0)
+    check("Python installs per-user, so it needs no administrator",
+          "InstallAllUsers=0" in _inst0 and "PrependPath=1" in _inst0,
+          "PrependPath is what makes `python` resolve afterwards")
+    # Both routes must agree, or two machines end up on different Pythons and a
+    # wheel that installs on one fails on the other.
+    _wid = re.search(r"WingetId='Python\.Python\.(3\.\d+)'", _inst0)
+    _series = re.search(r"foreach \(\$series in @\('(3\.\d+)'", _inst0)
+    check("the winget Python and the direct-download Python are the same series",
+          bool(_wid) and bool(_series) and _wid.group(1) == _series.group(1),
+          f"winget={_wid.group(1) if _wid else '?'} direct={_series.group(1) if _series else '?'}")
+    # A series keeps getting SOURCE-only security releases after its last
+    # Windows binary - 3.12 has four stacked on 3.12.10 - so a shallow probe
+    # skips the whole series without saying so.
+    check("...and the probe looks deep enough to see past source-only releases",
+          "Select-Object -First 6" in _inst0)
+    check("portable binaries land outside the workspace, so backups stay clean",
+          "$env:LOCALAPPDATA 'Omnius\\bin'" in _inst0
+          and "$script:OmniusBin" in _inst0)
     check("presence is decided by the FILE, not only by PATH",
           "function Test-Claude" in _inst0 and "claude.exe" in _inst0,
           "Get-Command does not reliably re-scan PATH inside the same window")
