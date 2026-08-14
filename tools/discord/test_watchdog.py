@@ -3412,6 +3412,21 @@ try:
     check("Python installs per-user, so it needs no administrator",
           "InstallAllUsers=0" in _inst0 and "PrependPath=1" in _inst0,
           "PrependPath is what makes `python` resolve afterwards")
+    # THE hang of 2026-08-14: the py launcher installs for ALL USERS by default
+    # even inside a per-user install, that needs elevation, and /quiet has no
+    # way to ask - so the installer sat there silently, apparently forever.
+    check("...including the py launcher, which otherwise waits on an elevation "
+          "prompt it cannot show",
+          "InstallLauncherAllUsers=0" in _inst0)
+    check("...and it runs /passive, so there is a visible progress bar",
+          "'/passive'" in _inst0)
+    # Silence for minutes is indistinguishable from a hang. Both halves matter:
+    # bytes while downloading, elapsed time while an installer runs.
+    check("downloads report megabytes instead of going silent",
+          "MB downloaded" in _inst0 and "GetResponseStream" in _inst0,
+          "PS 5.1's own progress bar makes a 100 MB download crawl")
+    check("...and a running installer shows elapsed time",
+          "function Wait-Installer" in _inst0 and "elapsed" in _inst0)
     # Both routes must agree, or two machines end up on different Pythons and a
     # wheel that installs on one fails on the other.
     _wid = re.search(r"WingetId='Python\.Python\.(3\.\d+)'", _inst0)
@@ -3427,6 +3442,30 @@ try:
     check("portable binaries land outside the workspace, so backups stay clean",
           "$env:LOCALAPPDATA 'Omnius\\bin'" in _inst0
           and "$script:OmniusBin" in _inst0)
+
+    # == the CLI is installed LAST, and signing in is offered =================
+    # His call, 2026-08-14: everything that can run unattended goes first, so
+    # the long stretch of downloads needs nobody watching. The CLI ends in a
+    # browser and a sign-in, and that is the one step a person must be there
+    # for - so it is the one that waits until nothing else will interrupt.
+    _order = [m.group(1) for m in re.finditer(r"@\{ Name='(\w+)';", _inst0)]
+    check("the Claude CLI is the last prerequisite installed",
+          _order and _order[-1] == 'claude', f"order: {_order}")
+    check("...and git comes first, since everything else is cloned or checked out",
+          _order and _order[0] == 'git', f"order: {_order}")
+    # A CLI installs signed OUT, and every desk is a `claude -p` run: signed
+    # out, the first Discord message fails with nothing in the channel to
+    # explain why.
+    check("install offers to sign in to Claude once the CLI is there",
+          "claude auth login" in _inst0 and "function Test-ClaudeAuth" in _inst0)
+    check("...reading the real state rather than assuming it",
+          '"loggedIn"' in _inst0)
+    check("...and staying silent when it cannot tell, instead of nagging",
+          "cannot tell" in _inst0 and "return $null" in _inst0)
+    check("...never forcing it - a browser sign-in needs a person present",
+          "Ask-YesNo 'sign in now" in _inst0)
+    check("Node has a direct route too, so a winget-less box is not half-installed",
+          "Install-NodeDirect" in _inst0 and "nodejs.org/dist/index.json" in _inst0)
     check("presence is decided by the FILE, not only by PATH",
           "function Test-Claude" in _inst0 and "claude.exe" in _inst0,
           "Get-Command does not reliably re-scan PATH inside the same window")
@@ -3440,11 +3479,22 @@ try:
     # on. The very next line of ours - `$t.Test` on a hashtable without that
     # key - became a TERMINATING PropertyNotFoundStrict, and the install died
     # right there, after the prerequisites and before everything else.
+    # The LAST mention is the call; the first one is the line that announces it.
+    _claude_call = _inst0[_inst0.rindex("claude.ai/install.ps1") - 900:
+                          _inst0.rindex("claude.ai/install.ps1") + 300]
     check("the Claude installer runs in a CHILD process, not iex into ours",
-          "powershell -NoProfile -ExecutionPolicy Bypass -Command" in _inst0
-          and "Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression" in _inst0
+          "Start-Process" in _claude_call and "'powershell'" in _claude_call
           and "try { Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression }" not in _inst0,
           "anything it changes - StrictMode, ErrorActionPreference, cwd - would persist")
+    # Its output is captured rather than streamed: that installer signs off with
+    # "Installation complete!" and a paragraph about editing PATH by hand, both
+    # of which are wrong HERE - our install is three steps in, and we set that
+    # PATH entry ourselves. Mid-run it reads as "you are done" (2026-08-14).
+    check("...with its output captured, so its 'Installation complete!' cannot "
+          "be mistaken for ours",
+          "-RedirectStandardOutput" in _claude_call)
+    check("...and shown in full the moment anything actually fails",
+          "its output:" in _inst0)
     # Belt and braces: even if strictness leaks in some other way, optional
     # hashtable keys must be read by INDEX, which returns $null instead of
     # throwing. Only Test/Installer/WingetId are optional; the rest are on

@@ -141,19 +141,79 @@ function Add-ClaudeToUserPath {
 $script:OmniusBin = Join-Path $env:LOCALAPPDATA 'Omnius\bin'
 
 function Get-Download([string]$url, [string]$name) {
+  # Streamed by hand rather than with Invoke-WebRequest, for one reason: in
+  # PowerShell 5.1 its progress bar redraws per chunk and turns a 100 MB
+  # download into a multi-minute crawl, while switching the bar OFF leaves the
+  # console completely silent for those minutes. On a fresh sandbox that is
+  # indistinguishable from a hang - "i see no progress bar or anything at all"
+  # (2026-08-14). Reading the stream ourselves gives real megabytes, cheaply.
   $dst = Join-Path $env:TEMP $name
-  # PowerShell 5.1 draws a progress bar per chunk, which turns a 100 MB
-  # download into a multi-minute crawl. Off is not cosmetic here.
-  $prev = $ProgressPreference
-  $ProgressPreference = 'SilentlyContinue'
+  [Net.ServicePointManager]::SecurityProtocol = `
+    [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  $resp = $null; $in = $null; $out = $null
   try {
-    Write-Status '..' ("downloading {0}" -f $name)
-    Invoke-WebRequest -Uri $url -OutFile $dst -UseBasicParsing -TimeoutSec 900
+    $req = [Net.HttpWebRequest]::Create($url)
+    $req.UserAgent = 'omnius-install'
+    $req.Timeout = 60000
+    $req.ReadWriteTimeout = 300000
+    $resp = $req.GetResponse()
+    $total = $resp.ContentLength
+    $size = if ($total -gt 0) { "{0:N1} MB" -f ($total / 1MB) } else { 'unknown size' }
+    Write-Status '..' ("downloading {0} ({1})" -f $name, $size)
+    $in  = $resp.GetResponseStream()
+    $out = [IO.File]::Create($dst)
+    $buf = New-Object byte[] 262144
+    $read = 0L; $lastTick = 0L
+    while (($n = $in.Read($buf, 0, $buf.Length)) -gt 0) {
+      $out.Write($buf, 0, $n)
+      $read += $n
+      $now = [DateTime]::UtcNow.Ticks
+      if ($now - $lastTick -gt 5000000) {                    # twice a second
+        $lastTick = $now
+        if ($total -gt 0) {
+          Write-Host ("`r       {0,5:N1} / {1:N1} MB  ({2,3:N0}%)" -f `
+                      ($read / 1MB), ($total / 1MB), ($read * 100 / $total)) -NoNewline
+        } else {
+          Write-Host ("`r       {0,5:N1} MB" -f ($read / 1MB)) -NoNewline
+        }
+      }
+    }
+    Write-Host ("`r       {0:N1} MB downloaded            " -f ($read / 1MB))
     return $dst
   } catch {
+    Write-Host ''
     Write-Status 'X' ("download failed ({0}): {1}" -f $name, $_.Exception.Message)
     return $null
-  } finally { $ProgressPreference = $prev }
+  } finally {
+    if ($out)  { $out.Close() }
+    if ($in)   { $in.Close() }
+    if ($resp) { $resp.Close() }
+  }
+}
+
+function Wait-Installer($proc, [string]$label) {
+  # A silent installer prints NOTHING while it works. Two minutes of that on a
+  # slow machine reads exactly like a hang, and the honest fix is to show that
+  # time is passing rather than to hope nobody waits.
+  # Touch .Handle FIRST. `Start-Process -PassThru` without -Wait hands back an
+  # object whose ExitCode reads back $null once the process is gone, because
+  # nothing kept the OS handle open - and `$null -ne 0` is TRUE, so every
+  # SUCCESSFUL install would have been reported as a failure and the Claude
+  # installer's whole log dumped as an error. Caching the handle while the
+  # process is still alive is what makes the code readable afterwards.
+  # (Found by testing this helper against a real process instead of trusting
+  # it, 2026-08-14. WaitForExit() alone does not fix it.)
+  try { $null = $proc.Handle } catch { }
+  $t0 = Get-Date
+  while (-not $proc.HasExited) {
+    Start-Sleep -Milliseconds 1000
+    Write-Host ("`r       {0} - {1:mm\:ss} elapsed" -f $label, ((Get-Date) - $t0)) -NoNewline
+  }
+  $proc.WaitForExit()
+  Write-Host ("`r       {0} - finished in {1:mm\:ss}          " -f $label, ((Get-Date) - $t0))
+  # $null means "could not tell", never "failed" - the caller re-tests whether
+  # the tool is actually there, which is the answer that matters anyway.
+  try { return $proc.ExitCode } catch { return $null }
 }
 
 function Install-GitDirect {
@@ -170,9 +230,10 @@ function Install-GitDirect {
   # an elevation dialog nobody expected looks like the installer misbehaving.
   Write-Status '..' 'installing Git (Windows will ask for administrator rights)'
   try {
-    $p = Start-Process -FilePath $exe -Wait -PassThru `
+    $p = Start-Process -FilePath $exe -PassThru `
          -ArgumentList '/VERYSILENT','/NORESTART','/NOCANCEL','/SP-','/SUPPRESSMSGBOXES'
-    if ($p.ExitCode -ne 0) { Write-Status '!' ("the Git installer exited with code {0}" -f $p.ExitCode) }
+    $code = Wait-Installer $p 'Git'
+    if ($null -ne $code -and $code -ne 0) { Write-Status '!' ("the Git installer exited with code {0}" -f $code) }
   } catch { Write-Status 'X' ("could not run the Git installer: {0}" -f $_.Exception.Message) }
   Remove-Item $exe -Force -ErrorAction SilentlyContinue
 }
@@ -219,13 +280,54 @@ function Install-PythonDirect {
   # InstallAllUsers=0 keeps this out of Program Files, so there is NO UAC prompt
   # and no admin requirement. PrependPath=1 is what makes `python` resolve
   # afterwards - without it the install succeeds and every later step still fails.
+  #
+  # InstallLauncherAllUsers=0 is the one that actually made it work. The py
+  # launcher installs for ALL USERS by default even in a per-user install, and
+  # that needs elevation - which `/quiet` has no way to ask for, so the
+  # installer just sits there. Observed 2026-08-14 in a sandbox: downloaded
+  # fine, then nothing, apparently forever.
+  #
+  # /passive rather than /quiet: it shows Python's own progress window, no
+  # clicking required. This installer is run by a person at a keyboard, and a
+  # visible bar beats a silent five minutes.
   Write-Status '..' 'installing Python (per-user, no administrator rights needed)'
   try {
-    $p = Start-Process -FilePath $exe -Wait -PassThru `
-         -ArgumentList '/quiet','InstallAllUsers=0','PrependPath=1','Include_pip=1','Include_test=0'
-    if ($p.ExitCode -ne 0) { Write-Status '!' ("the Python installer exited with code {0}" -f $p.ExitCode) }
+    $p = Start-Process -FilePath $exe -PassThru `
+         -ArgumentList '/passive','InstallAllUsers=0','PrependPath=1', `
+                       'InstallLauncherAllUsers=0','Include_pip=1','Include_test=0'
+    $code = Wait-Installer $p 'Python'
+    if ($null -ne $code -and $code -ne 0) { Write-Status '!' ("the Python installer exited with code {0}" -f $code) }
   } catch { Write-Status 'X' ("could not run the Python installer: {0}" -f $_.Exception.Message) }
   Remove-Item $exe -Force -ErrorAction SilentlyContinue
+}
+
+function Install-NodeDirect {
+  # Node ships a plain zip, so this needs no installer and no admin either.
+  # index.json is the official release feed; the first entry carrying an `lts`
+  # name is the current LTS, which is what OpenJS.NodeJS.LTS installs too.
+  try {
+    $rel = Invoke-RestMethod 'https://nodejs.org/dist/index.json' -UseBasicParsing -TimeoutSec 60
+  } catch { Write-Status 'X' ("could not reach nodejs.org: {0}" -f $_.Exception.Message); return }
+  $lts = $rel | Where-Object { $_.lts } | Select-Object -First 1
+  if (-not $lts) { Write-Status 'X' 'no LTS release listed on nodejs.org'; return }
+  $name = "node-$($lts.version)-win-x64"
+  $zip = Get-Download "https://nodejs.org/dist/$($lts.version)/$name.zip" "$name.zip"
+  if (-not $zip) { return }
+  $dest = Join-Path $env:LOCALAPPDATA 'Omnius\node'
+  try {
+    Write-Status '..' 'unpacking Node'
+    if (Test-Path $dest) { Remove-Item $dest -Recurse -Force -ErrorAction SilentlyContinue }
+    $tmp = Join-Path $env:TEMP ('node-unpack-' + [guid]::NewGuid().ToString('N').Substring(0,8))
+    Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
+    Move-Item (Join-Path $tmp $name) $dest -Force
+    [void](Add-ToUserPath $dest ' (Node, installed by Omnius)')
+    Write-Status 'OK' ("Node {0} installed to {1}" -f $lts.version, $dest)
+  } catch {
+    Write-Status 'X' ("could not unpack Node: {0}" -f $_.Exception.Message)
+  } finally {
+    Remove-Item $zip -Force -ErrorAction SilentlyContinue
+    Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
+  }
 }
 
 function Install-FfmpegDirect {
@@ -255,10 +357,26 @@ function Install-FfmpegDirect {
   }
 }
 
-function Ask-Install([string]$what) {
+function Ask-YesNo([string]$question) {
   if ($CheckOnly) { return $false }
-  $a = Read-Host ("     install {0} now? [Y/n]" -f $what)
-  return ($a -eq '' -or $a -match '^[yYjJ]')
+  $a = Read-Host ("     {0}? [Y/n]" -f $question)
+  return ($a -eq '' -or $a -match '^[yYjJ]')      # j: the installer gets run on German keyboards
+}
+
+function Ask-Install([string]$what) { return (Ask-YesNo ("install {0} now" -f $what)) }
+
+function Test-ClaudeAuth {
+  # -> $true signed in, $false signed out, $null cannot tell (older CLI without
+  # `auth status`). The distinction matters: "cannot tell" must stay SILENT
+  # rather than nag somebody who is perfectly signed in.
+  if (-not (Test-Claude)) { return $null }
+  try {
+    $out = (& claude auth status 2>&1 | Out-String)
+    if ($out -match '"loggedIn"\s*:\s*true')  { return $true }
+    if ($out -match '"loggedIn"\s*:\s*false') { return $false }
+    if ($out -match 'not logged in|signed out|no credentials') { return $false }
+    return $null
+  } catch { return $null }
 }
 
 Write-Host '============================================================'
@@ -292,21 +410,26 @@ if (-not $haveWinget) {
   Write-Status '!' 'winget not available - installing required tools directly from their official sites instead'
 }
 
+# ORDER MATTERS. Everything that can run unattended goes first - downloads,
+# silent installers, a zip to unpack - so the long boring stretch needs nobody
+# watching. The Claude CLI is LAST on purpose (his call, 2026-08-14): it is the
+# one step that ends in a browser and a sign-in, and asking a person to be
+# present is only fair once nothing else is going to interrupt them.
 $tools = @(
   @{ Name='git';    Label='Git';              WingetId='Git.Git';                   Required=$true;  Url='https://git-scm.com';            Why='version control - the system runs on it'; Direct={ Install-GitDirect }; DirectFrom='github.com/git-for-windows' },
-  @{ Name='claude'; Label='Claude Code CLI';  Installer='claude'; Test={ Test-Claude }; Required=$true;  Url='https://claude.com/claude-code'; Why='the agent runtime' },
   # 3.13, not 3.12: 3.12 stopped shipping Windows installers at 3.12.10 (April
   # 2025) and only gets source-only security releases now, so pinning it means a
   # fresh install gets an ever-older Python. Kept in step with the series order
   # in Get-PythonInstallerUrl - both routes must land on the same Python.
   @{ Name='python'; Label='Python 3.10+';     WingetId='Python.Python.3.13';        Required=$true;  Url='https://python.org';             Why='daybook + watchdog + whisper'; Test={ Test-Python }; Direct={ Install-PythonDirect }; DirectFrom='python.org' },
-  @{ Name='node';   Label='Node.js LTS';      WingetId='OpenJS.NodeJS.LTS';         Required=$false; Url='https://nodejs.org';             Why='remotion video rendering' },
+  @{ Name='node';   Label='Node.js LTS';      WingetId='OpenJS.NodeJS.LTS';         Required=$false; Url='https://nodejs.org';             Why='remotion video rendering'; Direct={ Install-NodeDirect }; DirectFrom='nodejs.org' },
   # Promoted to REQUIRED 2026-08-06. It was optional when voice notes were the
   # only user; since then /watch, whisper and the whole tool.transcribe desk all
   # shell out to it, and every one of them dies with an unhelpful error if it is
   # absent. A missing ffmpeg is not a reduced install, it is a broken one.
   @{ Name='ffmpeg'; Label='ffmpeg';           WingetId='Gyan.FFmpeg';               Required=$true;  Url='https://ffmpeg.org';             Why='voice notes, video analysis, meeting transcription'; Direct={ Install-FfmpegDirect }; DirectFrom='gyan.dev (the build ffmpeg.org links to)'; Test={ (Test-Cmd 'ffmpeg') -or (Test-Path (Join-Path $script:OmniusBin 'ffmpeg.exe')) } },
-  @{ Name='wt';     Label='Windows Terminal'; WingetId='Microsoft.WindowsTerminal'; Required=$false; Url='Microsoft Store';                Why='tabbed terminals for the fleet' }
+  @{ Name='wt';     Label='Windows Terminal'; WingetId='Microsoft.WindowsTerminal'; Required=$false; Url='Microsoft Store';                Why='tabbed terminals for the fleet' },
+  @{ Name='claude'; Label='Claude Code CLI';  Installer='claude'; Test={ Test-Claude }; Required=$true;  Url='https://claude.com/claude-code'; Why='the agent runtime - installed last, because signing in needs you' }
 )
 
 $missingRequired = @()
@@ -330,13 +453,30 @@ foreach ($t in $tools) {
       # and the very next line of ours died with PropertyNotFoundStrict on a
       # hashtable key that simply was not set. The install stopped there.
       # A child process cannot reach back into us.
+      # Its output is CAPTURED, not streamed. That installer ends with a big
+      # "Installation complete!" and a paragraph telling you to edit PATH by
+      # hand - both true of itself, both wrong here: our install is only three
+      # steps in, and we add that PATH entry ourselves two lines below. Printed
+      # mid-run it reads as "you are done" (2026-08-14). Kept in full and shown
+      # verbatim the moment anything goes wrong.
+      $clog = Join-Path $env:TEMP 'omnius-claude-install.log'
+      $cerr = Join-Path $env:TEMP 'omnius-claude-install.err'
       try {
-        & powershell -NoProfile -ExecutionPolicy Bypass -Command `
-          "Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression"
-        if ($LASTEXITCODE -ne 0) {
-          Write-Status '!' ("installer exited with code {0}" -f $LASTEXITCODE)
+        $p = Start-Process -FilePath 'powershell' -PassThru -NoNewWindow `
+             -RedirectStandardOutput $clog -RedirectStandardError $cerr `
+             -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command', `
+                           'Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression'
+        $code = Wait-Installer $p 'Claude Code'
+        $ctext = ((Get-Content $clog, $cerr -Raw -ErrorAction SilentlyContinue) -join "`n")
+        if (-not (Test-Claude)) {
+          Write-Status '!' ("the Claude installer exited with code {0} - its output:" -f $code)
+          $ctext -split "`n" | ForEach-Object { if ($_.Trim()) { Write-Host ("       {0}" -f $_.TrimEnd()) } }
+        } else {
+          $ver = [regex]::Match($ctext, 'Version:\s*(\S+)')
+          Write-Status 'OK' ("Claude Code installed{0}" -f $(if ($ver.Success) { " ({0})" -f $ver.Groups[1].Value } else { '' }))
         }
       } catch { Write-Status 'X' ("installer failed: {0}" -f $_.Exception.Message) }
+      finally { Remove-Item $clog, $cerr -Force -ErrorAction SilentlyContinue }
       Add-ClaudeToUserPath
     }
   } elseif ($t['WingetId'] -and $haveWinget) {
@@ -393,7 +533,39 @@ if (Test-Python) {
 if ($missingRequired.Count -gt 0) {
   Write-Host ''
   Write-Status 'X' ("required and still missing: {0} - fix, then re-run install.bat" -f ($missingRequired -join ', '))
+  Write-Status 'i' 'each of those can also be installed by hand from the URL above, then re-run install.bat'
   exit 1
+}
+
+# --- signing in ---------------------------------------------------------------
+# The CLI installs signed OUT, and nothing in this system works signed out:
+# every desk is a `claude -p` run, and a signed-out CLI fails at the first
+# message with nothing in the channel to explain why. So it is worth one
+# question here - asked, never forced, because it opens a browser and that is a
+# moment somebody has to actually be present for.
+Write-Host ''
+Write-Host '--- Claude sign-in ----------------------------------------'
+$authed = Test-ClaudeAuth
+if ($authed -eq $true) {
+  Write-Status 'OK' 'Claude CLI is signed in'
+} elseif ($authed -eq $null) {
+  Write-Status 'i' 'could not read the sign-in state - if desks fail to start, run: claude auth login'
+} elseif ($CheckOnly) {
+  Write-Status '!' 'Claude CLI is NOT signed in - run: claude auth login'
+} else {
+  Write-Status '!' 'Claude CLI is not signed in yet - no desk can run until it is'
+  if (Ask-YesNo 'sign in now (opens your browser)') {
+    try {
+      & claude auth login
+    } catch { Write-Status '!' ("sign-in did not complete: {0}" -f $_.Exception.Message) }
+    if ((Test-ClaudeAuth) -eq $true) {
+      Write-Status 'OK' 'signed in'
+    } else {
+      Write-Status '!' 'still signed out - you can finish it any time with: claude auth login'
+    }
+  } else {
+    Write-Status 'i' 'skipped - sign in later with:  claude auth login'
+  }
 }
 
 # --- .env ---------------------------------------------------------------------
