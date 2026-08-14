@@ -422,6 +422,31 @@ if (-not $CheckOnly) {
   }
 }
 
+# --- whose account is this? ---------------------------------------------------
+# A shell running as LocalSystem has no user profile: $env:USERPROFILE points at
+# C:\WINDOWS\system32\config\systemprofile, and anything that writes to "your"
+# home writes THERE. The Claude CLI installer is the first thing to hit it -
+# `EPERM: mkdir 'C:\WINDOWS\system32\config\systemprofile\.cache'` (2026-08-15)
+# - but it would not be the last: the CLI's own credentials, ~\.claude, the
+# desktop shortcut and every hook path we write are all per-user. Installing
+# from that account produces a fleet the actual human cannot use.
+#
+# This is NOT the same thing as "elevated". Running as an admin USER is fine and
+# normal; Git's installer asks for exactly that. Only SYSTEM is refused.
+$whoami = try { [Security.Principal.WindowsIdentity]::GetCurrent().Name } catch { '' }
+if ($env:USERPROFILE -like '*\system32\config\systemprofile*' -or $whoami -eq 'NT AUTHORITY\SYSTEM') {
+  Write-Status 'X' ("this shell is running as {0}, which has no user profile" -f ($whoami -replace '^$','SYSTEM'))
+  Write-Status 'i' ("its home is {0}" -f $env:USERPROFILE)
+  Write-Host ''
+  Write-Host '  Run install.bat as YOURSELF - a normal double-click, or "Run as'
+  Write-Host '  administrator" from your own account. Both are fine. What does not'
+  Write-Host '  work is a SYSTEM shell (PsExec -s, a scheduled task set to SYSTEM,'
+  Write-Host '  or a remote-management agent), because everything this installs -'
+  Write-Host '  the Claude sign-in, ~\.claude, the desktop icon, the hook paths -'
+  Write-Host '  is per-user, and you would not own any of it.'
+  exit 1
+}
+
 # --- prerequisites ------------------------------------------------------------
 $haveWinget = Test-Cmd 'winget'
 if (-not $haveWinget) {
@@ -477,24 +502,36 @@ foreach ($t in $tools) {
       # steps in, and we add that PATH entry ourselves two lines below. Printed
       # mid-run it reads as "you are done" (2026-08-14). Kept in full and shown
       # verbatim the moment anything goes wrong.
-      $clog = Join-Path $env:TEMP 'omnius-claude-install.log'
-      $cerr = Join-Path $env:TEMP 'omnius-claude-install.err'
+      # The call operator, NOT Start-Process: `&` starts the same child process
+      # while inheriting this shell's environment verbatim, and 2>&1 captures
+      # both streams. Start-Process with redirection did the job too, but it
+      # sets up its own environment block and console handles, and when this
+      # step failed on a real machine (2026-08-15) that difference was one more
+      # thing to rule out. It takes ~15s, so nothing needs a heartbeat.
       try {
-        $p = Start-Process -FilePath 'powershell' -PassThru -NoNewWindow `
-             -RedirectStandardOutput $clog -RedirectStandardError $cerr `
-             -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-Command', `
-                           'Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression'
-        $code = Wait-Installer $p 'Claude Code'
-        $ctext = ((Get-Content $clog, $cerr -Raw -ErrorAction SilentlyContinue) -join "`n")
+        $ctext = (& powershell -NoProfile -ExecutionPolicy Bypass -Command `
+                    "Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression" 2>&1 |
+                  Out-String)
+        $code = $LASTEXITCODE
         if (-not (Test-Claude)) {
           Write-Status '!' ("the Claude installer exited with code {0} - its output:" -f $code)
           $ctext -split "`n" | ForEach-Object { if ($_.Trim()) { Write-Host ("       {0}" -f $_.TrimEnd()) } }
+          # Name the cause when we can recognise it. "EPERM ... systemprofile"
+          # is not a broken installer, it is a shell with no user profile, and
+          # the fix is a different shell rather than a retry (2026-08-15).
+          if ($ctext -match 'systemprofile') {
+            Write-Status 'X' 'that path is the SYSTEM account''s home - this shell has no user profile'
+            Write-Status 'i' 'run install.bat from your own account (elevated is fine, SYSTEM is not)'
+          } elseif ($ctext -match 'EPERM|EACCES|denied') {
+            Write-Status 'i' ("something blocked it from writing to {0} - antivirus, or a policy on this machine" -f $script:ClaudeBin)
+          } else {
+            Write-Status 'i' 'you can install it by hand from https://claude.com/claude-code, then re-run install.bat'
+          }
         } else {
           $ver = [regex]::Match($ctext, 'Version:\s*(\S+)')
           Write-Status 'OK' ("Claude Code installed{0}" -f $(if ($ver.Success) { " ({0})" -f $ver.Groups[1].Value } else { '' }))
         }
       } catch { Write-Status 'X' ("installer failed: {0}" -f $_.Exception.Message) }
-      finally { Remove-Item $clog, $cerr -Force -ErrorAction SilentlyContinue }
       Add-ClaudeToUserPath
     }
   } elseif ($t['WingetId'] -and $haveWinget) {

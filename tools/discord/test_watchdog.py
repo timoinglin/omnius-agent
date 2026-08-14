@@ -3480,6 +3480,23 @@ try:
           "Ask-YesNo 'sign in now" in _inst0)
     check("Node has a direct route too, so a winget-less box is not half-installed",
           "Install-NodeDirect" in _inst0 and "nodejs.org/dist/index.json" in _inst0)
+
+    # == a SYSTEM shell has no user profile ==================================
+    # 2026-08-15, on a real machine: the Claude CLI installer died with
+    # `EPERM: mkdir 'C:\WINDOWS\system32\config\systemprofile\.cache'`. That
+    # path is LocalSystem's home - so the shell had no user profile, and
+    # everything per-user this installs (the sign-in, ~\.claude, the desktop
+    # icon, every hook path) would have belonged to an account no human uses.
+    check("install refuses to run as SYSTEM, before installing anything",
+          "systemprofile" in _inst0 and "NT AUTHORITY\\SYSTEM" in _inst0)
+    check("...and says so where a person can act on it, naming the home it found",
+          "has no user profile" in _inst0)
+    # Elevated-as-a-user is normal and must keep working - Git's own installer
+    # asks for exactly that.
+    check("...without refusing a normal elevated shell",
+          "This is NOT the same thing as \"elevated\"" in _inst0)
+    check("a failing Claude install names the cause it can recognise",
+          "that path is the SYSTEM account's home" in _inst0.replace("''", "'"))
     check("presence is decided by the FILE, not only by PATH",
           "function Test-Claude" in _inst0 and "claude.exe" in _inst0,
           "Get-Command does not reliably re-scan PATH inside the same window")
@@ -3497,7 +3514,7 @@ try:
     _claude_call = _inst0[_inst0.rindex("claude.ai/install.ps1") - 900:
                           _inst0.rindex("claude.ai/install.ps1") + 300]
     check("the Claude installer runs in a CHILD process, not iex into ours",
-          "Start-Process" in _claude_call and "'powershell'" in _claude_call
+          "& powershell -NoProfile -ExecutionPolicy Bypass -Command" in _claude_call
           and "try { Invoke-RestMethod https://claude.ai/install.ps1 | Invoke-Expression }" not in _inst0,
           "anything it changes - StrictMode, ErrorActionPreference, cwd - would persist")
     # Its output is captured rather than streamed: that installer signs off with
@@ -3506,7 +3523,7 @@ try:
     # PATH entry ourselves. Mid-run it reads as "you are done" (2026-08-14).
     check("...with its output captured, so its 'Installation complete!' cannot "
           "be mistaken for ours",
-          "-RedirectStandardOutput" in _claude_call)
+          "2>&1 |" in _claude_call and "Out-String" in _claude_call)
     check("...and shown in full the moment anything actually fails",
           "its output:" in _inst0)
     # Belt and braces: even if strictness leaks in some other way, optional
