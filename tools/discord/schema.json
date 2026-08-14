@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "_comment": "Day-one Discord structure + project template. Consumed by Phase 2/3 automation: find-or-create by exact name, safe to re-apply anytime (idempotent). Rules & per-instance setup: docs/DISCORD.md",
+  "prefixes": {
+    "project": "📁 ",
+    "archived": "🗄 "
+  },
+  "topicFormat": "{path} | {machine} | {started}",
+  "initial": {
+    "categories": [
+      {
+        "name": "🎛 ORCHESTRATOR",
+        "channels": [
+          {
+            "name": "omnius",
+            "session": "orchestrator",
+            "topic": "{path} | {machine} | {started}",
+            "purpose": "main door - talk to Omnius; any message wakes/spawns it on demand. Named for the persona; the category is 🎛 ORCHESTRATOR."
+          },
+          {
+            "name": "daybook",
+            "session": "daybook",
+            "topic": "quick capture -> daybook: notes, tasks, voice notes (transcribed)",
+            "purpose": "personal capture; its OWN desk so note-taking never occupies the orchestrator. Notes are stored, questions are answered."
+          },
+          {
+            "name": "fleet-status",
+            "session": "tool.fleet",
+            "topic": "bot-maintained fleet overview - pinned embed, do not post",
+            "purpose": "read-only dashboard, updated by /status and every fleet mutation"
+          },
+          {
+            "name": "transcribe",
+            "session": "tool.transcribe",
+            "topic": "send a recording (or its path) -> transcript, frames, notes",
+            "purpose": "the recordings desk: meetings, calls, videos, audio. Its OWN desk because a 2h job takes ~25 min and reading the transcript back costs ~40k tokens - neither may occupy the orchestrator. It starts a DETACHED job and returns at once."
+          },
+          {
+            "name": "alerts",
+            "session": null,
+            "topic": "errors and approval requests from all sessions",
+            "purpose": "attention needed; Phase 4: Approve/Deny buttons for destructive ops"
+          }
+        ]
+      },
+      {
+        "name": "📧 EMAIL",
+        "session": "tool.email",
+        "_why_session_on_the_category": "Every channel here maps to ONE desk. build_map reads this instead of needing a branch per account, and the envelope carries channelId so a reply lands back in the right account's channel.",
+        "channelsFrom": {
+          "config": "email",
+          "group": "account",
+          "nameFrom": "user",
+          "prefix": ""
+        },
+        "_why_channelsFrom": "Channels are per ACCOUNT, and accounts are added by editing config/email.ini - not by editing this file. ensure_structure() stamps one channel per [account.<label>] at watchdog startup, so adding an account is the only step. nameFrom=user names the channel after the ADDRESS (someone@example.com -> #someone-example) because a label like 'gmail' stops meaning anything the moment there are two of them - his question, 2026-08-06.",
+        "channels": []
+      }
+    ]
+  },
+  "projectTemplate": {
+    "category": "{projectPrefix}{project}",
+    "channels": [
+      {
+        "name": "general",
+        "session": "orchestrator",
+        "topic": "project-wide - relayed by Omnius",
+        "purpose": "cross-component topics of this project"
+      },
+      {
+        "name": "{component}",
+        "session": "{project}.{component}",
+        "topic": "{path} | {machine} | {started}",
+        "purpose": "one channel = one session"
+      }
+    ]
+  }
+}

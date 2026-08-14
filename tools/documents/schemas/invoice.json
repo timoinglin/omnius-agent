@@ -1,0 +1,51 @@
+{
+  "_comment": "Shipped schema for `extract.py <file> --schema invoice`. Fields are what a Spanish/EU invoice actually has and what a ledger row needs. Everything is optional on purpose: a model forced to fill a required field will INVENT one, and an absent value is far safer than a confident wrong one - validation downstream can only check what is there.",
+  "type": "json_schema",
+  "json_schema": {
+    "name": "invoice",
+    "schema": {
+      "type": "object",
+      "properties": {
+        "is_invoice": {
+          "type": "boolean",
+          "description": "true only for an actual invoice or receipt; false for quotes, delivery notes, statements, reminders and anything else"
+        },
+        "document_kind": {
+          "type": "string",
+          "description": "invoice, credit_note, receipt, quote, delivery_note, statement or other"
+        },
+        "invoice_number": { "type": "string" },
+        "issue_date": { "type": "string", "description": "ISO 8601, YYYY-MM-DD" },
+        "due_date": { "type": "string", "description": "ISO 8601, YYYY-MM-DD" },
+        "supplier_name": { "type": "string" },
+        "supplier_tax_id": {
+          "type": "string",
+          "description": "the SUPPLIER's NIF/CIF/VAT number, exactly as printed"
+        },
+        "customer_name": { "type": "string" },
+        "customer_tax_id": { "type": "string" },
+        "currency": { "type": "string", "description": "ISO 4217, e.g. EUR" },
+        "subtotal": { "type": "number", "description": "net, before tax" },
+        "tax_rate": { "type": "number", "description": "percent, e.g. 21" },
+        "tax_amount": { "type": "number" },
+        "total": { "type": "number", "description": "the amount actually payable" },
+        "iban": { "type": "string" },
+        "payment_terms": { "type": "string" },
+        "line_items": {
+          "type": "array",
+          "description": "one entry per billed line, when the document lists them",
+          "items": {
+            "type": "object",
+            "properties": {
+              "description": { "type": "string" },
+              "quantity": { "type": "number" },
+              "unit_price": { "type": "number" },
+              "amount": { "type": "number" }
+            }
+          }
+        }
+      },
+      "required": ["is_invoice", "document_kind"]
+    }
+  }
+}

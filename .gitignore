@@ -1,0 +1,78 @@
+# --- secrets ---
+.env
+
+# --- config\: your settings, not your secrets -----------------------------
+# Real config holds addresses, hostnames and paths - identifying, though not
+# secret, so it follows the .env rule rather than the media\ one: it travels in
+# your personal backup zip, it never reaches git or a public release. The
+# *.example.ini templates and the README DO ship, so a fresh install has
+# something to copy. fleet.json is tracked on purpose: model/effort per desk is
+# fleet.json USED to be tracked as product. It is not: the desks map is keyed
+# by session id, so it carries this instance's project names - found shipping
+# a real one on 2026-08-14, in a repo whose only job is installing a stranger
+# a fresh Omnius. It now follows the same rule as every other real config
+# file: the .example ships, the real one is yours and travels in the backup.
+config/*
+!config/README.md
+!config/*.example.ini
+!config/fleet.example.json
+
+# --- machine-local runtime (regenerates itself) ---
+state/
+**/.claude/settings.local.json
+
+# --- projects are their own git repos — the root repo never tracks them ---
+projects/*
+!projects/.gitkeep
+
+# --- daybook notes: personal, and no longer in git (2026-08-14) ------------
+# Tracked from 2026-07-31 for per-edit history, back when the repo doubled as
+# a backup. It does not any more - his words: "repo is no longer for backups,
+# it is now for fresh clean installs". Backups are the PC's job and Omnius's
+# own (pack.ps1 -> the configured folder), and they DO include these.
+# The app itself still ships; only the notes it holds are his.
+daybook/notes/
+
+# --- memory\ is this instance's BIOGRAPHY, not the product (2026-08-13) -----
+# install.ps1:251 already said it - "the building instance's memory is its
+# biography and never travels" - and pack.ps1 -Fresh enforced it. Git did not,
+# and on 2026-08-12 a second install attached to this same remote and pushed
+# its memory over the first machine's: status.md became the other fleet, and
+# USER.md was rewritten from the near-empty seed, losing months of learned
+# working preferences. Two instances, one repo, last writer wins - silently.
+#
+# So memory now travels the way it was designed to: in the personal backup zip
+# (pack.ps1 with no flags includes memory\), and a fresh install seeds itself
+# from templates\fresh\memory\, which stays tracked below. Old memory is still
+# recoverable from history: git show <commit>:memory/orchestrator/status.md
+memory/
+!templates/fresh/memory/
+# The demo fleet's brief is PRODUCT, not biography: it is the contract the
+# three demo desks build against, and the README sends every new reader
+# straight at it. The bare `memory/` rule above swallowed it, so the shipped
+# demo had no brief and its first instruction ("build the API from the brief")
+# pointed at a file nobody outside this machine had (2026-08-14).
+!templates/demo-project/memory/
+
+# --- asset archive: travels in the zip, stays out of git (binary bloat) ---
+media/
+
+# --- junk ---
+node_modules/
+__pycache__/
+*.pyc
+dist/
+build/
+*.log
+.DS_Store
+Thumbs.db
+scratch/
+
+# --- this instance's own paperwork, not the product (2026-08-14) ------------
+# The repo exists to install a fresh Omnius - "el repo es para hacer
+# instalacion fresh". These are notes ABOUT this instance, and pack.ps1 -Fresh
+# already refuses to ship them; git was the only place they still travelled.
+# They stay on disk and in the backup zip.
+START-HERE.md
+*HANDOVER*.md
+docs/HANDOFF-*.md

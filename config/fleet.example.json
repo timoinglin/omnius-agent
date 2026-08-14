@@ -1,0 +1,35 @@
+{
+  "_comment": "Fleet defaults for spawned sessions. Read by tools\\discord\\watchdog.py at spawn time. Lives in git ON PURPOSE: .env never travels, so a fresh machine must still spawn the right thing on day one. Resolution order, most specific first: desks[<session id>] -> roles[<role>] -> defaults -> hardcoded fallback in watchdog.py. A value of null means 'do not pass the flag at all'.",
+  "version": 1,
+  "defaults": {
+    "model": "opus",
+    "effort": "xhigh",
+    "permissionMode": null,
+    "resume": "transcript",
+    "window": "terminal",
+    "_why_window": "Owner's model, 2026-08-03: a Discord message OPENS that desk's bridge window and it stays open, because he must be as efficient from Discord as at the keyboard - headless costs a cold boot per message (~30-45s vs ~15s warm). Boot opens NOTHING but the watchdog and daybook; at the desk he starts `claude` himself. If mail arrives for a desk where he left a native window open, the watchdog closes it and takes over (idle only - a turn in flight is never killed)."
+  },
+  "roles": {
+    "orchestrator": {
+      "permissionMode": null,
+      "_why": "KEEPS ITS RAILS. The orchestrator can !killall, git push, pack the workspace and delete projects - its blast radius is the whole fleet, not one folder. It stays on the permission profile so anything unlisted escalates to #alerts and can be approved from Discord. That escalation is now the ONLY rail in the system, so it has to actually work.",
+      "resume": "fresh",
+      "_why_fresh": "Measured 2026-08-01: the orchestrator's dev transcript was 11.2 MB while the actual Discord conversation (state\\transcripts\\) was 52 KB. Every --continue run paid a ~200x context tax to answer a chat message - the owner's 'really slow'. Fresh runs read memory + the bus transcript tail instead (see /omnius). Component desks KEEP transcript resume: their in-flight build context genuinely lives there."
+    },
+    "project": {
+      "permissionMode": null,
+      "_why": "DO NOT set bypassPermissions here. Proved by A/B test 2026-08-01: with it, an INTERACTIVE spawn hangs idle forever - no children, never runs /omnius, never claims - because Claude Code shows a confirmation screen that -p skips. Without it the same desk claimed in 16 seconds. The flag was added the night before precisely so unattended desks would never stall, and it was the thing stalling them. Desks rely on the profile in .claude/settings.json instead. If bypass is ever wanted again, test --dangerously-skip-permissions INTERACTIVELY first, not with -p."
+    },
+    "daybook": {
+      "permissionMode": null,
+      "_why": "DO NOT set bypassPermissions here. Proved by A/B test 2026-08-01: with it, an INTERACTIVE spawn hangs idle forever - no children, never runs /omnius, never claims - because Claude Code shows a confirmation screen that -p skips. Without it the same desk claimed in 16 seconds. The flag was added the night before precisely so unattended desks would never stall, and it was the thing stalling them. Desks rely on the profile in .claude/settings.json instead. If bypass is ever wanted again, test --dangerously-skip-permissions INTERACTIVELY first, not with -p."
+    },
+    "tool": {
+      "permissionMode": null,
+      "_why": "DO NOT set bypassPermissions here. Proved by A/B test 2026-08-01: with it, an INTERACTIVE spawn hangs idle forever - no children, never runs /omnius, never claims - because Claude Code shows a confirmation screen that -p skips. Without it the same desk claimed in 16 seconds. The flag was added the night before precisely so unattended desks would never stall, and it was the thing stalling them. Desks rely on the profile in .claude/settings.json instead. If bypass is ever wanted again, test --dangerously-skip-permissions INTERACTIVELY first, not with -p."
+    }
+  },
+  "desks": {
+    "_comment": "Per-session overrides beat everything above. Key = session id, e.g. \"my-project.app\": { \"model\": \"sonnet\", \"effort\": \"medium\" }. Use for a desk that is cheap, noisy, or deliberately restricted. Set from Discord with !model / !restart <model> [effort]. THIS MAP IS INSTANCE STATE - pack.ps1 -Fresh empties it, because a session id carries your project names."
+  }
+}

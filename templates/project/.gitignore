@@ -1,0 +1,17 @@
+# secrets
+.env
+
+# machine-local
+**/.claude/settings.local.json
+
+# junk
+node_modules/
+__pycache__/
+*.pyc
+dist/
+build/
+.next/
+.expo/
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,18 @@
+{
+  "name": "remotion",
+  "version": "1.0.0",
+  "description": "Shared Remotion capability for Omnius. Installed by root install.bat; node_modules is recreated per machine (not in git, not in the zip). Not yet wired to an entry point - see README.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@remotion/cli": "^4.0.508",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "remotion": "^4.0.508"
+  }
+}

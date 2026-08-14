@@ -1,0 +1,44 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "../.."
+    ],
+    "allow": [
+      "Read(./**)",
+      "Read(../../**)",
+      "Edit(./**)",
+      "Write(./**)",
+      "NotebookEdit(./**)",
+      "Glob",
+      "Grep",
+      "LS",
+      "Bash(git status:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git restore:*)",
+      "Bash(git show:*)",
+      "Bash(python ../../tools/discord/inbox_watch.py:*)",
+      "Bash(python ../../tools\\discord\\inbox_watch.py:*)",
+      "Bash(npm run:*)",
+      "Bash(npm test:*)",
+      "Bash(pytest:*)",
+      "Bash(ls:*)",
+      "Bash(mkdir:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "Read(../../.env)",
+      "Read(../../**/.env)",
+      "Bash(cat .env:*)",
+      "Bash(cat ../../.env:*)",
+      "Bash(git push:*)",
+      "Bash(rm -rf:*)",
+      "Bash(npm publish:*)",
+      "Bash(curl:*)",
+      "Bash(iwr:*)"
+    ]
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "permissions": {
+    "additionalDirectories": [
+      "../.."
+    ],
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "LS",
+      "Bash",
+      "PowerShell",
+      "Write",
+      "Edit",
+      "NotebookEdit",
+      "WebFetch",
+      "WebSearch",
+      "BashOutput",
+      "KillShell",
+      "Task",
+      "Agent",
+      "Skill",
+      "SlashCommand",
+      "Workflow",
+      "TodoWrite",
+      "ToolSearch",
+      "ListSkills",
+      "SearchSkills",
+      "Artifact",
+      "SendUserFile",
+      "ReportFindings",
+      "SendMessage",
+      "PushNotification",
+      "TaskCreate",
+      "TaskGet",
+      "TaskList",
+      "TaskOutput",
+      "TaskStop",
+      "TaskUpdate",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
+      "Monitor",
+      "EnterPlanMode",
+      "ExitPlanMode",
+      "mcp__claude-in-chrome",
+      "mcp__computer-use",
+      "mcp__Claude_Browser",
+      "mcp__visualize",
+      "mcp__ccd_session",
+      "mcp__ccd_session_mgmt",
+      "mcp__mcp-registry",
+      "mcp__scheduled-tasks"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./**/.env)",
+      "Read(../../.env)",
+      "Read(../../**/.env)",
+      "AskUserQuestion"
+    ]
+  }
+}

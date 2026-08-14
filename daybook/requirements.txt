@@ -1,0 +1,14 @@
+# Notes has no third-party dependencies.
+#
+# The app is one Python file that imports only the standard library
+# (http.server, json, hashlib, pathlib, re, threading, ...). There is
+# nothing to install and nothing to keep up to date — that is the point:
+# the markdown files in notes/ stay readable with or without this app,
+# and the app stays runnable on any machine with Python on it.
+#
+# This file exists so that `pip install -r requirements.txt` is a valid
+# no-op, and so there is an obvious place to add a dependency if one ever
+# genuinely earns its way in. Please think twice before it does.
+#
+# Requirement that is NOT pip-installable: Python 3.10 or newer.
+# install.bat checks for it.
