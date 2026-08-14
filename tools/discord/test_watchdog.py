@@ -3480,6 +3480,11 @@ try:
           "Ask-YesNo 'sign in now" in _inst0)
     check("Node has a direct route too, so a winget-less box is not half-installed",
           "Install-NodeDirect" in _inst0 and "nodejs.org/dist/index.json" in _inst0)
+    # The direct routes are for machines nobody here owns, so they need a way to
+    # be exercised that is not "boot a sandbox and wait 18 minutes for an MSI".
+    check("the direct routes can be tested without a sandbox",
+          "[switch]$NoWinget" in _inst0
+          and "(Test-Cmd 'winget') -and (-not $NoWinget)" in _inst0)
 
     # == a SYSTEM shell has no user profile ==================================
     # 2026-08-15, on a real machine: the Claude CLI installer died with

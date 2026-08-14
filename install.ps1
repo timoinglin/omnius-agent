@@ -1,7 +1,15 @@
 # Omnius - first-time install & environment doctor (idempotent - safe to re-run anytime)
 # Run via install.bat (double-click) or:  powershell -ExecutionPolicy Bypass -File install.ps1
 param(
-  [switch]$CheckOnly   # report only - never prompt, never install
+  [switch]$CheckOnly,  # report only - never prompt, never install
+  # Pretend winget is not here. The direct-download routes exist for machines
+  # that have no package manager, and the only honest place to exercise them
+  # used to be a Windows Sandbox - where Python's MSI takes 18 minutes against a
+  # copy-on-write disk, so one test run costs an evening (2026-08-15). With this
+  # switch the same path runs on real hardware at real speed. Test it in a fresh
+  # LOCAL USER ACCOUNT: per-user installs are invisible to it, so the tools are
+  # genuinely missing, and nothing you already rely on gets touched.
+  [switch]$NoWinget
 )
 
 $ErrorActionPreference = 'Continue'
@@ -448,8 +456,10 @@ if ($env:USERPROFILE -like '*\system32\config\systemprofile*' -or $whoami -eq 'N
 }
 
 # --- prerequisites ------------------------------------------------------------
-$haveWinget = Test-Cmd 'winget'
-if (-not $haveWinget) {
+$haveWinget = (Test-Cmd 'winget') -and (-not $NoWinget)
+if ($NoWinget) {
+  Write-Status 'i' '-NoWinget: ignoring winget on purpose, to exercise the direct downloads'
+} elseif (-not $haveWinget) {
   Write-Status '!' 'winget not available - installing required tools directly from their official sites instead'
 }
 
