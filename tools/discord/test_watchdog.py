@@ -3422,9 +3422,16 @@ try:
     # stdlib test suite, CHM docs, tkinter (nothing here draws a window), debug
     # binaries. Every skipped file is one Defender does not scan on write.
     check("...and skips the components nothing in this workspace uses",
-          all(f"Include_{k}=0" in _inst0 for k in ("test", "doc", "tcltk", "debug", "symbols")))
-    check("...while keeping pip and the dev headers a source build needs",
-          "Include_pip=1" in _inst0 and "Include_dev=1" in _inst0)
+          all(f"Include_{k}=0" in _inst0
+              for k in ("test", "doc", "tcltk", "debug", "symbols", "dev")))
+    # Include_dev=0 is only safe while every dependency ships a Windows wheel -
+    # a wheel is a copy, not a build, so no headers are involved. A dependency
+    # added here that has to compile would need them back.
+    check("...which is only safe because nothing pip-installed builds from source",
+          all(d in _inst0 for d in ("pywinpty", "psutil", "yt-dlp", "pymupdf",
+                                    "faster-whisper", "playwright")))
+    check("...while keeping pip itself, and PATH",
+          "Include_pip=1" in _inst0 and "PrependPath=1" in _inst0)
     check("...and it runs /passive, so there is a visible progress bar",
           "'/passive'" in _inst0)
     # Silence for minutes is indistinguishable from a hang. Both halves matter:

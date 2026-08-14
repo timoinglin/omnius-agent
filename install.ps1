@@ -290,19 +290,27 @@ function Install-PythonDirect {
   # /passive rather than /quiet: it shows Python's own progress window, no
   # clicking required. This installer is run by a person at a keyboard, and a
   # visible bar beats a silent five minutes.
-  # The component list is trimmed because this is the slowest step of the whole
-  # install and most of what it copies is dead weight here: the stdlib test
-  # suite, the CHM docs, tkinter (nothing in this workspace draws a window - the
-  # notes app is HTTP), debug binaries and symbols. Measured cause, not a guess:
-  # in a Windows Sandbox every one of those thousands of small files is scanned
-  # on write, and "Installing Python 3.13.15 Executables" sat at two minutes.
-  # pip stays (obviously) and so does Include_dev - headers and libs are what a
-  # package needs when no wheel exists for it and it has to build.
+  # Trimmed to the parts this workspace actually uses, because this is by far
+  # the slowest step of the install. Measured, not guessed: in a Windows Sandbox
+  # it reached "Executables" at 2:09 and was still on "Development Libraries" at
+  # 5:52, since every one of those thousands of small files is scanned on write.
+  #
+  # Dropped: the stdlib test suite, the CHM docs, tkinter (nothing here draws a
+  # window - the notes app is HTTP), debug binaries, symbols, and the C headers
+  # and .lib files. Include_dev is the surprising one, so: every dependency this
+  # installer goes on to fetch - pywinpty, psutil, yt-dlp, pymupdf,
+  # faster-whisper, playwright - ships a Windows wheel, and a wheel is a copy,
+  # not a build. Headers are needed only when pip has to compile from source,
+  # which none of them does. If some future package ever demands them, running
+  # the same installer again and choosing Modify adds them in a minute.
+  #
+  # pip itself obviously stays, and so does PrependPath - without that the
+  # install succeeds and every later step still fails to find `python`.
   Write-Status '..' 'installing Python (per-user, no administrator rights needed - a few minutes on a fresh machine)'
   try {
     $p = Start-Process -FilePath $exe -PassThru `
          -ArgumentList '/passive','InstallAllUsers=0','PrependPath=1', `
-                       'InstallLauncherAllUsers=0','Include_pip=1','Include_dev=1', `
+                       'InstallLauncherAllUsers=0','Include_pip=1','Include_dev=0', `
                        'Include_test=0','Include_doc=0','Include_tcltk=0', `
                        'Include_debug=0','Include_symbols=0'
     $code = Wait-Installer $p 'Python'
