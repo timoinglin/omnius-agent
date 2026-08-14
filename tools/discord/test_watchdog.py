@@ -3478,6 +3478,21 @@ try:
           "cannot tell" in _inst0 and "return $null" in _inst0)
     check("...never forcing it - a browser sign-in needs a person present",
           "Ask-YesNo 'sign in now" in _inst0)
+    # Defaults to NO because there is no clean way OUT of `claude auth login`
+    # once it starts: Enter at its "Paste code here" prompt retries rather than
+    # cancels, and on 2026-08-15 someone who changed their mind got five
+    # "Invalid code" errors for it.
+    check("...and defaults to no, since that flow cannot be cancelled once started",
+          "-DefaultNo" in _inst0 and "[y/N]" in _inst0)
+    check("...saying what will happen before it happens",
+          "gives you a CODE to paste" in _inst0)
+
+    # A workspace in Downloads is a real first-run footgun: people empty it, and
+    # a GitHub zip unpacked there keeps its "-main" name. Every absolute hook
+    # path, the shortcut and the git repo point at wherever this folder is.
+    check("install warns when the workspace is somewhere it should not live",
+          "Downloads" in _inst0 and "-main$|-master$" in _inst0
+          and "OneDrive" in _inst0)
     check("Node has a direct route too, so a winget-less box is not half-installed",
           "Install-NodeDirect" in _inst0 and "nodejs.org/dist/index.json" in _inst0)
     # The direct routes are for machines nobody here owns, so they need a way to

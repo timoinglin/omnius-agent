@@ -383,8 +383,12 @@ function Install-FfmpegDirect {
   }
 }
 
-function Ask-YesNo([string]$question) {
+function Ask-YesNo([string]$question, [switch]$DefaultNo) {
   if ($CheckOnly) { return $false }
+  if ($DefaultNo) {
+    $a = Read-Host ("     {0}? [y/N]" -f $question)
+    return ($a -match '^[yYjJ]')
+  }
   $a = Read-Host ("     {0}? [Y/n]" -f $question)
   return ($a -eq '' -or $a -match '^[yYjJ]')      # j: the installer gets run on German keyboards
 }
@@ -619,17 +623,28 @@ if ($authed -eq $true) {
   Write-Status '!' 'Claude CLI is NOT signed in - run: claude auth login'
 } else {
   Write-Status '!' 'Claude CLI is not signed in yet - no desk can run until it is'
-  if (Ask-YesNo 'sign in now (opens your browser)') {
+  Write-Host ''
+  Write-Host '     It opens a browser, you approve, and it gives you a CODE to paste'
+  Write-Host '     back here. Have a minute for it now, or do it later - the rest of'
+  Write-Host '     this install does not depend on it.'
+  Write-Host ''
+  # Defaults to NO, and that is the whole point: once `claude auth login` is
+  # running there is no clean way out of it. Pressing Enter at its "Paste code
+  # here" prompt does not cancel - it retries, and on 2026-08-15 somebody who
+  # changed their mind got five "Invalid code" errors and a failed sign-in for
+  # answering a question they had already decided against. An accidental Enter
+  # must not start something you cannot stop.
+  if (Ask-YesNo 'sign in now (browser + paste a code back here)' -DefaultNo) {
     try {
       & claude auth login
     } catch { Write-Status '!' ("sign-in did not complete: {0}" -f $_.Exception.Message) }
     if ((Test-ClaudeAuth) -eq $true) {
       Write-Status 'OK' 'signed in'
     } else {
-      Write-Status '!' 'still signed out - you can finish it any time with: claude auth login'
+      Write-Status '!' 'still signed out - finish it any time with:  claude auth login'
     }
   } else {
-    Write-Status 'i' 'skipped - sign in later with:  claude auth login'
+    Write-Status 'i' 'skipped - sign in before your first desk runs:  claude auth login'
   }
 }
 
@@ -1167,6 +1182,30 @@ if ($hasBackup) {
   } else {
     Write-Status '!' 'skipped - Omnius will keep reminding you until it is set'
   }
+}
+
+# Where the workspace LIVES is not cosmetic. This folder becomes the instance:
+# notes, projects, memory, the git repo, the desktop shortcut and every
+# absolute hook path point at it, and moving it later means re-running install
+# to repair those paths. Two spots are worth a word: Downloads (people empty
+# it, and a zip unpacked there keeps its "-main" name) and any synced folder,
+# where a sync client fights the bus over small files it writes constantly.
+$here = $PSScriptRoot
+$hereWarn = @()
+if ($here -like "*\Downloads\*" -or $here -like "*\Downloads") {
+  $hereWarn += 'it is inside your Downloads folder, which people empty'
+}
+if ($here -match '-main$|-master$') {
+  $hereWarn += 'the "-main" name came from a GitHub zip, not from you'
+}
+foreach ($sync in @('OneDrive', 'Dropbox', 'Google Drive', 'iCloud')) {
+  if ($here -like "*\$sync*") { $hereWarn += "$sync syncs it, and a sync client fights the bus over the small files it writes constantly" }
+}
+if ($hereWarn.Count -gt 0) {
+  Write-Host ''
+  Write-Status '!' ("this workspace lives at {0}" -f $here)
+  foreach ($w in $hereWarn) { Write-Status 'i' ("   - {0}" -f $w) }
+  Write-Status 'i' ("   move the folder somewhere permanent (e.g. {0}\omnius), then re-run install.bat there" -f $env:USERPROFILE)
 }
 
 Write-Host ''
