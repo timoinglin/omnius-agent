@@ -144,9 +144,19 @@ The brief plants those tensions on purpose. Whether the builders handled them �
 
 Desks run with a wide allow-list and **no permission prompts** — a prompt on a screen nobody watches is a hung desk, and Omnius is meant to be used from a phone. Three fences hold instead: anything outside the allow-list becomes an **ok/no question in your channel**; anything irreversible the model must ask about **in words** before doing; and `.env` — the only place secrets live — is deny-listed from reading and excluded from every backup and release. The bot obeys exactly one Discord user: you. Read [docs/PERMISSIONS.md](docs/PERMISSIONS.md) before loosening any of it.
 
+## Roadmap
+
+Specs land before code here — the whole next phase is designed, test list and all, in [docs/DELEGATION.md](docs/DELEGATION.md) (proposed 2026-08-15, not built yet). In the order it will land:
+
+- **Desk-to-desk mail** — a desk delegates to a sibling by addressing an envelope to it; the watchdog validates, delivers, and mirrors every hop into Discord so the fleet talking to itself is always on your screen. Fan-out workflows (one desk triages, another fixes, the rest get told) are just envelopes in sequence — the routing knowledge lives in your project's memory, not in the engine.
+- **A cross-project gate** — inside a project, desks delegate freely; anything crossing a project boundary is held for your ok/no in Discord. Fails closed.
+- **Budgeted loops** — a desk keeps working across runs toward a checkable done-condition, five runs by default, then it must check in with you. Loops never extend themselves.
+- **Slash pass-through** — send `/status` or any skill you've allow-listed straight from a channel; the desk runs the skill instead of improvising. The list starts empty on purpose.
+- Then a live pilot and honest latency numbers, which decide whether warm desks join the delegation path.
+
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
 
 ---
 
