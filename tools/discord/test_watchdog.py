@@ -3554,6 +3554,16 @@ try:
           "0, 3010" in _inst0)
     check("...and re-testing the import afterwards rather than assuming",
           "still not loading" in _inst0)
+    # Same shape of lie, different tool: node_modules existing is not remotion
+    # working. Newer npm blocks install scripts, and esbuild fetches its binary
+    # in one - so every package can be present and rendering still dies.
+    check("remotion checks for esbuild's binary, not just for node_modules",
+          "@esbuild" in _inst0 and "esbuild.exe" in _inst0)
+    # huggingface prints a token warning and a symlink warning on a normal
+    # Windows box. Neither is actionable by someone running an installer, and
+    # together they are twelve alarming lines meaning "it worked".
+    check("the whisper pre-warm does not print warnings nobody can act on",
+          "HF_HUB_DISABLE_SYMLINKS_WARNING" in _inst0)
 
     # == a SYSTEM shell has no user profile ==================================
     # 2026-08-15, on a real machine: the Claude CLI installer died with
@@ -5376,7 +5386,12 @@ try:
     fresh = nd / "app.md"
     fresh.write_text("notes", encoding="utf-8")
     check("notes_age: fresh notes are quiet", wd.notes_age("demo-app.app") == "")
-    old = _os.path.getmtime(fresh) - 9 * 86400
+    # Nine days AND A MINUTE. notes_age int()s the day count, so an age landing
+    # a hair under 9.0 - which utime rounding and filesystem timestamp
+    # resolution can produce - reports "8d old" and fails a test that is not
+    # actually about rounding. Seen failing once, then passing twice in a row
+    # (2026-08-15); a suite that cries wolf gets ignored.
+    old = _os.path.getmtime(fresh) - (9 * 86400 + 60)
     _os.utime(fresh, (old, old))
     check("notes_age: 9-day-old notes are flagged", "9d old" in wd.notes_age("demo-app.app"))
 

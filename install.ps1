@@ -921,7 +921,14 @@ if (-not (Test-PyImport 'faster_whisper')) {
 if (-not $CheckOnly) {
   if (-not (Test-PyImport 'faster_whisper')) {
     Write-Status '..' 'pre-warming whisper model (first time only, ~140MB)'
-    cmd /c "python tools\whisper\prewarm.py" | Out-Null
+    # Two warnings huggingface_hub prints on a normal Windows box, neither of
+    # which the person running an installer can act on: no HF token (we make
+    # anonymous downloads on purpose - no account should be needed) and no
+    # symlink support (that wants Developer Mode or admin; the cache works
+    # either way, just larger). Twelve lines of alarming text for "it worked".
+    $env:HF_HUB_DISABLE_SYMLINKS_WARNING = '1'
+    $env:HF_HUB_DISABLE_TELEMETRY = '1'
+    cmd /c "python tools\whisper\prewarm.py" 2>&1 | Out-Null
     if ($LASTEXITCODE -eq 0) { Write-Status 'OK' 'whisper model cached' }
     else { Write-Status '!' 'whisper pre-warm skipped (will download on first voice note)' }
   }
@@ -982,7 +989,23 @@ if (-not (Test-Cmd 'node')) {
   if (-not (Test-Path package.json)) { cmd /c "npm init -y" | Out-Null }
   cmd /c "npm install --no-fund --no-audit remotion @remotion/cli react react-dom"
   Pop-Location
-  if (Test-Path tools\remotion\node_modules) { Write-Status 'OK' 'remotion installed' }
+  if (Test-Path tools\remotion\node_modules) {
+    # node_modules existing is not the same as remotion WORKING. Newer npm
+    # blocks packages' install scripts until they are approved, and esbuild -
+    # which remotion bundles with - fetches its platform binary in exactly such
+    # a script. Seen 2026-08-15: "added 245 packages", then
+    # "npm warn allow-scripts esbuild@0.28.1 (postinstall: node install.js)".
+    # Without that binary the packages are all present and rendering still dies.
+    $esbuild = Get-ChildItem 'tools\remotion\node_modules\@esbuild' -Recurse -Filter 'esbuild.exe' `
+                             -File -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($esbuild) {
+      Write-Status 'OK' 'remotion installed'
+    } else {
+      Write-Status '!' 'remotion installed, but esbuild has no binary - npm blocked its install script'
+      Write-Status 'i' '   video RENDERING will fail until it runs; npm printed the approve command above'
+      Write-Status 'i' '   (nothing else is affected - this is remotion only)'
+    }
+  }
   else { Write-Status 'X' 'remotion npm install failed' }
 }
 
