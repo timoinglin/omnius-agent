@@ -5781,13 +5781,23 @@ try:
     check("un-acked heartbeat drops the connection instead of going quietly deaf",
           "zombie" in _zombie)
 
-    # A fatal close must stop the thread, not retry: the watchdog then stays on
-    # REST and the log says exactly which box to tick.
+    # A close nobody can fix must stop the thread: the watchdog stays on REST
+    # and the log says why. A bad token is that case - it stays wrong.
     g5 = gwm.Gateway("tok", log=lambda *a: None, ws_factory=FakeWS)
-    FakeWS.script = [gwm.GatewayClosed("nope", 4014)]
+    FakeWS.script = [gwm.GatewayClosed("nope", 4004)]
     g5._run_forever()
-    check("disallowed intents stops retrying and records why",
-          g5.fatal and "MESSAGE CONTENT" in g5.fatal and not g5.connected)
+    check("a bad token stops retrying and records why",
+          g5.fatal and "DISCORD_BOT_TOKEN is wrong" in g5.fatal and not g5.connected)
+    # An unticked intent is NOT that case, and treating it as one cost a real
+    # evening: a fresh instance sat on 60s polling with its desk explaining
+    # that a watchdog restart was needed, when the fix was a checkbox in a
+    # browser (2026-08-15). Once ticked, push must come back on its own.
+    check("...but an unticked intent is retried, because a checkbox fixes it",
+          g5.retry_delay_for(4014) == gwm.FIXABLE_RETRY_SECONDS)
+    check("...and a wrong token is not retried, because nothing external fixes it",
+          g5.retry_delay_for(4004) is None)
+    check("the retry interval is minutes, not a hot loop",
+          gwm.FIXABLE_RETRY_SECONDS >= 300)
 
     print("== watchdog: two transports, one handler ==")
     check("SeenIds suppresses a repeat", wd.SeenIds().add("1") and not (

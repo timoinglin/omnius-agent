@@ -61,6 +61,12 @@ FATAL_CLOSE = {
            "Developer Portal (Bot -> Privileged Gateway Intents)"),
 }
 
+# Fatal NOW, fixable by the owner in a browser. These keep being retried, slowly:
+# the moment the box is ticked, push comes back on its own. Everything else in
+# FATAL_CLOSE needs a new token or a code change, and retrying it is a hot loop.
+FIXABLE_CLOSE = {4014}
+FIXABLE_RETRY_SECONDS = 600
+
 OP_DISPATCH, OP_HEARTBEAT, OP_IDENTIFY = 0, 1, 2
 OP_RESUME, OP_RECONNECT, OP_INVALID_SESSION = 6, 7, 9
 OP_HELLO, OP_HEARTBEAT_ACK = 10, 11
@@ -285,6 +291,8 @@ class Gateway:
         self.fatal = None
         self.last_event_at = 0.0        # monotonic; watchdog reports it as health
         self.reconnects = 0
+        self._nagged = False            # a fixable refusal is logged once, not every retry
+        self.retry_after = FIXABLE_RETRY_SECONDS   # tests shorten this
 
         self._stop = threading.Event()
         self._thread = None
@@ -294,6 +302,16 @@ class Gateway:
         self._seq = None
 
     # -- lifecycle --
+
+    def retry_delay_for(self, code):
+        """-> seconds to wait before trying this close code again, or None when
+        retrying is pointless.
+
+        A separate function because the alternative is a sleep buried in the
+        reconnect loop, which cannot be tested without either waiting ten
+        minutes or spawning a thread - and the suite drives _run_forever
+        synchronously (it hung for exactly that reason, 2026-08-15)."""
+        return self.retry_after if code in FIXABLE_CLOSE else None
 
     def start(self):
         self._thread = threading.Thread(target=self._run_forever, name="gateway",
@@ -318,11 +336,28 @@ class Gateway:
                 if self._stop.is_set():
                     return
                 if e.code in FATAL_CLOSE:
-                    # Retrying cannot fix a wrong token or an unticked intent.
-                    # Say exactly what to do and stop; the watchdog stays on REST.
                     self.fatal = FATAL_CLOSE[e.code]
-                    self.log(f"gateway: {self.fatal} - staying on REST polling")
-                    return
+                    retry_in = self.retry_delay_for(e.code)
+                    if retry_in is None:
+                        # A wrong token stays wrong. Say what to do and stop;
+                        # the watchdog carries on over REST.
+                        self.log(f"gateway: {self.fatal} - staying on REST polling")
+                        return
+                    # An unticked intent is different: the fix is a checkbox in
+                    # somebody's browser, and once ticked they expect push to
+                    # come back. It used to need a watchdog restart nobody knew
+                    # to do - 2026-08-15, a fresh instance sat on 60s polling
+                    # with a desk explaining that a restart was required. So we
+                    # keep retrying, quietly, and heal ourselves the moment the
+                    # box is ticked. REST covers the meantime either way.
+                    if not self._nagged:
+                        self._nagged = True
+                        self.log(f"gateway: {self.fatal} - on REST polling, "
+                                 f"re-checking every {int(retry_in) // 60} min")
+                    if self._stop.wait(retry_in):
+                        return
+                    self.fatal = None            # about to try again: not fatal any more
+                    continue
                 self.log(f"gateway: {e} - reconnecting in {backoff:.0f}s")
             except (OSError, ssl.SSLError, ValueError) as e:
                 self.connected = False

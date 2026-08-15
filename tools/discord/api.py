@@ -98,6 +98,44 @@ class ApiError(Exception):
     pass
 
 
+def intent_status(timeout=20.0):
+    """-> (True | False | None, message) for the Message Content Intent.
+
+    THE setting whose failure is silent and total. Without it Discord strips
+    text and attachments from every message before anyone here sees them, so
+    envelopes arrive with text "" and no files - a fleet that is online,
+    reachable, and deaf. Nothing in the REST API reports it: a token check and
+    a guild check both pass happily. Only a gateway IDENTIFY finds out, which
+    is why this costs one short websocket connect.
+
+    Found the hard way on 2026-08-15: a freshly set-up instance answered its
+    owner's first two messages with "it arrived empty", and the desk had to
+    diagnose it from the watchdog log. Setup validated the token and the
+    server, then sent them off to a bot that could not read.
+    """
+    if not TOKEN:
+        return None, "no token to check with"
+    try:
+        import gateway as gw
+    except Exception as e:                                   # noqa: BLE001
+        return None, f"could not load the gateway client ({type(e).__name__})"
+    g = gw.Gateway(TOKEN, log=lambda *_a, **_k: None)
+    try:
+        g.start()
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if g.connected:
+                return True, "Message Content Intent is on"
+            if g.fatal:
+                return False, g.fatal
+            time.sleep(0.2)
+        return None, f"no answer from the gateway within {int(timeout)}s"
+    except Exception as e:                                   # noqa: BLE001
+        return None, f"{type(e).__name__}: {e}"
+    finally:
+        g.stop()
+
+
 def config_problems():
     """-> list[str] of human-readable config faults. Empty list = usable.
 
@@ -711,6 +749,18 @@ def main(argv):
             return 2
         except Exception as e:
             print(f"[i] could not verify the server ({type(e).__name__})")
+        # Last, because it is the slowest and the only one a valid token cannot
+        # answer. Also the one whose absence you would otherwise discover from
+        # blank messages days later.
+        ok, why = intent_status()
+        if ok is True:
+            print(f"[OK] {why}")
+        elif ok is False:
+            print(f"[X] {why}")
+            print("     until then EVERY message arrives empty - no text, no attachments")
+            return 2
+        else:
+            print(f"[i] could not verify Message Content Intent ({why})")
         return 0
 
     try:
