@@ -62,7 +62,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - **Nothing blocks on your screen.** Permission asks arrive as ok/no in the channel; one `ok` teaches the whole fleet permanently. The class of "came back after lunch, it was stuck on a dialog" is designed out.
 - **Recurring work stops being your job.** Say the schedule in plain words once; routines run it and speak only when something needs you. Silence is the feature — no notification fatigue.
 - **Friction becomes a commit.** Anything that annoys you, you type into the orchestrator's channel — and Omnius modifies Omnius, gated by its own test suite (1,300+ checks). Its verbs are ordinary committed skills (`/new-project`, `/status`, `/archive-project`, …), so every self-improvement is a reviewable commit that travels to every future instance. The tool sharpens itself while you use it.
-- **The chat is the audit log.** Every decision, every answer, every screenshot is already threaded per project and searchable in Discord — no separate tracker to feed.
+- **The chat is the human-facing audit trail.** Every decision, every answer, every screenshot is already threaded per project and searchable in Discord — no separate tracker to feed. The machine keeps its own records underneath: per-desk transcripts, run logs and chain ledgers in `state\`.
 
 ## What a day with it looks like
 
@@ -153,7 +153,7 @@ Desks run with a wide allow-list and **no permission prompts** — a prompt on a
 
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — the next phase, spec'd before its code · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ automated checks that gate every release, **plus** the live-machine validation the suite can't substitute for (documented where it happened, including what only real machines caught)
 
 There is no roadmap: this repo ships what exists, specs land in `docs\` before their code does, and the [commit log](https://github.com/timoinglin/omnius-agent/commits/main) is the honest history of both.
 

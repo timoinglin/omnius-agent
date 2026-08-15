@@ -4159,9 +4159,15 @@ def _post_gate_ask(mapping, rec, led=None):
         log(f"gate ask {rec['id']}: no channel to ask in - held silently")
         return
     try:
-        api.send_message(cid, f"🔀 `[cross-project]` `{rec['sender']}` wants to mail "
-                              f"`{rec['to']}`\n> {preview}\n"
-                              f"reply `ok` to deliver or `no` to drop · code `{rec['code']}`")
+        # The gate is a HUMAN authorization boundary, usually crossed from a
+        # phone - so the thing being authorized is spelled out, not implied.
+        api.send_message(cid, f"🔀 **cross-project desk mail — needs your ok**\n"
+                              f"from  `{rec['sender']}`\n"
+                              f"to    `{rec['to']}`\n"
+                              f"> {preview}\n"
+                              f"reply `ok {rec['code']}` to deliver · `no {rec['code']}` to drop"
+                              f" — bare `ok`/`no` works while this is the only thing waiting."
+                              f" Unanswered, it drops itself in 60m.")
     except api.ApiError as e:
         log(f"gate ask failed: {e}")
 

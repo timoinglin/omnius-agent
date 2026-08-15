@@ -69,10 +69,12 @@ Discord**, including the one checkbox almost everyone misses.
    it like a password — whoever holds it *is* your bot.
 
 5. **Build the invite link.** **OAuth2 → URL Generator** → tick the `bot`
-   scope → under *Bot Permissions* tick **Administrator**. On a private server
-   that's the simple, fine choice; if you prefer scoped permissions, the
-   minimal set is in [docs/DISCORD.md](docs/DISCORD.md) §4. Copy the generated
-   URL from the bottom of the page.
+   scope → under *Bot Permissions* tick exactly four: **Send Messages**,
+   **Read Message History**, **Manage Channels**, **Attach Files**. That is
+   everything Omnius uses — least privilege is the whole security posture
+   here, and the bot should model it. (Administrator also works on a private
+   server, but don't start there; details in [docs/DISCORD.md](docs/DISCORD.md)
+   §4.) Copy the generated URL from the bottom of the page.
 
 6. **Create the server.** In the normal Discord app: **+** (Add a Server) →
    *Create My Own*. Private, just for you — no invite links, no other members.

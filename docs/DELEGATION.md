@@ -389,7 +389,7 @@ redirect block — the block's own comment warns that a path added late writes i
 | 9 | Loop budget exhausted | add-time refusal → desk checkpoints with state + question; fire-time belt skips, drops the job, says so | loop `--channel`, else desk's channel |
 | 10 | Loop target folder vanished later | fire-time re-validation skips, drops, alerts | desk's channel / `#alerts` |
 | 11 | Watchdog restart mid-chain | every stage is a file: outbox reprocessed, gate re-asked (same code, original deadline), inbox picked up, ledgers persist; deterministic `dm-` ids + ledger dedupe make the write-then-crash window redeliver-safe | nobody — it resumes |
-| 12 | Two chains converge on one desk | envelopes queue in one inbox; one run drains both; replies go out per-thread. **Deadlock is impossible because nothing blocks** — "A waits for B" is not a process state, A's run *ended*; the only waiting objects are ledgers, which idle-expire | n/a |
+| 12 | Two chains converge on one desk | envelopes queue in one inbox; one run drains both; replies go out per-thread. **The protocol has no blocking wait state, so the classic A-waits-for-B deadlock cannot occur** — "A waits for B" is not a process state here, A's run *ended*; the only waiting objects are ledgers, which idle-expire | n/a |
 | 13 | Discord down at mirror/notice time | delivery already happened locally; mirror logged, never retried in a storm; transcripts hold both halves | log |
 | 14 | Reply omits `thread` | glued to the chain that last delivered to that sender; genuinely ambiguous → new chain, bounded by rows 4–5 | n/a |
 | 15 | Slash names a skill absent on that desk | the run's Skill tool errors; the desk says so in its reply | the asking channel |

@@ -5764,6 +5764,24 @@ try:
           _storm == "refused" and wd._load_thread(t2).get("closed") == "storm",
           f"last={_storm}")
     wd._hop_ttl = lambda: 2
+    # The reviewer's invariant, pinned by name: replies are DIRECTIONAL. A
+    # repeated forward along an already-recorded edge is NOT a reply - only a
+    # true reversal travels free; same-direction traffic always spends budget,
+    # so "replies are free" can never become free forwarding.
+    pf1 = dmail("alpha.app", {"to": "alpha.web", "text": "fwd once"}, "1700000000050")
+    wd.deliver_desk_mail(dm, "alpha.app", pf1, json.loads(pf1.read_text(encoding="utf-8")))
+    t3 = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
+                    .read_text(encoding="utf-8")).get("thread")
+    pf2 = dmail("alpha.app", {"to": "alpha.web", "text": "fwd again", "thread": t3},
+                "1700000000051")
+    r_f2 = wd.deliver_desk_mail(dm, "alpha.app", pf2,
+                                json.loads(pf2.read_text(encoding="utf-8")))
+    env_f2 = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
+                        .read_text(encoding="utf-8"))
+    check("hops: a repeated forward along an existing edge is NOT a reply - it still costs",
+          r_f2 == "delivered" and env_f2.get("hops") == 0
+          and wd._load_thread(t3).get("hopsLeft") == 0,
+          f"r={r_f2} hops={env_f2.get('hops')}")
 
     print("== fleet senders (desk mail classification) ==")
     check("a desk id in 'from' is not a person", wd.is_human_sender("alpha.web") is False)
