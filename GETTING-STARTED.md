@@ -4,11 +4,10 @@
 
 # Getting started with Omnius
 
-<!-- Each "## " heading below becomes a TAB in the web app's Guide page
-     (daybook/app.py -> renderGuide). Keep headings short - they are the tab
-     labels - and keep each section able to stand on its own, because most
-     people will read exactly one of them. This file stays ONE file: it is what
-     install.ps1 opens, what GitHub shows, and the only copy. -->
+<!-- Keep each "## " section able to stand on its own - most people read
+     exactly one of them. This file stays ONE file: it is what install.ps1
+     opens, what GitHub shows, and the only copy. (Until 2026-08-15 the web
+     app rendered it as a tabbed Guide page; that tab is now a link here.) -->
 
 ## Start here
 
@@ -254,12 +253,10 @@ There is no login because there is no way in.
 
 | Page | What it is for |
 |---|---|
-| **Dashboard** | Today at a glance — recent notes, open tasks, activity. |
+| **Today** | Quick capture, your open tasks — and **any day, replayed**: step back to a date and see what you wrote *and what the fleet did*: every commit across your projects, every desk that worked, with times. "What did I do on Tuesday?" is one click. |
 | **Notes** | Everything you have captured, searchable, by month. Plain Markdown files in `daybook\notes\` — readable without this app, forever. |
-| **New** | Write a note or a task. |
-| **Stats** | Counts, current streak, a 90-day grid, tags. |
-| **Settings** | Every setting, and **where its value came from** — the file, an environment variable, or a built-in default. Read-only on purpose. |
-| **Guide** | This document, in the browser. |
+| **Write** | The full composer — markdown, attachments, tasks. |
+| **Settings** | Every setting, and **where its value came from** — the file, an environment variable, or a built-in default. Read-only on purpose. The guide lives here as a link. |
 
 Notes are **append-only**: nothing you write is ever silently rewritten.
 

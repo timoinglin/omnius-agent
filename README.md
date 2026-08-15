@@ -103,7 +103,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 | 📄 **documents** | PDF text locally, OCR fallback for scans, structured extraction (invoices) with checksum validation |
 | 🌐 **playwright** | Headless browsing + a polite parallel crawler. Logged-in browsing uses the Claude Chrome extension instead — no credentials in scripts, ever |
 | 🎬 **watch** | Watch a video (URL or file) and answer questions about it — frames + transcript, captions or local Whisper |
-| 📓 **daybook** | Notes & tasks app: plain markdown files are the data, stdlib-only server, web UI at `localhost:5111` with a live Guide tab |
+| 📓 **daybook** | Notes & tasks app: plain markdown files are the data, stdlib-only server, web UI at `localhost:5111`. Its Today page replays **any day** — your notes plus every commit and desk that worked that day |
 
 **Ops that don't need you**
 - Services run as self-healing scheduled tasks (down ≤60 s after a crash, back after every reboot). One desktop icon starts everything; `stop-omnius.bat` genuinely stops it.
@@ -146,7 +146,7 @@ Desks run with a wide allow-list and **no permission prompts** — a prompt on a
 
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it; also the web app's Guide tab · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
 
 ---
 

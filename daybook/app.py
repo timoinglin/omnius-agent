@@ -51,6 +51,7 @@ import mimetypes
 import os
 import re
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -377,26 +378,133 @@ def stats(day_window=90, top_tags=12):
     }
 
 
-def guide_markdown():
-    """-> GETTING-STARTED.md, or a short stand-in explaining where it went.
+# (The Guide tab lived here until 2026-08-15. Once the repo went public the
+# tab duplicated GitHub, and the owner's redesign brief was "just add/see
+# notes when I am at the desk" - so the guide became a link in Settings and
+# the tab count halved. GETTING-STARTED.md itself is unchanged.)
 
-    Read from disk on every request rather than baked into PAGE: the guide is
-    the file install.ps1 opens and the file a human edits, so a copy compiled
-    into the server would drift from it silently - and a wrong how-to is worse
-    than no how-to.
+# --- the day view -------------------------------------------------------------
+# "What did I do on day X?" is the question this app exists to answer, and
+# notes are only half of the record. The other half is what the FLEET did that
+# day - commits across the workspace's repos, desk activity on the bus - and
+# all of it is already on disk; nothing ever assembled it as a day.
 
-    Same standalone promise as omnius_settings(): outside an Omnius tree there
-    is no guide, and the page says so instead of failing.
-    """
-    for candidate in (BASE_DIR.parent / "GETTING-STARTED.md",
-                      BASE_DIR.parent / "README.md"):
+WORKSPACE = "auto"     # tests point this at a sandbox ("" = force standalone)
+
+DATE_ARG_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+GIT_TIMEOUT = 10       # seconds per repo; a wedged git must not hang the page
+
+
+def workspace_root():
+    """-> the Omnius workspace root this daybook lives in, or None.
+
+    Same standalone promise as omnius_settings(): a copy of daybook\\ on its
+    own has no workspace, so every fleet section simply vanishes - never an
+    error. The suite boots the app standalone on purpose."""
+    if WORKSPACE != "auto":
+        return Path(WORKSPACE) if WORKSPACE else None
+    root = BASE_DIR.parent
+    return root if (root / "tools").is_dir() and (root / "CLAUDE.md").is_file() else None
+
+
+def _day_commits(root, date):
+    """Commits made on `date`, across the root repo and every project repo.
+
+    cwd=repo rather than `git -C`: the workspace-wide rule against -C is about
+    desks and allow-list matching, but the plain form is also simply clearer.
+    Any repo that errors or dawdles is skipped - one broken project must not
+    take the whole day view down."""
+    repos = []
+    if (root / ".git").is_dir():
+        repos.append(("omnius", root))
+    projects = root / "projects"
+    if projects.is_dir():
         try:
-            return candidate.read_text(encoding="utf-8")
+            for p in sorted(projects.iterdir()):
+                if p.is_dir() and (p / ".git").is_dir():
+                    repos.append((p.name, p))
+        except OSError:
+            pass
+    out = []
+    for name, path in repos:
+        try:
+            r = subprocess.run(
+                ["git", "log", "--since", date + " 00:00:00",
+                 "--until", date + " 23:59:59",
+                 "--date=format:%H:%M", "--pretty=%h|%ad|%s"],
+                cwd=str(path), capture_output=True, text=True,
+                errors="replace", timeout=GIT_TIMEOUT)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if r.returncode != 0:
+            continue
+        for line in r.stdout.splitlines():
+            sha, _, rest = line.partition("|")
+            hhmm, _, subject = rest.partition("|")
+            if sha and subject:
+                out.append({"repo": name, "hash": sha, "time": hhmm,
+                            "subject": subject})
+    out.sort(key=lambda c: c["time"])
+    return out
+
+
+def _day_desks(root, date):
+    """Per-desk bus activity on `date`, from state\\transcripts\\ (JSONL,
+    one file per session per month - see watchdog.transcribe)."""
+    tdir = root / "state" / "transcripts"
+    if not tdir.is_dir():
+        return []
+    out = []
+    try:
+        sdirs = sorted(d for d in tdir.iterdir() if d.is_dir())
+    except OSError:
+        return []
+    for sdir in sdirs:
+        f = sdir / (date[:7] + ".jsonl")
+        if not f.is_file():
+            continue
+        n_in = n_out = 0
+        first = last = None
+        try:
+            text = f.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-    return ("# Guide\n\nThis notes app is running on its own, outside an Omnius "
-            "workspace, so there is no `GETTING-STARTED.md` beside it.\n\n"
-            "Everything on the other tabs works exactly the same.\n")
+        for line in text.splitlines():
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue                      # a torn line skips, the scan continues
+            ts = str(e.get("ts") or "")
+            if not ts.startswith(date):
+                continue
+            hhmm = ts[11:16]
+            if first is None:
+                first = hhmm
+            last = hhmm
+            if e.get("dir") == "out":
+                n_out += 1
+            else:
+                n_in += 1
+        if n_in or n_out:
+            out.append({"session": sdir.name, "in": n_in, "out": n_out,
+                        "first": first, "last": last})
+    return out
+
+
+def day_data(date):
+    """Everything that happened on one day: notes, tasks, and - inside a
+    workspace - the fleet's day too. `fleet` is None standalone."""
+    month = date[:7]
+    day = next((d for d in parse_month(month)["days"] if d["date"] == date), None)
+    root = workspace_root()
+    fleet = None
+    if root is not None:
+        fleet = {"commits": _day_commits(root, date),
+                 "desks": _day_desks(root, date)}
+    return {"date": date, "month": month,
+            "weekday": (day or {}).get("weekday", ""),
+            "notes": (day or {}).get("notes", []),
+            "fleet": fleet}
 
 
 def omnius_settings():
@@ -772,8 +880,12 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, f.read_bytes(),
                        "image/x-icon" if f.suffix == ".ico" else "image/png",
                        {"Cache-Control": "max-age=86400"})
-        elif route == "/api/guide":
-            self._json({"markdown": guide_markdown()})
+        elif route == "/api/day":
+            params = urllib.parse.parse_qs(url.query)
+            date = (params.get("date") or [""])[0]
+            if not DATE_ARG_RE.match(date):
+                return self._err(400, "date must look like YYYY-MM-DD")
+            self._json(day_data(date))
         elif route.startswith("/files/"):
             target = resolve_upload(route[len("/files/"):])
             if target is None:
@@ -1020,62 +1132,6 @@ body {
 .brand span { opacity: .92; }
 .brand:hover { color: var(--gold-bright); }
 
-/* --- guide ---------------------------------------------------------------- */
-.guidehead { display: flex; gap: 1.1rem; align-items: center; margin: 1.4rem 0 .4rem; }
-.guidehead img { width: 72px; height: 72px; flex: none; }
-.guidehead h2 { margin: 0 0 .25rem; color: var(--gold); font-size: 1.35rem; letter-spacing: .01em; }
-.guidehead .sub { margin: 0; color: var(--faint); font-size: .88rem; max-width: 58ch; }
-/* Its OWN class, not .md. `.md` is the note-body renderer and already styles
-   h1-h6 further down this sheet - reusing it meant the two fought (later rule
-   wins at equal specificity, so the guide's gold headings silently came out
-   grey) AND the guide's styles leaked into every note. */
-/* Guide tabs. A WRAPPING row of pills, not a scrolling strip: eleven labels do
-   not fit one line on a laptop, and a tab you have to scroll sideways to find
-   is a tab you never click. */
-.gtabs { display: flex; flex-wrap: wrap; gap: .3rem; margin: 1.1rem 0 1.6rem;
-         padding-bottom: 1rem; border-bottom: 1px solid var(--line-soft); }
-.gtabs button {
-  font: inherit; font-size: .84rem; cursor: pointer;
-  /* --ink, not --faint: measured 4.15:1 on the pill background, under the 4.5
-     AA floor. These are navigation labels, not captions - an unreadable tab is
-     a section nobody opens. --ink is 10.3:1 and still reads quieter than gold. */
-  background: var(--raise); color: var(--ink);
-  border: 1px solid var(--line-soft); border-radius: 999px;
-  padding: .3rem .78rem; white-space: nowrap; transition: color .12s, border-color .12s;
-}
-.gtabs button:hover { color: var(--bright); border-color: var(--line); }
-.gtabs button.on { background: var(--gold); color: #17130c; border-color: var(--gold);
-                   font-weight: 600; }
-.gtabs button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-/* The first heading of a section is the tab label already - repeating it as an
-   <h3> under the pill just says the same word twice. */
-.guide > section > h3:first-child { margin-top: 0; }
-
-.guide { max-width: 78ch; line-height: 1.62; padding-bottom: 4rem; }
-/* `#` renders as h2 (the doc title) and `##` as h3 - so h3 is the SECTION level
-   and the one that has to be scannable. */
-.guide h2 { color: var(--gold-bright); font-size: 1.3rem; margin: .4rem 0 1.2rem; }
-.guide h3 { color: var(--gold); font-size: 1.12rem; margin: 2.1rem 0 .6rem;
-            border-bottom: 1px solid var(--line-soft); padding-bottom: .35rem; }
-.guide h4 { color: var(--bright); font-size: .97rem; margin: 1.5rem 0 .4rem; }
-.guide p, .guide li { color: var(--ink); font-size: .92rem; }
-.guide li { margin: .28rem 0; }
-.guide ul, .guide ol { padding-left: 1.35rem; }
-.guide a { color: var(--link); }
-.guide code { background: var(--codebg); color: var(--codetext);
-              padding: .1rem .34rem; border-radius: 3px; font-size: .86em; }
-.guide pre { background: var(--codebg); border: 1px solid var(--line-soft); border-radius: 5px;
-             padding: .8rem 1rem; overflow-x: auto; }
-.guide pre code { background: none; padding: 0; color: var(--codetext); }
-.guide hr { border: 0; border-top: 1px solid var(--line-soft); margin: 2rem 0; }
-.guide blockquote { margin: .9rem 0; padding: .55rem .9rem; color: var(--faint);
-                    border-left: 3px solid var(--gold-dim); background: var(--raise); }
-.guide table { border-collapse: collapse; width: 100%; margin: .9rem 0; font-size: .88rem;
-               display: block; overflow-x: auto; }
-.guide th, .guide td { border: 1px solid var(--line-soft); padding: .42rem .6rem;
-                       text-align: left; vertical-align: top; }
-.guide th { background: var(--raise); color: var(--bright); font-weight: 600; }
-.guide strong { color: var(--bright); }
 .tabs { display: flex; align-self: stretch; }
 .tabs a {
   display: flex; align-items: center;
@@ -1341,34 +1397,15 @@ button.primary {
 button.primary:hover { background: var(--btn-hover); border-color: var(--btn-hover); }
 .hint { font-family: var(--mono); font-size: .68rem; color: var(--faint); padding: .4rem .2rem 0; }
 
-/* ---- stats + settings ---- */
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: .6rem; margin: .4rem 0 1rem; }
-.card { background: var(--raise); border: 1px solid var(--line-soft); border-radius: 6px; padding: .7rem .8rem; }
-.card b { display: block; font-size: 1.6rem; font-weight: 600; color: var(--bright); line-height: 1.2; }
-.card span { font-size: .7rem; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
-.card.good b { color: var(--ok); }
-.card.warn b { color: var(--danger); }
-/* A 90-day activity grid: 13 columns of 7 days, oldest at the left. Plain
-   CSS grid rather than a chart library - nothing here loads from a CDN. */
-.heat { display: grid; grid-auto-flow: column; grid-template-rows: repeat(7, 1fr); gap: 3px; margin: .3rem 0 .2rem; }
-.heat i { width: 100%; aspect-ratio: 1; border-radius: 2px; background: var(--line-soft); }
-.heat i.l1 { background: #24506e; } .heat i.l2 { background: #2f6b93; }
-.heat i.l3 { background: #3f8dbf; } .heat i.l4 { background: var(--accent); }
-.heatkey { display: flex; align-items: center; gap: 4px; font-size: .65rem; color: var(--faint); font-family: var(--mono); }
-.heatkey i { width: .7rem; height: .7rem; border-radius: 2px; background: var(--line-soft); display: inline-block; }
-.heatkey i.l1 { background: #24506e; } .heatkey i.l2 { background: #2f6b93; }
-.heatkey i.l3 { background: #3f8dbf; } .heatkey i.l4 { background: var(--accent); }
-.bars { display: flex; flex-direction: column; gap: .35rem; }
-.bar2 { display: grid; grid-template-columns: 5rem 1fr 3.5rem; align-items: center; gap: .6rem; font-family: var(--mono); font-size: .72rem; }
-.bar2 .track { background: var(--line-soft); border-radius: 3px; height: .85rem; overflow: hidden; }
-.bar2 .fill { height: 100%; background: var(--accent); }
-.bar2 .fill.t { background: var(--tagc); }
-.bar2 em { color: var(--faint); font-style: normal; text-align: right; }
-.tags { display: flex; flex-wrap: wrap; gap: .4rem; }
-.tags a { background: var(--raise); border: 1px solid var(--line-soft); border-radius: 999px;
-          padding: .2rem .6rem; font-size: .74rem; color: var(--tagc); text-decoration: none; }
-.tags a:hover { border-color: var(--focus); }
-.tags a b { color: var(--faint); font-weight: 400; margin-left: .3rem; }
+/* ---- the day view's fleet rows + settings ---- */
+.daynav { margin-top: 1.2rem; }
+.daynav input[type="date"] { font-family: var(--mono); }
+.frow { display: grid; grid-template-columns: 4.4rem minmax(7rem, 12rem) 1fr;
+        gap: .7rem; padding: .34rem .2rem; align-items: baseline;
+        border-bottom: 1px solid var(--line-soft); font-size: .84rem; }
+.frow code { font-family: var(--mono); font-size: .72rem; color: var(--faint); }
+.frow b { color: var(--gold); font-weight: 600; font-size: .78rem; }
+.frow span { color: var(--ink); overflow-wrap: anywhere; }
 .rows { font-family: var(--mono); font-size: .74rem; }
 .row2 { display: grid; grid-template-columns: minmax(9rem, 14rem) 1fr auto; gap: .7rem;
         padding: .38rem .2rem; border-bottom: 1px solid var(--line-soft); align-items: baseline; }
@@ -1391,9 +1428,7 @@ button.primary:hover { background: var(--btn-hover); border-color: var(--btn-hov
       <a href="#/" id="tab-dash">Today</a>
       <a href="#/notes" id="tab-notes">Notes</a>
       <a href="#/new" id="tab-new">Write</a>
-      <a href="#/stats" id="tab-stats">Stats</a>
       <a href="#/settings" id="tab-settings">Settings</a>
-      <a href="#/guide" id="tab-guide">Guide</a>
     </nav>
     <span id="pill" class="pill" hidden></span>
   </div>
@@ -1409,8 +1444,15 @@ button.primary:hover { background: var(--btn-hover); border-color: var(--btn-hov
   </div>
   <h2 class="sect">Open tasks <span class="n" id="openCount"></span></h2>
   <div id="dashTasks"></div>
-  <h2 class="sect">Today <span class="n" id="todayLabel"></span></h2>
+  <div class="bar daynav">
+    <button id="dayPrev" title="Previous day">&lsaquo;</button>
+    <input type="date" id="dayInput" title="Jump to any day">
+    <button id="dayNext" title="Next day">&rsaquo;</button>
+    <button id="dayHome" class="ghost" hidden>back to today</button>
+  </div>
+  <h2 class="sect" id="dayHead">Today <span class="n" id="todayLabel"></span></h2>
   <div id="dashToday"></div>
+  <div id="dashFleet"></div>
 </section>
 
 <section id="view-notes" hidden>
@@ -1471,30 +1513,6 @@ button.primary:hover { background: var(--btn-hover); border-color: var(--btn-hov
   <div class="hint">Enter = new line &middot; Ctrl+Enter = save &middot; paste or drop attachments anywhere in the box</div>
 </section>
 
-<section id="view-stats" hidden>
-  <div class="cards" id="statCards"></div>
-  <h2 class="sect">Last 90 days</h2>
-  <div class="heat" id="heat"></div>
-  <div class="heatkey"><span>less</span><i class="l0"></i><i class="l1"></i><i class="l2"></i><i class="l3"></i><i class="l4"></i><span>more</span></div>
-  <h2 class="sect">By month</h2>
-  <div id="byMonth"></div>
-  <h2 class="sect">Tags</h2>
-  <div id="tagCloud"></div>
-</section>
-
-<section id="view-guide" hidden>
-  <div class="guidehead">
-    <img src="/logo.png" alt="Omnius">
-    <div>
-      <h2>How Omnius works</h2>
-      <p class="sub">You talk to it in Discord. It works on this PC. This page is
-        <code>GETTING-STARTED.md</code>, read straight from disk &mdash; so it is never out of date.</p>
-    </div>
-  </div>
-  <nav id="guideTabs" class="gtabs"></nav>
-  <article id="guideBody" class="guide">Loading&hellip;</article>
-</section>
-
 <section id="view-settings" hidden>
   <div id="cfgState"></div>
   <h2 class="sect">Settings <span class="n" id="cfgDir"></span></h2>
@@ -1515,6 +1533,11 @@ button.primary:hover { background: var(--btn-hover); border-color: var(--btn-hov
     <div id="cfgProblems"></div>
   </div>
   <p class="hint" id="cfgFoot"></p>
+  <h2 class="sect">Guide</h2>
+  <p class="hint">How Omnius works, from install to routines:
+    <a href="https://github.com/timoinglin/omnius-agent/blob/main/GETTING-STARTED.md"
+       target="_blank" rel="noopener">GETTING-STARTED.md</a>
+    &mdash; the same file lives at the top of this workspace.</p>
 </section>
 
 </main>
@@ -1533,6 +1556,7 @@ const todayStr = () => { const d = new Date(); return d.getFullYear() + "-" + pa
 const thisMonth = () => todayStr().slice(0, 7);
 const monthLabel = m => MONTH_NAMES[+m.slice(5) - 1] + " " + m.slice(0, 4);
 const state = { view: "dash", months: [], month: thisMonth(), day: null, q: "",
+                dashDay: null,   /* the Today tab's day; null = actually today */
                 type: "all", selecting: false,
                 sort: localStorage.getItem("notes-sort") === "asc" ? "asc" : "desc" };
 const selected = new Map();
@@ -1811,7 +1835,7 @@ const groupsHTML = (groups, unit) => groups.map(g =>
 
 /* ------------------------------------------------------------ views */
 
-const VIEWS = ["dash", "notes", "new", "stats", "settings", "guide"];
+const VIEWS = ["dash", "notes", "new", "settings"];
 
 function applyRoute() {
   const h = location.hash || "#/";
@@ -1826,9 +1850,7 @@ function applyRoute() {
   if (state.view !== "notes" && state.selecting) setSelecting(false);
   if (state.view === "dash") { renderDash(); qinput.focus(); }
   else if (state.view === "notes") { refreshNotes(); }
-  else if (state.view === "stats") { renderStats(); }
   else if (state.view === "settings") { renderSettings(); }
-  else if (state.view === "guide") { renderGuide(); }
   else { showWrite(); input.focus(); }
 }
 
@@ -1912,116 +1934,9 @@ function mdRender(src) {
   return out.join("\n");
 }
 
-let guideLoaded = false;
-/* Split the guide on "## " into tabs. The markdown stays ONE file - it is what
-   install.ps1 opens and what GitHub renders - and the tabs are a view of it, so
-   there is no second copy to drift. A guide nobody scrolls to the end of is a
-   guide nobody reads; eleven short pages beat one long one. */
-function guideSections(md) {
-  const lines = md.split(/\r?\n/);
-  const out = [];
-  let cur = null, inCode = false;
-  for (const ln of lines) {
-    if (/^```/.test(ln)) inCode = !inCode;
-    /* Never split on a "## " that is inside a fenced block - it is a comment
-       in someone's example, not a heading. */
-    const m = !inCode && ln.match(/^##\s+(.*)$/);
-    if (m) { cur = { title: m[1].trim(), body: [] }; out.push(cur); continue; }
-    if (cur) cur.body.push(ln);
-  }
-  return out.map(s => ({ title: s.title, body: s.body.join("\n").trim() }))
-            .filter(s => s.body);
-}
-
-function showGuideSection(i) {
-  document.querySelectorAll("#guideTabs button").forEach((b, n) =>
-    b.classList.toggle("on", n === i));
-  document.querySelectorAll("#guideBody > section").forEach((s, n) =>
-    s.hidden = n !== i);
-  /* Jumping tabs mid-scroll leaves you halfway down a page you have not read. */
-  const head = $(".guidehead");
-  if (head) head.scrollIntoView({ block: "start", behavior: "smooth" });
-  try { localStorage.setItem("guideTab", String(i)); } catch (e) {}
-}
-
-async function renderGuide() {
-  if (guideLoaded) return;                 // read once per page load, not per tab click
-  try {
-    const r = await fetch("/api/guide");
-    const d = await r.json();
-    const secs = guideSections(d.markdown || "");
-    if (!secs.length) {                    // no "## " headings: render it flat
-      $("#guideTabs").innerHTML = "";
-      $("#guideBody").innerHTML = mdRender(d.markdown || "");
-    } else {
-      $("#guideTabs").innerHTML = secs.map((s, i) =>
-        '<button type="button" data-i="' + i + '">' + mdEscape(s.title) + "</button>").join("");
-      $("#guideBody").innerHTML = secs.map(s =>
-        "<section hidden>" + mdRender(s.body) + "</section>").join("");
-      $("#guideTabs").onclick = ev => {
-        const b = ev.target.closest("button");
-        if (b) showGuideSection(Number(b.dataset.i));
-      };
-      let start = 0;
-      try {
-        const saved = Number(localStorage.getItem("guideTab"));
-        if (saved >= 0 && saved < secs.length) start = saved;
-      } catch (e) {}
-      showGuideSection(start);
-    }
-    guideLoaded = true;
-  } catch (e) {
-    $("#guideBody").innerHTML = "<p>Could not load the guide. It lives in " +
-      "<code>GETTING-STARTED.md</code> at the top of the workspace.</p>";
-  }
-}
-
-/* ------------------------------------------------------------ stats */
-
-function heatLevel(n) { return n === 0 ? 0 : n < 3 ? 1 : n < 6 ? 2 : n < 12 ? 3 : 4; }
-
-async function renderStats() {
-  let s;
-  try { s = await api("/api/stats"); }
-  catch (e) { $("#statCards").innerHTML = '<p class="empty">Could not load stats.</p>'; return; }
-  const t = s.totals;
-  const card = (n, label, cls) =>
-    '<div class="card ' + (cls || "") + '"><b>' + n + "</b><span>" + esc(label) + "</span></div>";
-  $("#statCards").innerHTML =
-      card(t.notes, "notes")
-    + card(t.tasks, "tasks")
-    + card(t.open, "open", t.open ? "warn" : "")
-    + card(t.done, "done", "good")
-    + card(s.streak, s.streak === 1 ? "day streak" : "day streak", s.streak ? "good" : "")
-    + card(s.activeDays, "active days");
-
-  $("#heat").innerHTML = s.days.map(d =>
-    '<i class="l' + heatLevel(d.count) + '" title="' + esc(d.date) + " — "
-    + d.count + (d.count === 1 ? " note" : " notes") + '"></i>').join("");
-
-  const maxM = Math.max(1, ...s.months.map(m => m.notes + m.tasks));
-  $("#byMonth").innerHTML = s.months.length
-    ? '<div class="bars">' + s.months.slice().reverse().map(m => {
-        const total = m.notes + m.tasks;
-        return '<div class="bar2"><code>' + esc(m.month) + '</code>'
-          + '<div class="track"><div class="fill" style="width:'
-          + Math.round(total / maxM * 100) + '%"></div></div>'
-          + "<em>" + total + "</em></div>";
-      }).join("") + "</div>"
-    : '<p class="empty">Nothing yet.</p>';
-
-  const maxT = Math.max(1, ...s.tags.map(x => x.count));
-  $("#tagCloud").innerHTML = s.tags.length
-    ? '<div class="tags">' + s.tags.map(x =>
-        '<a href="#/notes" data-tag="' + esc(x.tag) + '">#' + esc(x.tag)
-        + "<b>" + x.count + "</b></a>").join("") + "</div>"
-    : '<p class="empty">No #tags yet.</p>';
-  if (s.busiest) {
-    $("#tagCloud").insertAdjacentHTML("beforeend",
-      '<p class="hint">Busiest day: ' + esc(s.busiest.date) + " — "
-      + s.busiest.count + " notes</p>");
-  }
-}
+/* (The Guide and Stats views lived here until 2026-08-15 - see the matching
+   note where the guide endpoint was. /api/stats still answers for anything
+   that asks; only the tab is gone.) */
 
 /* ------------------------------------------------------------ settings */
 
@@ -2079,25 +1994,62 @@ async function renderSettings() {
     + "with nobody at the keyboard cannot lock you out.";
 }
 
+/* The Today tab is really a DAY view: today by default, any day on request.
+   "What did I do on day X?" is the question this whole app exists to answer,
+   and the answer is more than notes - inside a workspace the API also returns
+   the fleet's day (commits across every repo, desk activity on the bus), all
+   assembled from what is already on disk. */
+
+function shiftDay(iso, delta) {
+  const d = new Date(iso + "T12:00:00");    // noon dodges DST edges
+  d.setDate(d.getDate() + delta);
+  return d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" + pad(d.getDate());
+}
+
+function fleetHTML(f) {
+  if (!f || (!f.commits.length && !f.desks.length)) return "";
+  let h = "";
+  if (f.commits.length) {
+    h += '<h2 class="sect">Commits <span class="n">' + f.commits.length + "</span></h2>";
+    h += f.commits.map(c =>
+      '<div class="frow"><code>' + esc(c.time || "--:--") + "</code><b>"
+      + esc(c.repo) + "</b><span>" + esc(c.subject) + "</span></div>").join("");
+  }
+  if (f.desks.length) {
+    h += '<h2 class="sect">Desk activity</h2>';
+    h += f.desks.map(d =>
+      '<div class="frow"><code>' + esc((d.first || "") +
+        (d.last && d.last !== d.first ? "–" + d.last : "")) + "</code><b>"
+      + esc(d.session) + "</b><span>" + d["in"] + " in · "
+      + d.out + " out</span></div>").join("");
+  }
+  return h;
+}
+
 async function renderDash() {
-  $("#todayLabel").textContent = todayStr();
+  const day = state.dashDay || todayStr();
+  const isToday = day === todayStr();
+  $("#dayInput").value = day;
+  $("#dayHome").hidden = isToday;
+  $("#dayHead").firstChild.textContent = isToday ? "Today " : day + " ";
   try {
-    const [open, month] = await Promise.all([
+    const [open, d] = await Promise.all([
       api("/api/search?type=open&q="),
-      api("/api/month/" + thisMonth())
+      api("/api/day?date=" + day)
     ]);
+    if ((state.dashDay || todayStr()) !== day) return;   // user moved on mid-fetch
+    $("#todayLabel").textContent = isToday ? day : (d.weekday || "");
     $("#openCount").textContent = String(open.results.length);
     setPill(open.results.length);
     dashTasks.innerHTML = open.results.length
       ? groupsHTML(orderView(groupByDate(open.results)), "task")
       : '<p class="empty">No open tasks &mdash; enjoy the quiet.</p>';
-    const today = month.days.find(d => d.date === todayStr());
-    const todayNotes = today && state.sort === "desc"
-      ? today.notes.slice().reverse()
-      : (today ? today.notes : []);
-    dashToday.innerHTML = todayNotes.length
-      ? todayNotes.map(n => noteRow(n, thisMonth())).join("")
-      : '<p class="empty">Nothing yet today. Write something above.</p>';
+    const notes = state.sort === "desc" ? d.notes.slice().reverse() : d.notes;
+    dashToday.innerHTML = notes.length
+      ? notes.map(n => noteRow(n, d.month)).join("")
+      : '<p class="empty">' + (isToday ? "Nothing yet today. Write something above."
+                                       : "Nothing written this day.") + "</p>";
+    $("#dashFleet").innerHTML = fleetHTML(d.fleet);
   } catch (e) { flash(e.message); }
 }
 
@@ -2526,18 +2478,21 @@ qinput.addEventListener("input", qGrow);
 input.addEventListener("keydown", e => {
   if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); saveFromWrite(); }
 });
-/* Tag chips in Stats behave exactly like a #tag inside a note: they jump to
-   Notes with the search already applied. The note handler is delegated on the
-   notes container, so it never sees these. */
-$("#tagCloud").addEventListener("click", e => {
-  const a = e.target.closest("a[data-tag]");
-  if (!a) return;
-  e.preventDefault();
-  state.q = "#" + a.dataset.tag;
-  searchBox.value = state.q;
-  state.day = null; dayPick.value = ""; updateChip();
-  if (location.hash.indexOf("#/notes") === 0) refreshNotes();
-  else location.hash = "#/notes";
+/* The day navigator: today by default, any day on request. Landing on today
+   is normalised back to null so "today" stays TODAY across midnight. */
+function setDashDay(iso) {
+  const today = todayStr();
+  if (iso > today) iso = today;             // the future has nothing to show
+  state.dashDay = iso === today ? null : iso;
+  renderDash();
+}
+$("#dayPrev").addEventListener("click", () =>
+  setDashDay(shiftDay(state.dashDay || todayStr(), -1)));
+$("#dayNext").addEventListener("click", () =>
+  setDashDay(shiftDay(state.dashDay || todayStr(), 1)));
+$("#dayHome").addEventListener("click", () => setDashDay(todayStr()));
+$("#dayInput").addEventListener("change", () => {
+  if (/^\d{4}-\d{2}-\d{2}$/.test($("#dayInput").value)) setDashDay($("#dayInput").value);
 });
 
 $("#saveBtn").addEventListener("click", saveFromWrite);

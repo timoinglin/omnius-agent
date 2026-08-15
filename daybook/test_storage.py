@@ -604,59 +604,92 @@ conn.close()
 
 with urllib.request.urlopen(base + "/") as r:
     html = r.read().decode("utf-8")
-# Retitled "Omnius" 2026-08-06, when the app gained the emblem and the Guide
-# tab - it is the front door now, not only the notes.
 ok("<title>Omnius</title>" in html, "GET / serves the page")
 ok('href="/favicon.ico"' in html, "...with the emblem as its favicon")
 ok('src="/logo.png"' in html, "...and the mark in the header")
 
-# The Guide tab reads GETTING-STARTED.md from disk on every request rather than
-# baking a copy into the page: install.ps1 opens that same file, and a compiled
-# copy would drift from it silently. A wrong how-to is worse than none.
-with urllib.request.urlopen(base + "/api/guide") as r:
-    guide = json.loads(r.read().decode("utf-8"))
-ok(len(guide.get("markdown", "")) > 200, "GET /api/guide returns the guide text")
-ok("class=\"guide\"" in html, "the guide has its OWN class, not .md (which styles notes)")
+# The 2026-08-15 redesign, in the owner's words: "just add/see notes when I am
+# at the desk". Four tabs earn their place; Stats and Guide do not - the guide
+# duplicates GitHub now the repo is public (a link in Settings remains), and
+# the day view IS the statistics that mattered.
+for _tab in ("tab-dash", "tab-notes", "tab-new", "tab-settings"):
+    ok(f'id="{_tab}"' in html, f"the {_tab.split('-')[1]} tab is present")
+ok('id="tab-stats"' not in html and 'id="tab-guide"' not in html,
+   "Stats and Guide tabs are gone - four tabs, not six")
+ok('id="dayInput"' in html and 'id="dashFleet"' in html,
+   "the Today tab ships the day navigator and the fleet section")
+ok("GETTING-STARTED.md" in html, "the guide survives as a link in Settings")
 
-# The guide is TABBED (2026-08-07): renderGuide splits the markdown on "## " so
-# one long page nobody scrolls becomes twelve short ones. The split is a view -
-# the file stays one file - so these check the contract between them.
-_gmd = guide.get("markdown", "")
-_secs, _incode = [], False
-for _ln in _gmd.split("\n"):
-    if _ln.startswith("```"):
-        _incode = not _incode
-    elif not _incode and _ln.startswith("## "):
-        _secs.append(_ln[3:].strip())
-ok(len(_secs) >= 8, f"the guide splits into tabs, not one wall ({len(_secs)} sections)")
-ok(all(0 < len(s) <= 28 for s in _secs),
-   "every heading is short enough to BE a tab label")
-ok(len(set(_secs)) == len(_secs), "no two tabs share a label")
-ok('id="guideTabs"' in html and "function guideSections" in html,
-   "the page ships the tab strip and the splitter")
-ok(".gtabs" in html and "flex-wrap" in html,
-   "the tab strip WRAPS - twelve pills do not fit one line on a laptop")
+# == the day view =============================================================
+# "What did I do on day X?" is the question this app exists to answer, and the
+# answer is more than notes: inside a workspace, /api/day also assembles the
+# fleet's day - commits across every repo, desk activity from the bus
+# transcripts. All of it already lived on disk; nothing ever read it as a day.
+import subprocess
 
-# What the guide must actually explain. He asked for these by name on
-# 2026-08-07: the subscription, the two browsers, and routines.
-# Phrases are matched against a WHITESPACE-COLLAPSED copy: the source is hard
-# wrapped at 80 columns, so "behind a sign-in" is split by a newline and a
-# literal match tests the line wrapping, not the content.
-_flat = " ".join(_gmd.split())
-ok("## Your Claude plan" in _gmd and "no separate Omnius bill" in _flat,
-   "the guide explains what the Claude subscription pays for")
-ok("Nothing spends while you are quiet" in _flat,
-   "...and that an idle Omnius costs nothing")
-ok("## Browsing" in _gmd and "Playwright" in _gmd and "Chrome extension" in _gmd,
-   "the guide explains BOTH browsers")
-ok("behind a sign-in" in _flat or "behind a login" in _flat,
-   "...and that the split is about logged-in sessions, not difficulty")
-ok("password ever reaches this workspace" in _flat,
-   "...and why a login must never be scripted headlessly")
-ok("## Routines" in _gmd and "!cron" in _gmd,
-   "the guide explains routines and how to manage them")
-ok("says nothing" in _flat or "silence is the designed" in _flat,
-   "...including that a routine which finds nothing stays silent")
+app.WORKSPACE = ""                                   # force standalone first
+app.append_note("day-view note", dt("2026-03-03 09:00"))
+app.append_note("day-view task", dt("2026-03-03 10:00"), task=True)
+app.append_note("the day after", dt("2026-03-04 08:00"))
+_s, _d = get("/api/day?date=2026-03-03")
+ok(_s == 200 and _d["date"] == "2026-03-03", "GET /api/day answers")
+ok([n["text"] for n in _d["notes"]] == ["day-view note", "day-view task"],
+   "...with exactly that day's notes, in file order")
+ok(all(k in _d["notes"][0] for k in ("line", "sha", "type", "time")),
+   "...as full note objects, so ticks and edits work from the day view")
+ok(_d["weekday"] == "Tue", "...and the day header's weekday travels along")
+ok(_d["fleet"] is None,
+   "standalone: fleet is null, never an error - a bare daybook has no workspace")
+_s, _d2 = get("/api/day?date=2026-03-05")
+ok(_s == 200 and _d2["notes"] == [], "an empty day is empty, not an error")
+_s, _ = get("/api/day?date=03-03-2026")
+ok(_s == 400, "a malformed date is refused")
+
+# The fleet half, against a sandbox workspace: one project repo with a commit
+# ON the day and one OFF it, plus a desk transcript spanning two days with a
+# torn line in the middle.
+_ws = Path(tmp.name) / "dayws"
+_repo = _ws / "projects" / "demo"
+_repo.mkdir(parents=True)
+
+
+def _git(*args, when=None):
+    env = dict(os.environ)
+    if when:
+        env["GIT_AUTHOR_DATE"] = env["GIT_COMMITTER_DATE"] = when
+    r = subprocess.run(["git", "-c", "user.email=day@example.com",
+                        "-c", "user.name=day", *args],
+                       cwd=str(_repo), capture_output=True, timeout=30, env=env)
+    assert r.returncode == 0, f"git {args}: {r.stderr.decode(errors='replace')[:200]}"
+
+
+_git("init", "-q")
+(_repo / "a.txt").write_text("1", encoding="utf-8")
+_git("add", ".")
+_git("commit", "-q", "-m", "on the day", when="2026-03-03T12:30:00")
+(_repo / "a.txt").write_text("2", encoding="utf-8")
+_git("add", ".")
+_git("commit", "-q", "-m", "the day after", when="2026-03-04T09:00:00")
+_tdir = _ws / "state" / "transcripts" / "orchestrator"
+_tdir.mkdir(parents=True)
+(_tdir / "2026-03.jsonl").write_text(
+    '{"ts": "2026-03-03T08:00:00Z", "dir": "in", "text": "hi"}\n'
+    "not json, a torn line\n"
+    '{"ts": "2026-03-03T08:05:00Z", "dir": "out", "text": "hello"}\n'
+    '{"ts": "2026-03-04T08:00:00Z", "dir": "in", "text": "other day"}\n',
+    encoding="utf-8")
+app.WORKSPACE = str(_ws)
+_s, _d3 = get("/api/day?date=2026-03-03")
+_f = _d3["fleet"]
+ok(_f is not None, "inside a workspace the fleet half exists")
+ok([c["subject"] for c in _f["commits"]] == ["on the day"],
+   "commits: the day's commit and only the day's")
+ok(_f["commits"][0]["repo"] == "demo" and _f["commits"][0]["time"] == "12:30",
+   "...labelled with its repo and clock time")
+ok(_f["desks"] == [{"session": "orchestrator", "in": 1, "out": 1,
+                    "first": "08:00", "last": "08:05"}],
+   "desk activity: counts and the day's time range, torn line skipped")
+app.WORKSPACE = "auto"
 
 with urllib.request.urlopen(base + "/logo.png") as r:
     logo, ctype = r.read(), r.headers.get("Content-Type")
