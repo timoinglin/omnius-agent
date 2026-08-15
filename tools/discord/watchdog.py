@@ -3446,6 +3446,7 @@ def handle_update(text, cid):
         return
     _rc, head = _git("rev-parse", "--short", "HEAD")
     head = head.strip()
+    _rc, head_full = _git("rev-parse", "HEAD")
     rc, behind = _git("rev-list", "--count", "HEAD..origin/main")
     behind_n = int(behind.strip()) if rc == 0 and behind.strip().isdigit() else 0
     if behind_n == 0:
@@ -3478,6 +3479,7 @@ def handle_update(text, cid):
         return
     _rc, new = _git("rev-parse", "--short", "HEAD")
     new = new.strip()
+    _rc, new_full = _git("rev-parse", "HEAD")
     ok, tail = _update_suite()
     if not ok:
         _git("reset", "--hard", head)
@@ -3487,10 +3489,135 @@ def handle_update(text, cid):
                               f"Nothing was reloaded; investigate at the desk.")
         return
     _update_restamp()
+    # O2: the handoff. The new watchdog must confirm it took over (healthy
+    # beacon + a Discord exchange) or boot-counting reverts to head_full on
+    # its own. Written BEFORE the re-exec, or a crash in the gap would leave
+    # no handshake at all.
+    write_json_atomic(_pending_path(), {
+        "fromCommit": head_full.strip(), "toCommit": new_full.strip(),
+        "channelId": cid, "startedAt": now_iso(), "startedTs": time.time(),
+        "bootAttempts": 0})
     log(f"!update: {head} -> {new}, suite green - reloading")
     api.send_message(cid, f"✅ updated `{head}` → `{new}` - suite green (`{tail}`). "
-                          f"Reloading now; back in a moment.")
+                          f"Reloading now; the new watchdog reports back when it "
+                          f"is up - or reverts itself if it cannot get healthy.")
     do_reload(cid, announce=False)
+
+
+# --- the update handshake (docs\OBSERVABILITY.md O2) ----------------------------
+# !update validates BEFORE the reload; this is the half that validates AFTER.
+# The handoff is a file, the proof is a healthy tick, and the fallback needs
+# no human: the old commit takes back over on its own.
+
+UPDATE_BOOT_ATTEMPTS_MAX = 3     # a third still-unhealthy boot means crash-loop
+UPDATE_HEALTH_SECONDS = 600      # pending older than this at boot = it sat deaf
+
+
+def _pending_path():
+    # Derived at call time so the test sandbox's WD_STATE redirect covers it.
+    return WD_STATE / "update-pending.json"
+
+
+def _load_pending():
+    try:
+        d = json.loads(_pending_path().read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def _reexec_self():
+    """Replace this process with a fresh watchdog, through the supervisor when
+    it started us (the do_reload lesson). Its own function because tests must
+    stub the one line that would replace the test runner's process image."""
+    here = Path(__file__).resolve()
+    runner = os.environ.get("OMNIUS_SERVICE_RUNNER") or ""
+    argv = [sys.executable]
+    if runner and Path(runner).is_file():
+        argv.append(runner)
+    argv += [str(here)] + sys.argv[1:]
+    os.execv(sys.executable, argv)
+
+
+def _update_revert(rec):
+    """The new code never proved it took over, so the old commit takes back
+    over - no human in the loop, because the human may be asleep and the
+    fleet deaf. fromCommit was running minutes earlier; a revert that itself
+    cannot boot is out of scope by design (the supervisor's restart loop and
+    channel silence remain the last signal)."""
+    frm = str(rec.get("fromCommit") or "")
+    if not frm:
+        _pending_path().unlink(missing_ok=True)
+        return
+    log(f"update handshake: {str(rec.get('toCommit') or '?')[:7]} never came up "
+        f"healthy (boot {rec.get('bootAttempts')}, started {rec.get('startedAt')})"
+        f" - reverting to {frm[:7]}")
+    rc, out = _git("reset", "--hard", frm, timeout=120)
+    if rc != 0:
+        # Cannot revert (git broken?). Do not loop on it: stop the counting,
+        # keep booting the new code - a running-but-suspect watchdog beats
+        # none, and the first healthy tick tells the owner exactly this.
+        log(f"update revert FAILED: {out.strip()[:200]}")
+        write_json_atomic(_pending_path(), dict(rec, revertFailed=True))
+        return
+    _update_restamp()
+    # The reverted record replaces the counter: boots stop counting, and the
+    # OLD code's first healthy tick breaks the bad news.
+    write_json_atomic(_pending_path(), {
+        "reverted": True, "fromCommit": rec.get("fromCommit"),
+        "toCommit": rec.get("toCommit"), "channelId": rec.get("channelId"),
+        "revertedAt": now_iso()})
+    release_lock()   # same as do_reload: the replacement must not exit(3) on our lock
+    _reexec_self()
+
+
+def update_pending_boot():
+    """Boot half of the handshake: count this boot against the pending update;
+    a crash-looping or deaf-aged one reverts before this process does anything
+    else. A boot with no pending file does none of this."""
+    rec = _load_pending()
+    if rec is None or rec.get("reverted") or rec.get("revertFailed"):
+        return
+    rec["bootAttempts"] = int(rec.get("bootAttempts") or 0) + 1
+    try:
+        write_json_atomic(_pending_path(), rec)
+    except OSError:
+        return
+    age = time.time() - float(rec.get("startedTs") or time.time())
+    if rec["bootAttempts"] >= UPDATE_BOOT_ATTEMPTS_MAX or age > UPDATE_HEALTH_SECONDS:
+        _update_revert(rec)
+
+
+def update_pending_confirm():
+    """Healthy-tick half: the beacon just stamped and Discord is answering, so
+    the running code has PROVEN it took over. Say so once and clear the file -
+    or, after a revert, the old code breaks the bad news."""
+    rec = _load_pending()
+    if rec is None:
+        return
+    frm = str(rec.get("fromCommit") or "")[:7]
+    to = str(rec.get("toCommit") or "")[:7]
+    cid = rec.get("channelId")
+    if rec.get("revertFailed"):
+        text = (f"⛔ update `{to}` never came up healthy AND the automatic revert "
+                f"failed - running `{to}` anyway. Check `state\\logs\\watchdog.log` "
+                f"at the desk.")
+    elif rec.get("reverted"):
+        text = (f"⛔ update `{to}` did not come up healthy - **reverted** to `{frm}` "
+                f"on its own. The commits are still on origin; investigate at the "
+                f"desk, then `!update` again.")
+    else:
+        text = (f"✅ update live: `{frm}` → `{to}` - the new watchdog took over "
+                f"and is healthy.")
+    if cid:
+        try:
+            api.send_message(cid, text)
+        except api.ApiError as e:
+            log(f"update handshake post failed ({e}) - retrying next healthy tick")
+            return                       # keep the file; a healthy tick will recur
+    state = "reverted" if (rec.get("reverted") or rec.get("revertFailed")) else "healthy"
+    log(f"update handshake: {state} ({frm} -> {to})")
+    _pending_path().unlink(missing_ok=True)
 
 
 def handle_control(text, cid, target, mapping):
@@ -4784,6 +4911,11 @@ def main():
             pass                                        # not on the main thread
     for d in (INBOX, OUTBOX, MEDIA, LOGS, SESSIONS, WD_STATE, RUNS, TURNS, BRIDGES):
         d.mkdir(parents=True, exist_ok=True)
+    # O2 (docs\OBSERVABILITY.md): count this boot against a pending update.
+    # New code that crash-loops or sat deaf is reverted RIGHT HERE, before it
+    # can do anything else - after the lock, so a stray manual start next to a
+    # healthy watchdog can never bump the counter.
+    update_pending_boot()
     # Runs started by a previous watchdog: adopt them via their lease pid rather
     # than spawning a second brain onto a busy desk. Dead leases clean up lazily
     # in run_active().
@@ -4956,6 +5088,10 @@ def main():
             # beacon stays ~3s fresh however messages are currently arriving.
             if consecutive_deaf == 0 or live:
                 write_beacon(len(mapping), gateway=live)
+                # O2: beacon stamped on a healthy tick = the running code has
+                # PROVEN it took over. Confirm a pending update (or break the
+                # news of a revert), exactly once.
+                update_pending_confirm()
             persist()
         except KeyboardInterrupt:
             log("stopped by user - bye")

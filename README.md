@@ -115,7 +115,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 **Ops that don't need you**
 - Services run as self-healing scheduled tasks (down ≤60 s after a crash, back after every reboot). One desktop icon starts everything; `stop-omnius.bat` genuinely stops it.
 - One-zip backups (secrets excluded by design) and a gated release build that **refuses to ship** if anything identifying or a broken installer is inside.
-- **Every instance updates itself from this repo**: `!update` in Discord previews what's new, `!update go` applies it — fast-forward pull, the full test suite (a red suite **rolls the update back**), then a self-reload that compile-checks first and refuses to kill the bus with a broken version. Zip installs attach to the repo at install time, born on the exact commit their release was cut from.
+- **Every instance updates itself from this repo**: `!update` in Discord previews what's new, `!update go` applies it — fast-forward pull, the full test suite (a red suite **rolls the update back**), then a self-reload that compile-checks first and refuses to kill the bus with a broken version. And the update isn't done until the **new watchdog reports back healthy** — one that crash-loops or sits deaf **reverts to the previous commit on its own** and says so. Zip installs attach to the repo at install time, born on the exact commit their release was cut from.
 
 ## Try the demo fleet (10 minutes)
 

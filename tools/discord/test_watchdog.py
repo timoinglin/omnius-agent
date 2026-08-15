@@ -6069,6 +6069,107 @@ try:
     check("...and the stamp itself can never be committed",
           "RELEASE-COMMIT" in (real_root / ".gitignore").read_text(encoding="utf-8"))
 
+    # == update handshake (docs\OBSERVABILITY.md O2) ===========================
+    # !update validates before the reload; this half validates AFTER: the new
+    # watchdog must prove it took over, or the old commit takes back over on
+    # its own. Everything through stubs - _reexec_self would replace THIS
+    # process's image, and the suite must never re-exec itself.
+    print("== update handshake ==")
+    _real_reexec = wd._reexec_self
+    _real_restamp2 = wd._update_restamp
+    _real_git3, _real_us3, _real_dr3 = wd._git, wd._update_suite, wd.do_reload
+    _hs_seq, _hs_git = [], []
+    wd._reexec_self = lambda: _hs_seq.append("reexec")
+    wd._update_restamp = lambda: _hs_seq.append("restamp")
+    P = wd._pending_path()
+    P.unlink(missing_ok=True)
+    wd._git = lambda *a, timeout=60: (_hs_git.append(a) or (0, ""))
+    sent.clear()
+    wd.update_pending_boot()
+    wd.update_pending_confirm()
+    check("handshake: a normal boot with no pending file does none of this",
+          not P.exists() and sent == [] and _hs_seq == [])
+    # !update go writes the handoff BEFORE the re-exec, with both full commits
+    _hs2 = {"n": 0}
+
+    def _hs_happy(*args, timeout=60):
+        _hs_git.append(args)
+        if args[:2] == ("rev-parse", "--is-inside-work-tree"):
+            return (0, "true")
+        if args[:3] == ("rev-parse", "--short", "HEAD"):
+            _hs2["n"] += 1
+            return (0, "aaa1111\n" if _hs2["n"] == 1 else "eee5555\n")
+        if args[:2] == ("rev-parse", "HEAD"):
+            return (0, ("aaa1111" if _hs2["n"] <= 1 else "eee5555") + "0" * 33 + "\n")
+        if args[:1] == ("rev-list",):
+            return (0, "2\n")
+        if args[:1] == ("pull",):
+            return (0, "Fast-forward\n")
+        return (0, "")
+
+    _pend_at_reload = []
+    wd.do_reload = lambda cid, announce=True: _pend_at_reload.append(P.exists())
+    wd._update_suite = lambda: (True, "==== ok ====")
+    wd._git = _hs_happy
+    wd.handle_update("!update go", "CID_OM")
+    _hrec = json.loads(P.read_text(encoding="utf-8"))
+    check("handshake: go writes the pending handoff before the re-exec",
+          _pend_at_reload == [True] and _hrec.get("bootAttempts") == 0
+          and _hrec.get("fromCommit", "").startswith("aaa1111")
+          and _hrec.get("toCommit", "").startswith("eee5555")
+          and _hrec.get("channelId") == "CID_OM")
+    wd.update_pending_boot()
+    check("handshake: bootAttempts counts every boot while pending",
+          json.loads(P.read_text(encoding="utf-8")).get("bootAttempts") == 1)
+    sent.clear()
+    wd.update_pending_confirm()
+    check("handshake: a healthy tick posts the checkmark once, naming both commits",
+          bool(sent) and "✅" in sent[-1][1] and "aaa1111" in sent[-1][1]
+          and "eee5555" in sent[-1][1] and not P.exists())
+    sent.clear()
+    wd.update_pending_confirm()
+    check("handshake: ...and only once", sent == [])
+    # the third still-unhealthy boot reverts to fromCommit
+    wd._git = lambda *a, timeout=60: (_hs_git.append(a) or (0, ""))
+    wd.write_json_atomic(P, {"fromCommit": "f" * 40, "toCommit": "b" * 40,
+                             "channelId": "CID_OM", "startedAt": now(),
+                             "startedTs": _time.time(), "bootAttempts": 2})
+    _hs_git[:] = []; _hs_seq[:] = []
+    wd.update_pending_boot()
+    _hrec = json.loads(P.read_text(encoding="utf-8"))
+    check("handshake: the third failed boot reverts to fromCommit",
+          any(a[:2] == ("reset", "--hard") and a[2:3] == ("f" * 40,) for a in _hs_git)
+          and _hrec.get("reverted") is True)
+    check("handshake: revert restamps, then re-execs - in that order",
+          _hs_seq == ["restamp", "reexec"])
+    sent.clear()
+    wd.update_pending_boot()
+    check("handshake: a reverted record stops the boot counting",
+          "bootAttempts" not in json.loads(P.read_text(encoding="utf-8")))
+    wd.update_pending_confirm()
+    check("handshake: the old code breaks the bad news, naming both commits",
+          bool(sent) and "⛔" in sent[-1][1] and "reverted" in sent[-1][1]
+          and "fffffff" in sent[-1][1] and "bbbbbbb" in sent[-1][1]
+          and not P.exists())
+    # aged pending (booted, then sat deaf until the DEAF exit) reverts too
+    wd.write_json_atomic(P, {"fromCommit": "f" * 40, "toCommit": "b" * 40,
+                             "channelId": "CID_OM", "startedAt": now(),
+                             "startedTs": _time.time() - 700, "bootAttempts": 0})
+    _hs_git[:] = []; _hs_seq[:] = []
+    wd.update_pending_boot()
+    check("handshake: a deaf-aged pending file reverts even on its first recount",
+          any(a[:2] == ("reset", "--hard") for a in _hs_git))
+    P.unlink(missing_ok=True)
+    # the main loop is actually wired to both halves (call sites, not defs:
+    # the 4-space call in main's startup, the 16-space call on the healthy tick)
+    _wd_now = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
+    check("handshake: boot and confirm are wired into main()",
+          "\n    update_pending_boot()" in _wd_now
+          and "\n                update_pending_confirm()" in _wd_now)
+    wd._git, wd._update_suite, wd.do_reload = _real_git3, _real_us3, _real_dr3
+    wd._update_restamp, wd._reexec_self = _real_restamp2, _real_reexec
+    sent.clear()
+
     # == !trace (docs\OBSERVABILITY.md O1) =====================================
     # One chain's whole story from state alone - ledgers, gate records, loop
     # files. Never the logs.

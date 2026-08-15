@@ -1,6 +1,9 @@
 # Observability — one story per chain, updates that prove they landed, and a demolition derby
 
-> **Status: O1 built 2026-08-15 (same day it was proposed); O2 and O3 remain proposed.** The phase after
+> **Status: O1 and O2 built 2026-08-15 (same day they were proposed); O3 remains proposed.**
+> O2's live drill — a deliberately broken commit proving the auto-revert on a real machine —
+> is deferred into the derby on purpose (it IS drill #11); the mechanism itself is
+> suite-covered from both halves. The phase after
 > delegation is deliberately not a feature phase: the fleet just grew five mechanisms
 > (desk mail, gate, loops, slash, self-update), and the most valuable next work is being
 > able to SEE them, trust the updater end-to-end, and then try to break all of it on
