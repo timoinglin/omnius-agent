@@ -428,12 +428,19 @@ def _day_commits(root, date):
     out = []
     for name, path in repos:
         try:
+            # creationflags: this server is hosted by pythonw (no console), and
+            # a console-subsystem child spawned from a console-less parent gets
+            # a brand-new VISIBLE console - one cmd flash per repo per Today
+            # load (seen live on two machines, 2026-08-15). capture_output
+            # pipes the streams but does not stop the console; only this flag
+            # does. 0 off-Windows.
             r = subprocess.run(
                 ["git", "log", "--since", date + " 00:00:00",
                  "--until", date + " 23:59:59",
                  "--date=format:%H:%M", "--pretty=%h|%ad|%s"],
                 cwd=str(path), capture_output=True, text=True,
-                errors="replace", timeout=GIT_TIMEOUT)
+                errors="replace", timeout=GIT_TIMEOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except (OSError, subprocess.SubprocessError):
             continue
         if r.returncode != 0:

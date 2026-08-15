@@ -768,5 +768,11 @@ ok("NO authentication" in warning and "deletes" in warning and ":5111" in warnin
 ok(warning.isascii(),
    "the warning is ASCII, so it stays legible in any console")
 
+src = (Path(__file__).parent / "app.py").read_text(encoding="utf-8")
+ok(src.count("subprocess.run(") + src.count("subprocess.Popen(")
+   == src.count("CREATE_NO_WINDOW"),
+   "every subprocess call in app.py is windowless - pythonw hosts this server, "
+   "and an unflagged console child flashes a cmd window per repo per Today load")
+
 tmp.cleanup()
 print("\nall %d checks passed" % passed)
