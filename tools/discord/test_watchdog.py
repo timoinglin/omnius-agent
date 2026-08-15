@@ -4021,7 +4021,9 @@ try:
     _sr = (real_root / "tools" / "service_runner.py").read_text(encoding="utf-8")
     check("service_runner tells the target how to re-exec through it",
           'OMNIUS_SERVICE_RUNNER"] = ' in _sr)
-    _reload_src = _wd_src[_wd_src.index('elif cmd == "!reload"'):][:2400]
+    # The body moved into do_reload when !update learned to share it (D-phase,
+    # 2026-08-15); the invariants pinned here are unchanged.
+    _reload_src = _wd_src[_wd_src.index("def do_reload"):][:2400]
     check("!reload re-execs through service_runner when it is there",
           "OMNIUS_SERVICE_RUNNER" in _reload_src,
           "otherwise every reload silently unsupervises the bus")
@@ -5945,6 +5947,109 @@ try:
         _dcfg.load = _sreal
     wd.SLASH_SKILLS = _saved_slash
     _clean_slashbox(); sent.clear()
+
+    # == !update (self-update from the repo) ===================================
+    # One verb carries the whole story: preview, ff-only pull, suite gate with
+    # rollback, restamp, reload. Git and the suite are stubbed - these prove
+    # the DECISIONS, and the two source checks at the end pin the build side.
+    print("== !update ==")
+    _real_git, _real_us, _real_dr = wd._git, wd._update_suite, wd.do_reload
+    _real_restamp = wd._update_restamp
+    wd._update_restamp = lambda: None
+    _reloaded = []
+    wd.do_reload = lambda cid, announce=True: _reloaded.append(cid)
+    _upd_calls = []
+
+    def _script_git(script):
+        def fake(*args, timeout=60):
+            _upd_calls.append(args)
+            for key, resp in script:
+                if args[:len(key)] == key:
+                    return resp
+            return (0, "")
+        return fake
+
+    check("!update is a control verb", "!update" in wd.CONTROL_COMMANDS)
+    sent.clear(); _upd_calls[:] = []
+    wd._git = _script_git([(("rev-parse", "--is-inside-work-tree"),
+                            (1, "fatal: not a git repository"))])
+    wd.handle_update("!update", "CID_OM")
+    check("update: an unattached install is told how to attach, not left confused",
+          bool(sent) and "install.bat" in sent[-1][1])
+    sent.clear()
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-list",), (0, "0\n")),
+    ])
+    wd.handle_update("!update", "CID_OM")
+    check("update: a current tree says so and stops", "already current" in sent[-1][1])
+    sent.clear(); _upd_calls[:] = []
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-list",), (0, "3\n")),
+        (("log",), (0, "bbb2222 fix a\nccc3333 fix b\nddd4444 fix c\n")),
+    ])
+    wd.handle_update("!update", "CID_OM")
+    check("update: behind -> a preview names the commits and the go verb",
+          "3 commit(s) behind" in sent[-1][1] and "!update go" in sent[-1][1]
+          and not any(c[:1] == ("pull",) for c in _upd_calls))
+    sent.clear(); _upd_calls[:] = []
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-list",), (0, "3\n")),
+        (("status", "--porcelain"), (0, " M tools/discord/watchdog.py\n")),
+    ])
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: a dirty tree refuses - a pull must never eat local work",
+          "not updating" in sent[-1][1]
+          and not any(c[:1] == ("pull",) for c in _upd_calls))
+    _seq = {"n": 0}
+
+    def _upd_happy(*args, timeout=60):
+        _upd_calls.append(args)
+        if args[:2] == ("rev-parse", "--is-inside-work-tree"):
+            return (0, "true")
+        if args[:3] == ("rev-parse", "--short", "HEAD"):
+            _seq["n"] += 1
+            return (0, "aaa1111\n" if _seq["n"] == 1 else "eee5555\n")
+        if args[:1] == ("rev-list",):
+            return (0, "2\n")
+        if args[:1] == ("pull",):
+            return (0, "Fast-forward\n")
+        return (0, "")
+
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
+    wd._git = _upd_happy
+    wd._update_suite = lambda: (True, "==== 1315 passed, 0 failed ====")
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: a clean tree pulls ff-only, reports old -> new, reloads",
+          any("updated" in s[1] and "eee5555" in s[1] for s in sent)
+          and _reloaded == ["CID_OM"]
+          and any(c[:2] == ("pull", "--ff-only") for c in _upd_calls))
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    wd._update_suite = lambda: (False, "==== 1 failed ====")
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: a red suite ROLLS BACK and does not reload",
+          any("rolled back" in s[1].lower() for s in sent)
+          and any(c[:2] == ("reset", "--hard") for c in _upd_calls)
+          and _reloaded == [])
+    wd._git, wd._update_suite, wd.do_reload = _real_git, _real_us, _real_dr
+    wd._update_restamp = _real_restamp
+    sent.clear()
+    # the build side of the same story, pinned in source
+    _packsrc2 = (real_root / "pack.ps1").read_text(encoding="utf-8")
+    _instsrc2 = (real_root / "install.ps1").read_text(encoding="utf-8")
+    check("pack stamps the zip with its birth commit", "RELEASE-COMMIT" in _packsrc2)
+    check("install attaches a zip install to the repo for updates",
+          "github (updates)" in _instsrc2 and "reset --mixed" in _instsrc2)
+    check("...and the stamp itself can never be committed",
+          "RELEASE-COMMIT" in (real_root / ".gitignore").read_text(encoding="utf-8"))
 
     # == permission escalation =================================================
     # Relaying a prompt to Discord is what lets the profile be TIGHTENED instead

@@ -127,7 +127,8 @@ STUCK_TURN_SECONDS = 10 * 60
 STUCK_QUIET_SECONDS = 3 * 60    # a session writing more recently than this is WORKING
 _stuck_notified = {}            # session -> when we last said it was stuck
 CONTROL_COMMANDS = ("!kill", "!restart", "!status", "!killall", "!reload",
-                    "!screen", "!desktop", "!config", "!stop", "!cron", "!model")
+                    "!screen", "!desktop", "!config", "!stop", "!cron", "!model",
+                    "!update")
 # An envelope's `from` is either a PERSON or the fleet talking to itself. These
 # three are the fleet; "owner" and every configured guest label are people.
 # Stated as an exclusion list on purpose: guests are configured, not compiled,
@@ -3336,6 +3337,157 @@ def run_desktop_verb(verb_name, rest, caller_channel):
     return ok, msg, shot
 
 
+def do_reload(cid, announce=True):
+    """Restart the watchdog in place so it picks up code changes. Until this
+    existed, every edit to watchdog.py needed physical access to the machine:
+    Python imports at startup, so a running watchdog keeps the old code
+    forever. Requested 2026-07-31 ("que el sistema se pueda reiniciar solo").
+    Shared by !reload and !update, which announces in its own words."""
+    here = Path(__file__).resolve()
+    problems = []
+    for f in (here, here.parent / "api.py", here.parent / "schedule.py"):
+        try:
+            compile(f.read_text(encoding="utf-8"), str(f), "exec")
+        except SyntaxError as e:
+            problems.append(f"{f.name}:{e.lineno}: {e.msg}")
+        except OSError as e:
+            problems.append(f"{f.name}: {e}")
+    if problems:
+        # THE important guard. The watchdog is the only thing listening, so
+        # re-exec'ing into code that cannot start would kill the bus with no
+        # remote way to bring it back - the machine would have to be reached
+        # physically. Refuse loudly and keep running the code that works.
+        api.send_message(cid, "♻ reload **REFUSED** - this code would not start:\n```\n"
+                         + "\n".join(problems) + "\n```\nStill running the previous version.")
+        log(f"reload refused, syntax errors: {problems}")
+        return
+    if announce:
+        api.send_message(cid, f"♻ reloading watchdog @ {api.MACHINE} - back in a moment")
+    log("reload requested - re-exec")
+    release_lock()   # the replacement must not find our lock and exit(3)
+    # Re-exec THROUGH service_runner when it started us. It uses runpy, so
+    # we are the same process it is - execv'ing a bare `python watchdog.py`
+    # dropped the supervisor and the redirected log with it, and left the
+    # scheduled task reading Ready while a watchdog it no longer owned kept
+    # running (2026-08-12, seen on the second install and confirmed here).
+    runner = os.environ.get("OMNIUS_SERVICE_RUNNER") or ""
+    argv = [sys.executable]
+    if runner and Path(runner).is_file():
+        argv.append(runner)
+    argv += [str(here)] + sys.argv[1:]
+    try:
+        os.execv(sys.executable, argv)
+    except OSError as e:
+        acquire_lock()          # exec failed: we are still alive, take the lock back
+        log(f"re-exec failed: {e}")
+        api.send_message(cid, f"reload FAILED - still on the old code: {e}")
+        return
+
+
+def _git(*args, timeout=60):
+    """Run git in the workspace root. -> (rc, combined output). Never raises,
+    never a shell string - the same argv discipline start_run follows."""
+    try:
+        p = subprocess.run(["git", "-C", str(ROOT)] + list(args),
+                           capture_output=True, text=True, timeout=timeout,
+                           creationflags=NO_WINDOW)
+        return p.returncode, (p.stdout or "") + (p.stderr or "")
+    except Exception as e:                                   # noqa: BLE001
+        return 1, f"{type(e).__name__}: {e}"
+
+
+def _update_suite():
+    """The gate suite, run after a pull. -> (ok, last line). Its own function
+    so tests can stub the ten-second reality out."""
+    try:
+        p = subprocess.run([sys.executable,
+                            str(ROOT / "tools" / "discord" / "test_watchdog.py")],
+                           capture_output=True, text=True, timeout=600,
+                           creationflags=NO_WINDOW)
+        lines = [ln for ln in (p.stdout or "").strip().splitlines() if ln.strip()]
+        return p.returncode == 0, (lines[-1] if lines else "(no output)")
+    except Exception as e:                                   # noqa: BLE001
+        return False, f"suite did not run: {type(e).__name__}: {e}"
+
+
+def _update_restamp():
+    """After a pull: new code can bring new hooks, permissions or template
+    scaffolding - the same idempotent stamps install runs, so an updated
+    instance is a whole one, not a code drop. Its own function so tests never
+    stamp a real machine."""
+    for tool in ("fix_hook_paths.py", "sync_permissions.py"):
+        try:
+            subprocess.run([sys.executable, str(ROOT / "tools" / "discord" / tool)],
+                           capture_output=True, timeout=120, creationflags=NO_WINDOW)
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def handle_update(text, cid):
+    """!update - fetch and preview what origin/main has; !update go - apply it.
+
+    The whole self-update story in one verb, with every gate the manual pull
+    path has: ff-only (local commits are never merged over silently), a dirty
+    tree refuses (a pull must not eat local work), the suite runs after the
+    pull and a red suite ROLLS BACK, and the reload reuses !reload's
+    compile-check. Personal files never move - they are gitignored, which is
+    the whole design of the update path. A zip install that never attached is
+    told how to, not left confused."""
+    go = text.strip().lower().split()[1:2] == ["go"]
+    rc, _out = _git("rev-parse", "--is-inside-work-tree")
+    if rc != 0:
+        api.send_message(cid, "this install is not attached to GitHub - run `install.bat` "
+                              "once (it attaches without touching your files), then "
+                              "`!update` works from anywhere")
+        return
+    rc, out = _git("fetch", "origin", "main", timeout=120)
+    if rc != 0:
+        api.send_message(cid, f"could not reach GitHub:\n```\n{out.strip()[:300]}\n```")
+        return
+    _rc, head = _git("rev-parse", "--short", "HEAD")
+    head = head.strip()
+    rc, behind = _git("rev-list", "--count", "HEAD..origin/main")
+    behind_n = int(behind.strip()) if rc == 0 and behind.strip().isdigit() else 0
+    if behind_n == 0:
+        api.send_message(cid, f"✅ already current at `{head}` - nothing new on origin/main")
+        return
+    if not go:
+        _rc, lg = _git("log", "--oneline", "HEAD..origin/main", "-n", "8")
+        more = "" if behind_n <= 8 else f"\n… and {behind_n - 8} more"
+        api.send_message(cid, f"⬆ **{behind_n} commit(s) behind** origin/main:\n```\n"
+                              f"{lg.strip()}{more}\n```\n`!update go` applies them "
+                              f"(ff-only pull → test suite → reload). Your files are "
+                              f"never touched - everything personal is gitignored.")
+        return
+    _rc, dirty = _git("status", "--porcelain")
+    dirty_n = len([ln for ln in dirty.splitlines() if ln.strip()])
+    if dirty_n:
+        api.send_message(cid, f"⛔ not updating: {dirty_n} tracked file(s) changed locally - "
+                              f"`git status` at the desk names them. Commit or stash "
+                              f"first; a pull must never eat local work.")
+        return
+    rc, out = _git("pull", "--ff-only", "origin", "main", timeout=180)
+    if rc != 0:
+        api.send_message(cid, f"⛔ pull refused (local commits diverge from origin?):\n"
+                              f"```\n{out.strip()[:400]}\n```\nResolve at the desk.")
+        return
+    _rc, new = _git("rev-parse", "--short", "HEAD")
+    new = new.strip()
+    ok, tail = _update_suite()
+    if not ok:
+        _git("reset", "--hard", head)
+        log(f"!update: suite red after {head} -> {new} - rolled back")
+        api.send_message(cid, f"⛔ pulled `{head}` → `{new}` but the suite went red - "
+                              f"**rolled back** to `{head}`.\n`{tail}`\n"
+                              f"Nothing was reloaded; investigate at the desk.")
+        return
+    _update_restamp()
+    log(f"!update: {head} -> {new}, suite green - reloading")
+    api.send_message(cid, f"✅ updated `{head}` → `{new}` - suite green (`{tail}`). "
+                          f"Reloading now; back in a moment.")
+    do_reload(cid, announce=False)
+
+
 def handle_control(text, cid, target, mapping):
     cmd = text.split()[0].lower()
     if cmd == "!status":
@@ -3457,49 +3609,10 @@ def handle_control(text, cid, target, mapping):
             api.send_message(cid, ocfg.describe())
         except Exception as e:
             api.send_message(cid, f"could not read config: {type(e).__name__}: {e}")
+    elif cmd == "!update":
+        handle_update(text, cid)
     elif cmd == "!reload":
-        # Restart the watchdog in place so it picks up code changes. Until this
-        # existed, every edit to watchdog.py needed physical access to the machine:
-        # Python imports at startup, so a running watchdog keeps the old code
-        # forever. Requested 2026-07-31 ("que el sistema se pueda reiniciar solo").
-        here = Path(__file__).resolve()
-        problems = []
-        for f in (here, here.parent / "api.py", here.parent / "schedule.py"):
-            try:
-                compile(f.read_text(encoding="utf-8"), str(f), "exec")
-            except SyntaxError as e:
-                problems.append(f"{f.name}:{e.lineno}: {e.msg}")
-            except OSError as e:
-                problems.append(f"{f.name}: {e}")
-        if problems:
-            # THE important guard. The watchdog is the only thing listening, so
-            # re-exec'ing into code that cannot start would kill the bus with no
-            # remote way to bring it back - the machine would have to be reached
-            # physically. Refuse loudly and keep running the code that works.
-            api.send_message(cid, "♻ reload **REFUSED** - this code would not start:\n```\n"
-                             + "\n".join(problems) + "\n```\nStill running the previous version.")
-            log(f"reload refused, syntax errors: {problems}")
-            return
-        api.send_message(cid, f"♻ reloading watchdog @ {api.MACHINE} - back in a moment")
-        log("reload requested - re-exec")
-        release_lock()   # the replacement must not find our lock and exit(3)
-        # Re-exec THROUGH service_runner when it started us. It uses runpy, so
-        # we are the same process it is - execv'ing a bare `python watchdog.py`
-        # dropped the supervisor and the redirected log with it, and left the
-        # scheduled task reading Ready while a watchdog it no longer owned kept
-        # running (2026-08-12, seen on the second install and confirmed here).
-        runner = os.environ.get("OMNIUS_SERVICE_RUNNER") or ""
-        argv = [sys.executable]
-        if runner and Path(runner).is_file():
-            argv.append(runner)
-        argv += [str(here)] + sys.argv[1:]
-        try:
-            os.execv(sys.executable, argv)
-        except OSError as e:
-            acquire_lock()          # exec failed: we are still alive, take the lock back
-            log(f"re-exec failed: {e}")
-            api.send_message(cid, f"reload FAILED - still on the old code: {e}")
-            return
+        do_reload(cid)
     elif cmd in ("!screen", "!desktop"):
         # "Show me the screen" from the phone. The watchdog runs it in-process
         # rather than spawning a session: it must work when every desk is dead,

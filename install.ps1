@@ -804,6 +804,60 @@ if (Test-Path $cfgDir) {
   }
 }
 
+# --- github (updates) ---------------------------------------------------------
+# A zip install used to ship frozen: no .git (a release must not carry
+# history), so no remote, no `git pull`, no way to receive fixes short of
+# unpacking a new zip NEXT to your instance and moving your life across. The
+# public repo's history is clean by construction now, so attaching is safe -
+# and everything personal (memory\, projects\, daybook notes, config\*.ini,
+# .env, state\) is gitignored, so a pull can only ever move product code.
+#
+# The zip carries RELEASE-COMMIT (stamped by pack.ps1): the exact commit it
+# was cut from. Being born THERE means `git status` starts clean instead of
+# reading every file as locally modified against whatever the tip is by
+# install day; the first `!update` then walks forward normally.
+Write-Host ''
+Write-Host '--- github (updates) -------------------------------------'
+$repoUrl = 'https://github.com/timoinglin/omnius-agent.git'
+if (Test-Path (Join-Path $PSScriptRoot '.git')) {
+  Write-Status 'OK' 'git workspace - updates arrive with `git pull` or !update in Discord'
+} elseif (-not (Test-Cmd 'git')) {
+  Write-Status '!' 'git not available yet - rerun install.bat later to attach for updates'
+} elseif ($CheckOnly) {
+  Write-Status '!' 'not attached to GitHub - would attach, so !update / git pull work'
+} else {
+  Write-Status '..' 'attaching this install to GitHub (code only - your files are gitignored)'
+  & git -C $PSScriptRoot init -b main *> $null
+  & git -C $PSScriptRoot remote add origin $repoUrl *> $null
+  & git -C $PSScriptRoot fetch --quiet origin main *> $null
+  if ($LASTEXITCODE -ne 0) {
+    # Offline is a normal install condition. The half-attach is harmless and
+    # completes on any later rerun (init and remote add are both idempotent
+    # enough: the .git\ test above short-circuits next time, and `git fetch`
+    # is all that was missing).
+    Write-Status '!' 'could not reach GitHub - attach incomplete; rerun install.bat online to finish'
+  } else {
+    $target = 'origin/main'
+    $stampFile = Join-Path $PSScriptRoot 'RELEASE-COMMIT'
+    if (Test-Path $stampFile) {
+      $stamp = ([string](Get-Content $stampFile -TotalCount 1)).Trim()
+      if ($stamp -match '^[0-9a-f]{7,40}$') {
+        & git -C $PSScriptRoot cat-file -e "$stamp^{commit}" *> $null
+        if ($LASTEXITCODE -eq 0) { $target = $stamp }
+      }
+    }
+    & git -C $PSScriptRoot reset --mixed $target *> $null   # unborn main is born here; the working tree is not touched
+    & git -C $PSScriptRoot branch --set-upstream-to=origin/main main *> $null
+    $short = (& git -C $PSScriptRoot rev-parse --short HEAD).Trim()
+    $dirty = @(& git -C $PSScriptRoot status --porcelain 2>$null | Where-Object { $_ })
+    if ($dirty.Count -eq 0) {
+      Write-Status 'OK' ('attached at {0} - update anytime: !update in Discord, or git pull + !reload' -f $short)
+    } else {
+      Write-Status 'OK' ('attached at {0} - {1} file(s) differ locally (git status names them); updates still work' -f $short, $dirty.Count)
+    }
+  }
+}
+
 # --- tools set ----------------------------------------------------------------
 Write-Host ''
 Write-Host '--- tools set --------------------------------------------'

@@ -274,6 +274,9 @@ if ($Fresh) {
   # support handover carries another server's ids, handles and internals.
   $tarArgs += "--exclude=*HANDOVER*.md", "--exclude=$leaf/scratch",
               "--exclude=$leaf/START-HERE.md"
+  # A stale on-disk stamp from some earlier unzip must not ride along - the
+  # ONLY correct stamp is the one injected below, naming THIS build's commit.
+  $tarArgs += "--exclude=$leaf/RELEASE-COMMIT"
   # Stage the clean memory under a temp root so it lands at memory\ in the zip.
   # Staged UNDER $leaf so it lands at "omnius\memory\" in the archive, beside
   # everything else. Staging it as a bare "memory" put it at the archive ROOT:
@@ -356,6 +359,25 @@ if ($Fresh -and (Test-Path $dest)) {
   } finally { $zip.Dispose() }
   $n = (Get-ChildItem (Join-Path $freshStage "$leaf\memory") -Recurse -File).Count
   Write-Host "     seeded $n memory file(s) into $leaf\memory\" -ForegroundColor Gray
+
+  # RELEASE-COMMIT: the exact commit this zip was cut from. install.ps1's
+  # github-attach step births the new instance's `main` HERE, so its working
+  # tree starts CLEAN against git instead of showing every file as modified
+  # versus whatever the tip is by install day. Gitignored on the receiving
+  # side; a plain hex hash, nothing identifying.
+  $relHash = (& git -C $PSScriptRoot rev-parse HEAD 2>$null)
+  if ($relHash) {
+    $stampFile = Join-Path $freshStage 'RELEASE-COMMIT'
+    Set-Content -Path $stampFile -Value $relHash.Trim() -Encoding ascii -NoNewline
+    $zip2 = [IO.Compression.ZipFile]::Open($dest, 'Update')
+    try {
+      [IO.Compression.ZipFileExtensions]::CreateEntryFromFile(
+        $zip2, $stampFile, "$leaf/RELEASE-COMMIT") | Out-Null
+    } finally { $zip2.Dispose() }
+    Write-Host ("     stamped RELEASE-COMMIT ({0})" -f $relHash.Trim().Substring(0, 7)) -ForegroundColor Gray
+  } else {
+    Write-Host '[! ] not a git checkout - no RELEASE-COMMIT stamped (attach will use origin/main)' -ForegroundColor Yellow
+  }
 }
 
 # A release is only a release once it has been read back and proved clean.

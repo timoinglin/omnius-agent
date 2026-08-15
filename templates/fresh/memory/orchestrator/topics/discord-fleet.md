@@ -36,10 +36,10 @@ Read from `watchdog.build_map()` — **not** from the schema, which is only part
 - **⚠ But that refresh re-reads the GUILD, not the CODE.** Adding a *new* `#channel → session` branch to `build_map()` needs a **`!reload`** — a running watchdog imported the old function at startup and keeps it forever. **Symptom to recognise: a desk's replies land in `.refused` while everything about the channel looks correct** — the channel exists, the category is right, the desk writes a correct outbox file, and the watchdog renames it *"belongs to another session"* because its map still says `session=None`.
 - Prefer restarting the **`Omnius Watchdog` scheduled task** over killing a pid — `service_runner.py` supervises it, so it comes back on its own, and the lock validates pid liveness so the replacement prunes a stale lock rather than exiting 3.
 
-## Control commands — ELEVEN (the source of truth is `CONTROL_COMMANDS`)
+## Control commands — TWELVE (the source of truth is `CONTROL_COMMANDS`)
 
 `!status` · `!kill` · `!restart` · `!reload` · `!killall` · `!stop` · `!config` ·
-`!cron` · `!model` · `!screen` · `!desktop`
+`!cron` · `!model` · `!screen` · `!desktop` · `!update`
 
 Answered by the watchdog itself: **instant, no desk spawn, no tokens.**
 
@@ -47,6 +47,7 @@ Answered by the watchdog itself: **instant, no desk spawn, no tokens.**
 - `!kill` / `!restart` — act on **this channel's** desk (`target.session`), never on a session named as an argument. **`!restart sonnet low`** changes model/effort *and* cuts over in one command (persists, like `!model`).
 - `!stop` — cancels a desk: queued mail to `state\dropped\` (kept, not deleted), state cleared, processes killed, and **survivors reported** rather than success claimed.
 - `!reload` — re-execs the watchdog in place to pick up code edits; syntax-checks `watchdog.py`, `api.py`, `schedule.py` first and **refuses** rather than re-exec into code that cannot start.
+- `!update` — self-update from the GitHub repo: bare = fetch + preview what's new; `!update go` = ff-only pull → **full suite (red rolls the update back)** → hooks/permissions restamped → reload. Refuses on a dirty tree; personal files are gitignored and never move.
 - `!cron` — routines: list, `pause`/`resume`/`rm <id>`, `adopt <id|all>` after a machine move. Output is a **fenced code block**, because Discord renders no markdown tables.
 - `!model` — this desk's model/effort. `!model sonnet [low]` · `!model effort low` · `!model reset`. Bare shows **what the live run is on**, what the config says, **where each value came from**, and flags when the two have diverged. Writes `desks.<id>` in `fleet.json`, so it **travels and persists**. Both are pinned at launch, so a change lands on the NEXT run — `!restart` (or `!restart sonnet low`) cuts over, keeping the conversation.
 - `!config` — which capabilities have both a provider and a key.

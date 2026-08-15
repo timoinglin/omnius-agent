@@ -206,8 +206,13 @@ calls for it — you can also address the desks directly:
   up; `stop-omnius.bat` genuinely stops it (`-All` closes desks too). Services
   self-heal: back ≤60 s after a crash, back after every reboot, and no desk
   window opens at boot.
-- **Update:** `git pull`, then `!reload` from Discord. New config keys arrive
-  commented in `config\*.example.ini` — copy what you want.
+- **Update:** say **`!update`** in any channel — it fetches, shows you what's
+  new, and `!update go` applies it: ff-only pull → full test suite (**a red
+  suite rolls the update back**) → hooks/permissions re-stamped → self-reload.
+  Your files never move; everything personal is gitignored. (`git pull` +
+  `!reload` at the desk still works.) Zip installs attach themselves to the
+  repo at install time, so this works on every instance. New config keys
+  arrive commented in `config\*.example.ini` — copy what you want.
 - **Backups:** `pack.bat` builds one zip (memory, projects, notes, media —
   secrets excluded) next to the workspace and the heartbeat nags if the backup
   folder goes stale. **Moving machines** = unzip, `install.bat`, `!cron adopt

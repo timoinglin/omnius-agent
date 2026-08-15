@@ -20,6 +20,10 @@ config/*
 # --- machine-local runtime (regenerates itself) ---
 state/
 **/.claude/settings.local.json
+# The zip's birth certificate: pack.ps1 stamps it, install.ps1's attach step
+# reads it, and it must never be committed - it describes an INSTALL, not the
+# product.
+RELEASE-COMMIT
 
 # --- projects are their own git repos — the root repo never tracks them ---
 projects/*

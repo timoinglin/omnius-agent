@@ -125,7 +125,7 @@ Rolling build of ``$short`` - $stamp. Always the latest green ``main``; history 
 irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/get.ps1 | iex
 ``````
 
-**Upgrading an existing install:** ``git pull``, then ``!reload`` in Discord. New config keys arrive commented in ``config\*.example.ini`` - copy what you need.
+**Upgrading an existing install:** say ``!update`` in Discord (preview, then ``!update go``) - or ``git pull`` + ``!reload`` at the desk. New config keys arrive commented in ``config\*.example.ini`` - copy what you need.
 "@
 if ($SkipTests) { $notes = "**Note: test suites were skipped for this build (-SkipTests).**`n`n" + $notes }
 
