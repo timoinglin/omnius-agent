@@ -36,6 +36,9 @@ sys.path.insert(0, str(ROOT / "tools" / "discord"))
 import api          # noqa: E402
 import watchdog as wd   # noqa: E402
 
+# A visible console for the desk window, without `start` and its shell quoting.
+NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)   # 0 off-Windows
+
 TEMPLATE = ROOT / "templates" / "project"
 PROJECTS = ROOT / "projects"
 ARCHIVE = PROJECTS / "_archive"
@@ -309,8 +312,17 @@ def open_desk(session, model=None, effort=None, force=False):
             subprocess.Popen([wt, "-w", "0", "new-tab", "--title", tab_title(session),
                               "-d", str(cwd), "cmd", "/k", inner])
         else:
-            subprocess.Popen(["cmd", "/c", "start", tab_title(session, ascii_only=True),
-                              "/D", str(cwd), "cmd", "/k", inner])
+            # Windows Terminal is not on stock Windows 10, so this is the normal
+            # branch there. It must NOT go through `cmd /c start`: that treats
+            # its first unquoted token as the program to run, and an argv list
+            # never quotes a bare word - so a one-word title like "Omnius" or
+            # "Daybook" asked Windows to run a program by that name and popped
+            # an error dialog. (A title WITH spaces got quoted by accident and
+            # worked, which is why this survived: the desks that broke were the
+            # ones named after a single word.) 2026-08-15, watchdog.open_tab
+            # had the identical bug.
+            subprocess.Popen(["cmd", "/k", inner], cwd=str(cwd),
+                             creationflags=NEW_CONSOLE)
     except OSError as e:
         return {"session": session, "spawned": False, "note": f"spawn failed: {e}"}
     return {"session": session, "spawned": True, "note": f"terminal opened on {cwd}"}

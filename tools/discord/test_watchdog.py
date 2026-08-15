@@ -4787,6 +4787,22 @@ try:
           f"missing creationflags at {_iwleaks}")
     check("NO_WINDOW degrades to 0 off Windows rather than crashing the import",
           "getattr(subprocess" in _wdpath.read_text(encoding="utf-8"))
+
+    # == the no-Windows-Terminal path opens a window, not an error dialog =====
+    # Windows Terminal does not ship with Windows 10, so the fallback IS the
+    # normal branch there - and it went through `cmd /c start <title>`. `start`
+    # reads its first unquoted token as the PROGRAM to run, and an argv list
+    # never quotes a bare word, so a one-word desk name asked Windows to run a
+    # program called "orchestrator". First boot of a stock Win10 VM, 2026-08-15:
+    # an error dialog and no desk. A title WITH spaces was quoted by accident,
+    # which is why only single-word desks broke.
+    for _f, _src in (("watchdog.py", _wdpath.read_text(encoding="utf-8")),
+                     ("fleet_ops.py", (real_root / "tools" / "orchestrator" / "fleet_ops.py")
+                      .read_text(encoding="utf-8"))):
+        check(f"{_f}: no desk window is opened through `cmd /c start`",
+              '"start"' not in _src, "an unquoted title is read as a command")
+        check(f"{_f}: the wt-less branch asks for a console directly",
+              "CREATE_NEW_CONSOLE" in _src and "NEW_CONSOLE" in _src)
     # The VISIBLE terminal is now the human verb - fleet_ops.open_desk.
     fo_src_w = (real_root / "tools" / "orchestrator" / "fleet_ops.py").read_text(encoding="utf-8")
     check("the visible terminal verb moved to fleet_ops.open_desk",

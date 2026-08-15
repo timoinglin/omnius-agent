@@ -59,6 +59,10 @@ BRIDGES = STATE / "bridges"       # <sid>.json: a live desk bridge owns this des
 # Since the run model (2026-08-01) this applies to EVERY child, including the
 # claude runs themselves - the watchdog opens no windows at all.
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)   # 0 off-Windows
+# The exact opposite, and used in exactly one place: open_tab, where a visible
+# window IS the feature. It replaces `cmd /c start`, whose title argument needs
+# shell quoting no argv list will give it (see open_tab).
+NEW_CONSOLE = getattr(subprocess, "CREATE_NEW_CONSOLE", 0)
 TRANSCRIPTS = STATE / "transcripts"  # append-only bus history: <session>/<YYYY-MM>.jsonl
 
 POLL_SECONDS = 3.0
@@ -1880,8 +1884,20 @@ def open_tab(session, cwd, model, effort):
             subprocess.Popen([wt, "-w", "0", "new-tab", "--title", session,
                               "-d", str(ROOT), "cmd", "/c", inner + " || pause"])
         else:
-            subprocess.Popen(["cmd", "/c", "start", session, "/D", str(ROOT),
-                              "cmd", "/c", inner + " || pause"])
+            # NO `start`. Windows Terminal does not ship with Windows 10, so
+            # this branch is the normal one there - and it was broken: `start`
+            # treats its first UNQUOTED token as the program to run, not as a
+            # window title, and an argv list gives cmd no reason to quote a
+            # bare word. So `start orchestrator /D ...` asked Windows to run a
+            # program called "orchestrator" and popped an error dialog saying
+            # exactly that (2026-08-15, first boot of a stock Win10 VM).
+            #
+            # CREATE_NEW_CONSOLE gives the visible window directly, with no
+            # shell parsing in between - which also keeps the argv-list rule
+            # the rest of this file follows. The title is not lost: the bridge
+            # sets it itself with an OSC sequence once it starts.
+            subprocess.Popen(["cmd", "/c", inner + " || pause"], cwd=str(ROOT),
+                             creationflags=NEW_CONSOLE)
     except OSError as e:
         log(f"desk window failed for {session}: {e}")
         return False
