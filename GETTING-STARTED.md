@@ -185,9 +185,11 @@ Typed commands, answered instantly with no session started:
 |---|---|
 | `!status` | what is running |
 | `!config` | what is configured |
-| `!cron` | your routines |
+| `!cron` | your routines and work loops |
 | `!model` | this desk's model and effort — and where they came from |
-| `!stop <desk>` | cancel a running job |
+| `!stop` | cancel this channel's desk (its queued mail is kept, not deleted) |
+| `!trace` | what the fleet did — one delegation chain's whole story |
+| `!update` | fetch what's new from the repo; `!update go` applies it safely |
 | `!reload` | pick up changed code |
 
 ### Making a desk cheaper or sharper

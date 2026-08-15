@@ -5,7 +5,7 @@ How to run the automated tests, and what has been validated. Keep this current a
 ## Run the tests
 
 ```
-python tools\discord\test_watchdog.py      # 1,200+ checks — watchdog, Discord helpers, bus, skills, installer, packaging
+python tools\discord\test_watchdog.py      # 1,300+ checks — watchdog, Discord helpers, bus, skills, installer, packaging
 python daybook\test_storage.py             # 136 checks — daybook storage + API
 powershell -File install.ps1 -CheckOnly    # environment doctor (report-only)
 ```
