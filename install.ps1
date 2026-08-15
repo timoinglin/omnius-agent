@@ -1028,8 +1028,22 @@ if ($discordOk) {
   Write-Status 'i' 'Discord not set up yet on this machine'
   Write-Status 'i' '     .env never travels in the zip (secrets stay per-machine) - set it up once here'
 } else {
-  foreach ($l in $checkOut) { if ("$l".Trim()) { Write-Status '!' "     $l" } }
-  Write-Status '!' 'Discord not usable - fix the values above in .env'
+  # A .env we created from the example two sections ago has all three values
+  # blank. That is the EXPECTED state, not a fault list - and printing one
+  # "[X] ... is empty" per key, then a verdict, then letting the setup offer
+  # below say it a fourth time, is how a normal first install ends up looking
+  # like something went wrong (seen twice in real logs, 2026-08-15).
+  $missing = @($checkOut | Where-Object { "$_" -match 'is empty' })
+  if ($missing.Count -ge 3) {
+    Write-Status 'i' 'Discord not set up yet - its three values in .env are still blank'
+  } else {
+    # A PARTIAL config is worth spelling out: something is filled in and wrong,
+    # or one key was missed. Strip the inner marker so it is not doubled.
+    foreach ($l in $checkOut) {
+      if ("$l".Trim()) { Write-Status '!' ("   " + ("$l" -replace '^\s*\[[^\]]*\]\s*', '')) }
+    }
+    Write-Status '!' 'Discord not usable - fix the values above in .env'
+  }
 }
 
 if (-not $discordOk -and -not $CheckOnly) {

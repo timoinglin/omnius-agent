@@ -3564,6 +3564,15 @@ try:
     # together they are twelve alarming lines meaning "it worked".
     check("the whisper pre-warm does not print warnings nobody can act on",
           "HF_HUB_DISABLE_SYMLINKS_WARNING" in _inst0)
+    # A first install creates .env from the example, so all three Discord values
+    # are blank by definition. Printing one "[X] ... is empty" per key, then a
+    # verdict, then the setup offer repeating it, made a normal install read as
+    # a failure - and the inner marker doubled up as "[!   ]      [X] ...".
+    check("a blank Discord config is stated once, not four times",
+          "its three values in .env are still blank" in _inst0
+          and "$missing.Count -ge 3" in _inst0)
+    check("...while a PARTIAL config still lists what is wrong, undoubled",
+          "-replace '^\\s*\\[[^\\]]*\\]\\s*', ''" in _inst0)
 
     # == a SYSTEM shell has no user profile ==================================
     # 2026-08-15, on a real machine: the Claude CLI installer died with
