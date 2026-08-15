@@ -6033,6 +6033,20 @@ try:
     check("component folders survive a git clone (.gitkeep)",
           (_p / "app" / ".gitkeep").is_file())
     check("new-project seeds memory\\sessions", (_p / "memory" / "sessions").is_dir())
+    # The SEED FILES, not just the folder. The bare `memory/` ignore pattern
+    # matches at every depth and silently dropped these from the public tree -
+    # so a stamped project was born with an empty memory while its CLAUDE.md
+    # said "copy _template.md" (found 2026-08-15, diffing the live instance
+    # against the repo). The folder check above stayed green throughout,
+    # because fleet_ops mkdirs it; only the files can prove the template ships.
+    check("...including the memory index the template promises",
+          (_p / "memory" / "MEMORY.md").is_file())
+    check("...and the session-notes template desks are told to copy",
+          (_p / "memory" / "sessions" / "_template.md").is_file())
+    check("...which the TEMPLATE itself tracks, so a clone cannot lose them again",
+          (real_root / "templates" / "project" / "memory" / "MEMORY.md").is_file()
+          and "!templates/project/memory/" in
+          (real_root / ".gitignore").read_text(encoding="utf-8"))
     _claude = (_p / "CLAUDE.md").read_text(encoding="utf-8")
     check("placeholders are filled", "{{" not in _claude and "recipe-app" in _claude)
     check("the description lands in the project constitution", "a cookbook" in _claude)

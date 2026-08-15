@@ -47,12 +47,16 @@ daybook/notes/
 # recoverable from history: git show <commit>:memory/orchestrator/status.md
 memory/
 !templates/fresh/memory/
-# The demo fleet's brief is PRODUCT, not biography: it is the contract the
-# three demo desks build against, and the README sends every new reader
-# straight at it. The bare `memory/` rule above swallowed it, so the shipped
-# demo had no brief and its first instruction ("build the API from the brief")
-# pointed at a file nobody outside this machine had (2026-08-14).
+# TEMPLATE memory is PRODUCT, not biography - `memory/` above is a bare
+# pattern, so it matches at EVERY depth and swallowed these too:
+# - the demo fleet's brief (found 2026-08-14: the shipped demo's first
+#   instruction pointed at a file nobody outside this machine had)
+# - the project template's memory seed (found 2026-08-15, diffing the live
+#   instance against this repo: every project stamped from a public install
+#   was born without memory/MEMORY.md or sessions/_template.md, while its
+#   CLAUDE.md told desks to "copy _template.md")
 !templates/demo-project/memory/
+!templates/project/memory/
 
 # --- asset archive: travels in the zip, stays out of git (binary bloat) ---
 media/
