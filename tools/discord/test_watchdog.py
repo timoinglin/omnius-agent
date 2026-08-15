@@ -4803,6 +4803,28 @@ try:
               '"start"' not in _src, "an unquoted title is read as a command")
         check(f"{_f}: the wt-less branch asks for a console directly",
               "CREATE_NEW_CONSOLE" in _src and "NEW_CONSOLE" in _src)
+        check(f"{_f}: ...and hands cmd a command STRING, not a list",
+              "cmd /c {inner}" in _src or "cmd /k {inner}" in _src,
+              "Python quotes list elements with \\\" , which cmd does not read as an escape")
+
+    # And the same thing PROVEN, because asserting on source text is how the
+    # first attempt at this fix passed review and then failed on the VM:
+    #   python: can't open file 'C:\...\omnius-agent\"C:\...\desk_bridge.py"'
+    # The path is quoted inside a single argv element, Python escapes those
+    # quotes for a C runtime, cmd reads them literally, and the whole thing
+    # becomes a relative path. A directory with spaces is deliberate here.
+    if _os.name == "nt":
+        _qdir = SAND / "desk dir with spaces"
+        _qdir.mkdir(parents=True, exist_ok=True)
+        _fake = _qdir / "desk_bridge.py"
+        _fake.write_text("import sys\nprint('ARGV', len(sys.argv), sys.argv[1])\n",
+                         encoding="utf-8")
+        _inner = f'python "{_fake}" orchestrator --model opus --effort xhigh'
+        _r = subprocess.run(f'cmd /c {_inner} || pause', capture_output=True,
+                            text=True, cwd=str(_qdir), timeout=60)
+        check("a desk window's command survives cmd, quoted path and all",
+              "ARGV 6 orchestrator" in (_r.stdout + _r.stderr),
+              (_r.stdout + _r.stderr).strip()[:160])
     # The VISIBLE terminal is now the human verb - fleet_ops.open_desk.
     fo_src_w = (real_root / "tools" / "orchestrator" / "fleet_ops.py").read_text(encoding="utf-8")
     check("the visible terminal verb moved to fleet_ops.open_desk",

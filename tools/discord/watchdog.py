@@ -1893,10 +1893,20 @@ def open_tab(session, cwd, model, effort):
             # exactly that (2026-08-15, first boot of a stock Win10 VM).
             #
             # CREATE_NEW_CONSOLE gives the visible window directly, with no
-            # shell parsing in between - which also keeps the argv-list rule
-            # the rest of this file follows. The title is not lost: the bridge
-            # sets it itself with an OSC sequence once it starts.
-            subprocess.Popen(["cmd", "/c", inner + " || pause"], cwd=str(ROOT),
+            # `start` in between. The title is not lost: the bridge sets it
+            # itself with an OSC sequence once it starts.
+            #
+            # A COMMAND STRING here, and this is the one place that is right.
+            # The argv-list rule exists because Python quotes list elements for
+            # us - but it quotes them the way a C program expects (\" inside
+            # quotes), and cmd.exe does not read \" that way. Passing the whole
+            # `python "<path>" ... || pause` line as one list element therefore
+            # arrived as a literal quoted path glued onto the cwd:
+            #   python: can't open file 'C:\...\omnius-agent\"C:\...\desk_bridge.py"'
+            # (2026-08-15, first desk window on a machine without Windows
+            # Terminal). `||` is cmd syntax, so cmd has to parse this line;
+            # our own quoting is the only kind it will read correctly.
+            subprocess.Popen(f'cmd /c {inner} || pause', cwd=str(ROOT),
                              creationflags=NEW_CONSOLE)
     except OSError as e:
         log(f"desk window failed for {session}: {e}")

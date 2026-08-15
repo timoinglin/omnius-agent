@@ -321,7 +321,11 @@ def open_desk(session, model=None, effort=None, force=False):
             # worked, which is why this survived: the desks that broke were the
             # ones named after a single word.) 2026-08-15, watchdog.open_tab
             # had the identical bug.
-            subprocess.Popen(["cmd", "/k", inner], cwd=str(cwd),
+            # A command STRING, not a list: `inner` contains quotes and `||`,
+            # which cmd must parse - and Python's list quoting uses \" , which
+            # cmd does not read as an escape. See watchdog.open_tab for the
+            # failure that produced (2026-08-15).
+            subprocess.Popen(f'cmd /k {inner}', cwd=str(cwd),
                              creationflags=NEW_CONSOLE)
     except OSError as e:
         return {"session": session, "spawned": False, "note": f"spawn failed: {e}"}
