@@ -73,6 +73,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 | *"create project recipe-app with app and backend"* | Stamps the project from a template: folder, memory, Discord category, one channel per desk. Start talking in `#app` immediately |
 | A desk needs something outside its allow-list | You get an **ok / no** question in the channel. `ok` also teaches the fleet — that tool never asks again, on any desk |
 | `!status` · `!model sonnet low` · `!screen` · `!cron` · `!reload` | Instant answers from the always-on watchdog — zero tokens, no desk spawned |
+| *"auditor: audit the project and get the findings fixed"* | The auditor **desk-mails each finding to the desk that owns the fix**, every hop mirrored in the channels; the fixes come back on the same thread and you get one verified summary. A full chain closes in about a minute |
 | *"Omnius, add a `!weather` command to yourself"* | The orchestrator desk edits Omnius's own code, runs the test suite, commits — **you can code Omnius from inside Omnius.** `!reload` and it's live |
 
 ## What it can do
@@ -89,6 +90,12 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - Switch any desk's **model and effort from Discord** (`!model sonnet low`, `!restart opus`), per desk, persisted.
 - A **shared memory layer** every desk reads, per-project memory its desks write, and read-transparency across projects — solutions travel, conventions stay aligned.
 - Several machines? Each runs its own Omnius on its own Discord server, and your phone drives them all — every claim, topic and `!status` names its machine.
+
+**Desks delegating to desks** *(live-proven 2026-08-15 — [docs/DELEGATION.md](docs/DELEGATION.md))*
+- A desk hands work to a sibling by **addressing an envelope to it**; the watchdog validates the target, delivers, and mirrors every hop into the recipient's channel — the fleet talking to itself is always on your screen. Fan-out workflows are just envelopes in sequence.
+- **Hop budgets** with free replies stop runaway chains; a **cross-project gate** holds anything that crosses a project boundary for your ok/no, failing closed on silence.
+- **Budgeted work loops**: a desk grinds toward a checkable done-condition across runs — five by default, then it must report what exists and ask. Loops never extend themselves.
+- **Slash pass-through**: `/status`, `/watch <url>` or any skill you allow-list runs *as that skill* on the desk; the list ships empty on purpose, and guests never pass one.
 
 **Automation**
 - Routines created by talking, managed with `!cron` (list / pause / resume / remove / adopt): intervals, daily times, one-shots, weekday and time-window clamps.
@@ -122,7 +129,7 @@ Then, from Discord (or the terminals — same thing):
 
 1. **`#back`** — *"build the API from the brief"*. It builds a stdlib JSON server, and publishes its API in the project memory.
 2. **`#front`** — *"build the page against back's notes"*. It builds `index.html` from those notes, never from back's code.
-3. **`#auditor`** — *"audit the project"*. The auditor is **read-only**: it hunts leaks, XSS in rendered titles, `javascript:` URLs, tracebacks that disclose paths — and files findings with severity, pointing each one at the desk that owns the fix.
+3. **`#auditor`** — *"audit the project and get the findings fixed"*. The auditor is **read-only**: it hunts leaks, XSS in rendered titles, `javascript:` URLs, tracebacks that disclose paths — files findings with severity, then **desk-mails each one to the desk that owns the fix** and verifies what comes back.
 
 The brief plants those tensions on purpose. Whether the builders handled them — that's the demo.
 
@@ -144,19 +151,11 @@ The brief plants those tensions on purpose. Whether the builders handled them �
 
 Desks run with a wide allow-list and **no permission prompts** — a prompt on a screen nobody watches is a hung desk, and Omnius is meant to be used from a phone. Three fences hold instead: anything outside the allow-list becomes an **ok/no question in your channel**; anything irreversible the model must ask about **in words** before doing; and `.env` — the only place secrets live — is deny-listed from reading and excluded from every backup and release. The bot obeys exactly one Discord user: you. Read [docs/PERMISSIONS.md](docs/PERMISSIONS.md) before loosening any of it.
 
-## Roadmap
-
-Specs land before code here — the whole next phase is designed, test list and all, in [docs/DELEGATION.md](docs/DELEGATION.md) (proposed 2026-08-15, not built yet). In the order it will land:
-
-- **Desk-to-desk mail** — a desk delegates to a sibling by addressing an envelope to it; the watchdog validates, delivers, and mirrors every hop into Discord so the fleet talking to itself is always on your screen. Fan-out workflows (one desk triages, another fixes, the rest get told) are just envelopes in sequence — the routing knowledge lives in your project's memory, not in the engine.
-- **A cross-project gate** — inside a project, desks delegate freely; anything crossing a project boundary is held for your ok/no in Discord. Fails closed.
-- **Budgeted loops** — a desk keeps working across runs toward a checkable done-condition, five runs by default, then it must check in with you. Loops never extend themselves.
-- **Slash pass-through** — send `/status` or any skill you've allow-listed straight from a channel; the desk runs the skill instead of improvising. The list starts empty on purpose.
-- Then a live pilot and honest latency numbers, which decide whether warm desks join the delegation path.
-
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
+
+There is no roadmap: this repo ships what exists, specs land in `docs\` before their code does, and the [commit log](https://github.com/timoinglin/omnius-agent/commits/main) is the honest history of both.
 
 ---
 
