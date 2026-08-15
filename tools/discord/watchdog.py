@@ -3460,7 +3460,12 @@ def handle_update(text, cid):
                               f"never touched - everything personal is gitignored.")
         return
     _rc, dirty = _git("status", "--porcelain")
-    dirty_n = len([ln for ln in dirty.splitlines() if ln.strip()])
+    # Only TRACKED modifications block: an untracked stray (a leftover
+    # .git-old\ from a migration, a scratch file) is not local work a pull
+    # could eat - and if one ever collides with an incoming file, the ff-only
+    # pull fails with its own clear error.
+    dirty_n = len([ln for ln in dirty.splitlines()
+                   if ln.strip() and not ln.startswith("??")])
     if dirty_n:
         api.send_message(cid, f"⛔ not updating: {dirty_n} tracked file(s) changed locally - "
                               f"`git status` at the desk names them. Commit or stash "
