@@ -3397,17 +3397,25 @@ def _git(*args, timeout=60):
 
 
 def _update_suite():
-    """The gate suite, run after a pull. -> (ok, last line). Its own function
-    so tests can stub the ten-second reality out."""
+    """The gate suite. -> (ok, last line, frozenset of failing check names).
+
+    The NAMES matter as much as the verdict: the suite mixes product checks
+    with instance hygiene (memory budgets, desk wiring), so the update gate
+    must compare failures BEFORE and AFTER the pull and judge only the delta
+    - proven live 2026-08-15, when a second instance's own untidy memory
+    blocked its very first !update go and the rollback blamed the commit.
+    Its own function so tests can stub the minute of reality out."""
     try:
         p = subprocess.run([sys.executable,
                             str(ROOT / "tools" / "discord" / "test_watchdog.py")],
                            capture_output=True, text=True, timeout=600,
                            creationflags=NO_WINDOW)
         lines = [ln for ln in (p.stdout or "").strip().splitlines() if ln.strip()]
-        return p.returncode == 0, (lines[-1] if lines else "(no output)")
+        fails = frozenset(ln.strip()[6:].split("  ")[0].strip()
+                          for ln in lines if ln.strip().startswith("[FAIL]"))
+        return p.returncode == 0, (lines[-1] if lines else "(no output)"), fails
     except Exception as e:                                   # noqa: BLE001
-        return False, f"suite did not run: {type(e).__name__}: {e}"
+        return False, f"suite did not run: {type(e).__name__}: {e}", frozenset()
 
 
 def _update_restamp():
@@ -3472,6 +3480,15 @@ def handle_update(text, cid):
                               f"`git status` at the desk names them. Commit or stash "
                               f"first; a pull must never eat local work.")
         return
+    # BASELINE first: this instance's failures BEFORE the pull are its own
+    # housekeeping, not the update's fault. The gate judges only the delta.
+    base_ok, base_tail, base_fails = _update_suite()
+    if base_fails:
+        api.send_message(cid, f"ℹ {len(base_fails)} check(s) already failing on the "
+                              f"CURRENT code - noted as this machine's baseline, not "
+                              f"held against the update. Tidy at the desk when "
+                              f"convenient: {', '.join(sorted(base_fails)[:3])}"
+                              + (" …" if len(base_fails) > 3 else ""))
     rc, out = _git("pull", "--ff-only", "origin", "main", timeout=180)
     if rc != 0:
         api.send_message(cid, f"⛔ pull refused (local commits diverge from origin?):\n"
@@ -3480,12 +3497,16 @@ def handle_update(text, cid):
     _rc, new = _git("rev-parse", "--short", "HEAD")
     new = new.strip()
     _rc, new_full = _git("rev-parse", "HEAD")
-    ok, tail = _update_suite()
-    if not ok:
+    ok, tail, post_fails = _update_suite()
+    new_fails = sorted(post_fails - base_fails)
+    if new_fails:
         _git("reset", "--hard", head)
-        log(f"!update: suite red after {head} -> {new} - rolled back")
-        api.send_message(cid, f"⛔ pulled `{head}` → `{new}` but the suite went red - "
-                              f"**rolled back** to `{head}`.\n`{tail}`\n"
+        log(f"!update: {len(new_fails)} NEW failure(s) after {head} -> {new} - rolled back")
+        api.send_message(cid, f"⛔ pulled `{head}` → `{new}` and the update BROKE "
+                              f"{len(new_fails)} check(s) that were green before - "
+                              f"**rolled back** to `{head}`.\n```\n"
+                              + "\n".join(new_fails[:5])
+                              + ("\n…" if len(new_fails) > 5 else "") + "\n```\n"
                               f"Nothing was reloaded; investigate at the desk.")
         return
     _update_restamp()
@@ -3497,8 +3518,10 @@ def handle_update(text, cid):
         "fromCommit": head_full.strip(), "toCommit": new_full.strip(),
         "channelId": cid, "startedAt": now_iso(), "startedTs": time.time(),
         "bootAttempts": 0})
-    log(f"!update: {head} -> {new}, suite green - reloading")
-    api.send_message(cid, f"✅ updated `{head}` → `{new}` - suite green (`{tail}`). "
+    verdict = ("suite green" if not post_fails else
+               f"no NEW failures ({len(post_fails)} pre-existing local one(s) ride along)")
+    log(f"!update: {head} -> {new}, {verdict} - reloading")
+    api.send_message(cid, f"✅ updated `{head}` → `{new}` - {verdict} (`{tail}`). "
                           f"Reloading now; the new watchdog reports back when it "
                           f"is up - or reverts itself if it cannot get healthy.")
     do_reload(cid, announce=False)

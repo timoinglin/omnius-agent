@@ -6044,19 +6044,47 @@ try:
 
     sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
     wd._git = _upd_happy
-    wd._update_suite = lambda: (True, "==== 1315 passed, 0 failed ====")
+    wd._update_suite = lambda: (True, "==== 1315 passed, 0 failed ====", frozenset())
     wd.handle_update("!update go", "CID_OM")
     check("update go: a clean tree pulls ff-only, reports old -> new, reloads",
           any("updated" in s[1] and "eee5555" in s[1] for s in sent)
           and _reloaded == ["CID_OM"]
           and any(c[:2] == ("pull", "--ff-only") for c in _upd_calls))
+
+    def _suite_seq(*results):
+        # baseline call first, post-pull call second; extras repeat the last
+        it = {"n": 0}
+        def f():
+            r = results[min(it["n"], len(results) - 1)]
+            it["n"] += 1
+            return r
+        return f
+
+    # a failure the UPDATE introduces rolls back - and is named
     sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
-    wd._update_suite = lambda: (False, "==== 1 failed ====")
+    wd._update_suite = _suite_seq(
+        (True, "==== all green ====", frozenset()),
+        (False, "==== 1 failed ====", frozenset({"the new thing broke"})))
     wd.handle_update("!update go", "CID_OM")
-    check("update go: a red suite ROLLS BACK and does not reload",
+    check("update go: a failure the update INTRODUCES rolls back and does not reload",
           any("rolled back" in s[1].lower() for s in sent)
           and any(c[:2] == ("reset", "--hard") for c in _upd_calls)
           and _reloaded == [])
+    check("update go: ...and the broken check is NAMED in the rollback",
+          any("the new thing broke" in s[1] for s in sent))
+    # pre-existing LOCAL failures are the machine's housekeeping, not the
+    # update's fault - the gate judges the delta (proven live 2026-08-15:
+    # a second instance's untidy memory blocked its first !update go)
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    wd._update_suite = _suite_seq(
+        (False, "==== 2 failed ====", frozenset({"memory budget", "notes stale"})),
+        (False, "==== 2 failed ====", frozenset({"memory budget", "notes stale"})))
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: pre-existing local failures do not block - the gate judges the delta",
+          _reloaded == ["CID_OM"]
+          and any("baseline" in s[1] for s in sent)
+          and any("pre-existing" in s[1] for s in sent)
+          and not any(c[:2] == ("reset", "--hard") for c in _upd_calls))
     wd._git, wd._update_suite, wd.do_reload = _real_git, _real_us, _real_dr
     wd._update_restamp = _real_restamp
     sent.clear()
@@ -6109,7 +6137,7 @@ try:
 
     _pend_at_reload = []
     wd.do_reload = lambda cid, announce=True: _pend_at_reload.append(P.exists())
-    wd._update_suite = lambda: (True, "==== ok ====")
+    wd._update_suite = lambda: (True, "==== ok ====", frozenset())
     wd._git = _hs_happy
     wd.handle_update("!update go", "CID_OM")
     _hrec = json.loads(P.read_text(encoding="utf-8"))
