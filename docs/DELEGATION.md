@@ -1,7 +1,8 @@
 # Delegation — desks that mail desks, loops that end, verbs that travel
 
-> **Status: D1–D4 and D6 built 2026-08-15** (desk mail, classification, reply path, cross-project
-> gate, slash pass-through — suite-covered, live pilot pending). **D5 loops remain proposed.** This is the design
+> **Status: built 2026-08-15 — all of D1–D6** (desk mail, classification, reply path, cross-project
+> gate, budgeted loops, slash pass-through). Suite-covered end to end; **the live pilot (Phase E)
+> is what remains** before this counts as proven. This is the design
 > for the current capability phase: desk-to-desk envelopes over the existing file bus, budgeted work
 > loops, and owner slash-commands passed through Discord. Companion to
 > [ARCHITECTURE.md](ARCHITECTURE.md) (the bus this extends) and [RELIABILITY.md](RELIABILITY.md)
@@ -490,7 +491,7 @@ never learns what a "changelog" is. The fleet does.
 |---|---|---|
 | **B** — *shipped 2026-08-15* | D1 + D2 + D3 + D4: routing branch, ledger, classification, gate — and the full `== desk mail ==` / `== hops ==` / gate test sections (47 checks) | suite green ✓; live proof moved to E: one auditor→back finding delivered, mirrored, replied, closed on a stamped demo project |
 | **C** — *shipped 2026-08-15* | D6 slash pass-through + `config\skills.ini` (8 checks) | suite green ✓; live half moves to E: `/status` from a phone reaches a desk, an unlisted verb is refused in-channel |
-| **D** | D5 loops (`--loop`, budgets, `loop close/list`, `!cron` section) | suite green; live: a 3-run loop closes on its done-command; a budget-5 loop checkpoints instead of running a 6th time |
+| **D** — *shipped 2026-08-15* | D5 loops (`--loop`, budgets at add-time AND fire-time, `loop close/list`, `!cron` section, `--to` validation on every add, `--channel` into the envelope) — 16 checks | suite green ✓; live half moves to E: a 3-run loop closes on its done-command; a budget-spent loop checkpoints instead of running again |
 | **E** | pilot on a real project + latency measurement of a full chain | the measured numbers decide whether warm desks (the bridge) get promoted into the delegation path as a Phase F |
 
 Each phase lands as one commit with its tests; nothing merges on prose alone. *Documentation is

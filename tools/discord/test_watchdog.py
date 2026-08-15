@@ -3917,13 +3917,15 @@ try:
     check("...and offers the real mechanism instead of the promise",
           "schedule.py add --in" in _sk6)
     check("...capped, so a desk cannot re-queue itself forever",
-          "never queue a continuation more than twice in a row" in _sk6.lower()
-          or "more than twice in a row" in _sk6)
+          "--loop auto" in _sk6 and "never self-extend" in _sk6.lower(),
+          "the budgeted loop replaced the two-continuation prose cap (D5)")
     # The command it tells desks to run must actually parse.
     _sched = (real_root / "tools" / "discord" / "schedule.py").read_text(encoding="utf-8")
     check("schedule.py really has the --in flag the skill hands out",
           '"--in"' in _sched and 'dest="in_"' in _sched,
           "a skill instruction that does not run is worse than none")
+    check("...and enforces the loop on self-addressed adds, not prose",
+          "must carry --loop" in _sched)
     check("...and --in resolves to an absolute time when written",
           "must say\n            # WHEN" in _sched or "must say" in _sched,
           "a restored backup would otherwise re-fire it relative to the restore")
@@ -4851,7 +4853,10 @@ try:
     sent.clear()
 
     env = box / "999.json"
-    env.write_text(json.dumps({"id": "999", "channelId": "C-app", "text": "hola"}), encoding="utf-8")
+    # `from` is present on every envelope the watchdog writes; since desk mail
+    # (D2) the backlog notice is for HUMAN mail only, so the fixture says whose.
+    env.write_text(json.dumps({"id": "999", "from": "owner",
+                               "channelId": "C-app", "text": "hola"}), encoding="utf-8")
     n, oldest = wd.inbox_backlog("demo-app.app")
     check("inbox_backlog counts a queued envelope", n == 1 and oldest >= 0)
     check("inbox_backlog is 0 for a desk with no box", wd.inbox_backlog("nope.nope") == (0, 0.0))
@@ -4872,7 +4877,8 @@ try:
     # A run actively working must not be described as asleep - "will answer
     # when it wakes" next to a working run read as a broken system (2026-08-01).
     env2b = box / "997.json"
-    env2b.write_text(json.dumps({"id": "997", "channelId": "C-app", "text": "task"}), encoding="utf-8")
+    env2b.write_text(json.dumps({"id": "997", "from": "owner",
+                                 "channelId": "C-app", "text": "task"}), encoding="utf-8")
     _os.utime(env2b, (old_t, old_t))
     wd.RUNNING["demo-app.app"] = FakeProc()
     sent.clear()
@@ -5266,6 +5272,105 @@ try:
     check("and its nextRun is fast-forwarded, not left stale",
           D.strptime(j["nextRun"], sch.FMT) > D.now())
     check("misses accumulate across passes", _stale(missed=4).get("missed") == 5)
+
+    # == schedule: loops (docs\DELEGATION.md D5) ===============================
+    # The continuation pattern, counted. Budget enforced at add-time (the desk
+    # is told inside its own run) AND at fire-time (the belt, for hand-edited
+    # jobs). Loops never self-extend.
+    print("== schedule: loops ==")
+    _real_sched_root, _real_lbd = sch.ROOT, sch.loop_budget_default
+    _real_own = sch.own_session
+    sch.ROOT = SAND                      # desk_cwd validates against the sandbox
+    sch.LOOPS = SAND / "watchdog" / "loops"
+    sch.loop_budget_default = lambda: 3  # deterministic, never this machine's config
+    sch.own_session = lambda: "orchestrator"   # the suite's cwd wanders; pin it
+    sch.save_jobs([])
+    check("loop: --to is validated against real desks - a typo cannot invent one",
+          sch.main(["add", "--in", "2m", "--to", "ghost.desk", "--text", "x"]) == 2)
+    check("loop: an illegal id shape is refused with the grammar",
+          sch.main(["add", "--in", "2m", "--to", "NotADesk", "--text", "x"]) == 2)
+    check("loop: a self-addressed add without --loop is refused",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--text", "x"]) == 2
+          and not sch.load_jobs())
+    check("loop: --max above the configured budget is refused",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", "auto",
+                    "--max", "9", "--text", "x"]) == 2)
+    check("loop: --loop auto opens a ledger and queues the continuation",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", "auto",
+                    "--channel", "CID_OM",
+                    "--text", "Continue: step 1. Done when: check.py exits 0."]) == 0
+          and len(sch.list_loops()) == 1 and sch.list_loops()[0]["max"] == 3
+          and sch.load_jobs()[0].get("loop") == sch.list_loops()[0]["id"])
+    _lid = sch.list_loops()[0]["id"]
+    check("loop: one queued continuation at a time - a loop is a chain, not a fan",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _lid,
+                    "--text", "again"]) == 2)
+
+    def _fire_loop_job():
+        jobs = sch.load_jobs()
+        for j in jobs:
+            j["nextRun"] = (D.now() - timedelta(seconds=30)).strftime(sch.FMT)
+        sch.save_jobs(jobs)
+        wd._last_schedule_check = 0
+        wd._last_jobs_written = None
+        sent.clear()
+        wd.fire_due_schedules()
+
+    _ombox2 = wd.INBOX / "orchestrator"
+    for f in (_ombox2.glob("sched-*.json") if _ombox2.is_dir() else []):
+        f.unlink()
+    _fire_loop_job()
+    _fired = sorted(_ombox2.glob("sched-*.json"))
+    _fenv = json.loads(_fired[-1].read_text(encoding="utf-8")) if _fired else {}
+    check("loop: --channel rides into the fired envelope",
+          _fenv.get("channelId") == "CID_OM" and _fenv.get("from") == "schedule")
+    check("loop: the fire is counted on the ledger",
+          sch.load_loop(_lid).get("fired") == 1)
+    check("loop: the fired one-shot leaves the queue (chain, not standing order)",
+          not [j for j in sch.load_jobs() if j.get("loop") == _lid])
+    # runs 2 and 3 use the budget up
+    for _ in range(2):
+        sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _lid,
+                  "--text", "Continue."])
+        _fire_loop_job()
+    check("loop: the budget is spent run by run",
+          sch.load_loop(_lid).get("fired") == 3)
+    check("loop: the add past budget is refused with the checkpoint instruction",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _lid,
+                    "--text", "one more"]) == 2)
+    # the fire-time belt: a hand-edited job must not sneak past the ledger
+    sch.save_jobs([{"id": "handmade", "kind": "at",
+                    "at": (D.now() - timedelta(seconds=30)).strftime(sch.FMT),
+                    "to": "orchestrator", "text": "sneak", "weekdays": False,
+                    "loop": _lid, "channelId": "CID_OM",
+                    "nextRun": (D.now() - timedelta(seconds=30)).strftime(sch.FMT)}])
+    _before_belt = len(list(_ombox2.glob("sched-*.json")))
+    wd._last_schedule_check = 0
+    wd._last_jobs_written = None
+    sent.clear()
+    wd.fire_due_schedules()
+    check("loop: fire-time belt - a hand-edited job past budget never fires",
+          len(list(_ombox2.glob("sched-*.json"))) == _before_belt
+          and not sch.load_jobs())
+    check("loop: ...the loop is closed and its channel told once",
+          sch.load_loop(_lid).get("closed") == "budget"
+          and any("used its budget" in s[1] for s in sent))
+    # close: ends the loop and clears its pending continuation
+    sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", "auto",
+              "--text", "Continue: other work."])
+    _lid2 = [led["id"] for led in sch.list_loops() if not led.get("closed")][0]
+    check("loop: close ends the loop and clears its queued job",
+          sch.main(["loop", "close", _lid2]) == 0
+          and sch.load_loop(_lid2).get("closed") == "done"
+          and not [j for j in sch.load_jobs() if j.get("loop") == _lid2])
+    check("loop: list is readable and exits clean",
+          sch.main(["loop", "list"]) == 0)
+    sch.save_jobs([])
+    for f in _ombox2.glob("sched-*.json"):
+        f.unlink()
+    sch.ROOT, sch.loop_budget_default = _real_sched_root, _real_lbd
+    sch.own_session = _real_own
+    sent.clear()
 
     # the alarm: once per incident, not once per further miss
     posts = []

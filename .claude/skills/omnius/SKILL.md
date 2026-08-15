@@ -346,16 +346,28 @@ no timer of your own. Only two honest endings:
    credential, something only he can do. A question he can answer beats a
    promise he cannot collect on.
 
-If the work genuinely spans runs, do not promise — **queue the continuation**,
-so a real envelope wakes you and the work actually happens:
+If the work genuinely spans runs, do not promise — **open a work loop**, so a
+real envelope wakes you and the work actually happens, counted
+(docs\DELEGATION.md D5):
 
 ```
-python tools\discord\schedule.py add --in 2m --to <your session id> --text "Continue: build the /cliq endpoint. Report what EXISTS when done."
+python tools\discord\schedule.py add --in 2m --to <your session id> --loop auto --channel <the asking channelId> --text "Continue: build the /cliq endpoint.  Done when: `python -m pytest api` exits 0."
 ```
 
-Then say *"I have queued the next step"*, which is true, instead of *"te aviso"*,
-which is not. **Cap it: never queue a continuation more than twice in a row for
-the same task** — a third time means you are stuck and should say so.
+Then say *"I have queued the next step (loop run 1/5)"*, which is true, instead
+of *"te aviso"*, which is not. The loop rules, all enforced by the schedule —
+not by your memory:
+
+- **The done-condition is a COMMAND with an exit code** wherever possible, and
+  each fired run checks it FIRST: green → `schedule.py loop close <id>` + final
+  report to the loop's channel; not green → one step of work, one re-`add` with
+  the same `--loop <id>`, end the turn.
+- **Budget 5 runs by default** (config `[delegation] loop_budget`). The re-add
+  past budget is refused with instructions: report what EXISTS to the owner and
+  ask whether to continue. **Loops never self-extend** — his fresh instruction
+  opens a NEW loop.
+- A self-addressed `add` without `--loop` is refused outright — the uncounted
+  continuation is the old honor system, and it is retired.
 
 - **Long task? Re-drain between major steps** — run the check-in command again.
   A queued "stop" or "different approach" beats finishing the wrong thing.

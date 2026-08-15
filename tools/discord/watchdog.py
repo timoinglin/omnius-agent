@@ -2637,14 +2637,15 @@ def warn_on_missed(jobs):
             log(f"missed-routine alert failed for {jid}: {type(e).__name__}: {e}")
 
 
-def fire_due_schedules():
+def fire_due_schedules(mapping=None):
     """Turn due scheduled jobs into ordinary inbox envelopes.
 
     Deliberately reuses the normal envelope path rather than inventing a second
     delivery mechanism: a scheduled message wakes or spawns its target session
     exactly the way a Discord message does, so there is only one code path to
     keep correct. schedule.py handles the catch-up policy (missed runs are
-    rescheduled, not replayed)."""
+    rescheduled, not replayed). `mapping` is only for the loop-budget notice's
+    channel fallback; None keeps every delivery working."""
     global _last_schedule_check
     if time.time() - _last_schedule_check < SCHEDULE_CHECK_SECONDS:
         return
@@ -2667,17 +2668,56 @@ def fire_due_schedules():
     delivered = []
     for job in fire:
         session = job.get("to") or "orchestrator"
+        led = None
+        if job.get("loop"):
+            # The fire-time belt (docs\DELEGATION.md D5). The add-time refusal
+            # in schedule.py is the primary brake - this catches a hand-edited
+            # job. Over budget, closed, or orphaned: the job is DROPPED and the
+            # loop's channel told once; a loop never fires past its budget.
+            led = schedule.load_loop(job["loop"])
+            if (led is None or led.get("closed")
+                    or int(led.get("fired") or 0) >= int(led.get("max") or 0)):
+                kept = [j for j in kept if j.get("id") != job.get("id")]
+                if led is not None and not led.get("closed"):
+                    led["closed"] = "budget"
+                    try:
+                        schedule.save_loop(led)
+                    except OSError:
+                        pass
+                log(f"loop {job.get('loop')}: over budget or closed - job "
+                    f"{job.get('id')} dropped, nothing fired")
+                cid = job.get("channelId") or (
+                    primary_channel_id(mapping, session) if mapping else None)
+                if cid:
+                    try:
+                        api.send_message(cid, f"⏸ loop `{job.get('loop')}` on "
+                                              f"`{session}` used its budget - write "
+                                              f"in this channel to start a new one")
+                    except api.ApiError:
+                        pass
+                continue
         box = INBOX / session
         try:
             box.mkdir(parents=True, exist_ok=True)
             mid = f"sched-{job['id']}-{int(time.time())}"
-            (box / f"{mid}.json").write_text(json.dumps({
-                "id": mid, "from": "schedule", "channel": None, "channelId": None,
-                "category": None, "ts": now_iso(), "text": job.get("text", ""),
-                "files": []}, ensure_ascii=False, indent=2), encoding="utf-8")
+            # channelId rides in from the job (D5): a loop that must answer a
+            # human carries WHERE explicitly - scheduled mail had no channel to
+            # echo before this.
+            write_json_atomic(box / f"{mid}.json", {
+                "id": mid, "from": "schedule", "channel": None,
+                "channelId": job.get("channelId"), "category": None,
+                "ts": now_iso(), "text": job.get("text", ""), "files": []})
             delivered.append(job.get("id"))   # the write succeeded: this one really landed
+            if led is not None:
+                led["fired"] = int(led.get("fired") or 0) + 1
+                led["lastFiredAt"] = now_iso()
+                try:
+                    schedule.save_loop(led)
+                except OSError as e:
+                    log(f"loop ledger save failed ({led.get('id')}): {e}")
             transcribe(session, "in", f"[scheduled] {job.get('text', '')}")
-            log(f"schedule {job['id']} -> inbox {session}")
+            log(f"schedule {job['id']} -> inbox {session}"
+                + (f" (loop {led['id']} run {led['fired']}/{led.get('max')})" if led else ""))
             ensure_runner(session)
         except OSError as e:
             log(f"schedule {job.get('id')} delivery failed: {e}")
@@ -3154,6 +3194,13 @@ def check_backlogs():
             cid = env.get("channelId")
             if not cid:
                 continue
+            if not is_human_sender(env.get("from")):
+                # Loop envelopes carry a channelId since D5, but the fleet
+                # waiting on the fleet stays a log line, never a notice
+                # (docs\DELEGATION.md D2). The failure ledger covers a desk
+                # that cannot start.
+                _backlog_notified.add(key)
+                continue
             mins = int(age // 60)
             waited = f"{mins}m" if mins else f"{int(age)}s"
             note = stall_note(session).strip(" ·")
@@ -3379,7 +3426,8 @@ def handle_control(text, cid, target, mapping):
                                  "nothing to adopt - all routines already belong here")
             else:
                 jobs = schedule.load_jobs()
-                if not jobs:
+                loops = schedule.list_loops()
+                if not jobs and not loops:
                     api.send_message(cid, "no routines yet. Ask in #omnius, e.g. "
                                      "*\"check my gmail every hour on weekdays "
                                      "during work hours\"*.")
@@ -3389,7 +3437,12 @@ def handle_control(text, cid, target, mapping):
                                      sorted(jobs, key=lambda x: x.get("nextRun") or ""))
                     # A fenced block, never a markdown table - Discord renders
                     # no tables, and this is columnar (/omnius §4, 2026-08-06).
-                    api.send_message(cid, f"⏱ **{len(jobs)} routine(s)**\n```\n{body}\n```")
+                    out = (f"⏱ **{len(jobs)} routine(s)**\n```\n{body}\n```"
+                           if jobs else "⏱ no routines")
+                    if loops:
+                        lbody = "\n".join(schedule.describe_loop(led) for led in loops)
+                        out += f"\n🔁 **{len(loops)} work loop(s)**\n```\n{lbody}\n```"
+                    api.send_message(cid, out)
         except Exception as e:                                  # noqa: BLE001
             # A broken routines file must not take the control surface down -
             # !cron is how he'd diagnose it.
@@ -4609,7 +4662,7 @@ def main():
             ensure_runners()
             show_working(mapping)
             fleet_board(mapping)
-            fire_due_schedules()
+            fire_due_schedules(mapping)
             fire_heartbeat()
             # Either transport being demonstrably healthy earns the stamp, so the
             # beacon stays ~3s fresh however messages are currently arriving.

@@ -41,6 +41,95 @@ ROOT = Path(__file__).resolve().parents[2]
 # routine's text - which can name an account - ever reaching GitHub.
 JOBS = ROOT / "config" / "routines.json"
 LEGACY_JOBS = ROOT / "state" / "schedule" / "jobs.json"
+# Work-loop ledgers (docs\DELEGATION.md D5): one file per loop, the counted
+# form of the continuation pattern. Machine-local like the claims - a loop is
+# THIS machine's work in progress, not luggage.
+LOOPS = ROOT / "state" / "watchdog" / "loops"
+
+
+def desk_cwd(session):
+    """id -> folder, the same table inbox_watch and the watchdog use. The
+    registry IS the filesystem: a --to naming no real folder is a typo, and a
+    typo'd inbox folder used to become a phantom desk retried forever."""
+    if session == "orchestrator":
+        return ROOT
+    if session == "daybook":
+        return ROOT / "daybook"
+    if session.startswith("tool."):
+        return ROOT / "tools" / session.split(".", 1)[1]
+    project, _, component = session.partition(".")
+    return ROOT / "projects" / project / component
+
+
+def legal_desk_shape(s):
+    if s in ("orchestrator", "daybook"):
+        return True
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*", s))
+
+
+def own_session():
+    """The desk THIS CLI runs from (hook-grade resolution), or None outside one.
+    Lazy and defensive for the same reason machine_name() is."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import desk_identity
+        return desk_identity.session_id_for(Path.cwd())
+    except Exception:                                     # noqa: BLE001
+        return None
+
+
+def loop_budget_default():
+    """config\\omnius.ini [delegation] loop_budget, default 5. Lazy import so a
+    bare tree still works; garbage falls back rather than raising."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import omnius_config as ocfg
+        return max(1, ocfg.get_int(ocfg.load("omnius"), "delegation",
+                                   "loop_budget", "OMNIUS_LOOP_BUDGET", 5))
+    except Exception:                                     # noqa: BLE001
+        return 5
+
+
+def load_loop(loop_id):
+    try:
+        d = json.loads((LOOPS / f"{loop_id}.json").read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) and d.get("id") else None
+    except (OSError, ValueError):
+        return None
+
+
+def save_loop(led):
+    LOOPS.mkdir(parents=True, exist_ok=True)
+    p = LOOPS / f"{led['id']}.json"
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(led, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(p)
+
+
+def open_loop(session, max_runs, channel=None):
+    led = {"id": f"loop-{session}-{int(datetime.now().timestamp() * 1000)}",
+           "session": session, "max": int(max_runs), "fired": 0,
+           "channelId": channel, "openedAt": datetime.now().strftime(FMT),
+           "lastFiredAt": None, "closed": None}
+    save_loop(led)
+    return led
+
+
+def list_loops():
+    if not LOOPS.is_dir():
+        return []
+    out = []
+    for f in sorted(LOOPS.glob("*.json")):
+        led = load_loop(f.stem)
+        if led:
+            out.append(led)
+    return out
+
+
+def describe_loop(led):
+    state = f"closed: {led['closed']}" if led.get("closed") else "open"
+    return (f"{led.get('id',''):<34} {led.get('session',''):<18} "
+            f"run {led.get('fired', 0)}/{led.get('max', 0)}  {state}")
 
 
 def machine_name():
@@ -303,13 +392,19 @@ def stamp_success(jobs, delivered_ids, when=None):
     return jobs
 
 
-def add_job(kind, value, to, text, weekdays=False, between=None):
+def add_job(kind, value, to, text, weekdays=False, between=None,
+            loop=None, channel=None):
     jobs = load_jobs()
     jid = f"{kind}-{int(datetime.now().timestamp())}"
     job = {"id": jid, "kind": kind, kind: value, "to": to, "text": text,
            "weekdays": weekdays, "between": between, "machine": machine_name(),
            "paused": False, "createdAt": datetime.now().strftime(FMT),
            "nextRun": None, "lastRun": None}
+    if loop:
+        job["loop"] = loop           # counted against the loop's ledger at fire time
+    if channel:
+        job["channelId"] = channel   # rides into the fired envelope (D5): the
+                                     # channel a loop answers when it must talk
     if between:
         parse_between(between)                # reject a bad window at ADD time,
                                               # not silently at 3am
@@ -367,6 +462,8 @@ def describe(job, me=None):
     missed = int(job.get("missed", 0) or 0)
     if missed:
         marks.append(f"missed x{missed}")
+    if job.get("loop"):
+        marks.append("loop")         # `loop list` has the run count
     if not job.get("lastSuccess") and job.get("lastRun"):
         marks.append("never delivered")
     tail = ("  [" + ", ".join(marks) + "]") if marks else ""
@@ -422,6 +519,19 @@ def main(argv):
     p.add_argument("--text", required=True)
     p.add_argument("--weekdays", action="store_true", help="skip Sat/Sun")
     p.add_argument("--between", help="HH:MM-HH:MM, e.g. 09:00-18:00 (with --every)")
+    # Work loops (docs\DELEGATION.md D5): the continuation pattern, counted.
+    p.add_argument("--loop", metavar="auto|ID",
+                   help="budgeted work loop: `auto` opens one, an id continues it. "
+                        "REQUIRED when --to names your own desk.")
+    p.add_argument("--max", type=int, metavar="N",
+                   help="runs before the loop must checkpoint (only lowers the "
+                        "config default, never raises it)")
+    p.add_argument("--channel", metavar="CHANNEL_ID",
+                   help="Discord channel id the fired envelope should carry - "
+                        "where the loop answers a human when it must")
+    p = sub.add_parser("loop", help="work-loop ledgers: list them, close one")
+    p.add_argument("action", choices=["list", "close"])
+    p.add_argument("id", nargs="?", help="loop id (for close)")
     sub.add_parser("list", help="show scheduled jobs")
     p = sub.add_parser("remove", help="delete a job"); p.add_argument("id")
     p = sub.add_parser("pause", help="stop a job without losing it"); p.add_argument("id")
@@ -451,15 +561,105 @@ def main(argv):
             print("[X] --between only applies to --every "
                   f"(--{kind} already names an exact time)")
             return 2
+        # --to is validated on EVERY add: the schedule was the last writer that
+        # could still invent a phantom desk with a typo (docs\DELEGATION.md).
+        to = str(a.to or "").strip().lower()
+        if not legal_desk_shape(to):
+            print(f"[X] '{a.to}' is not a desk id - they look like: orchestrator, "
+                  f"daybook, tool.<name>, <project>.<component>")
+            return 2
+        if not desk_cwd(to).is_dir():
+            print(f"[X] no such desk: {to} (no folder) - `list` the fleet or check the spelling")
+            return 2
+        # Self-continuation must be a counted LOOP (D5). This replaces the old
+        # prose cap ("never queue a continuation more than twice") with a budget
+        # nothing has to remember.
+        me = own_session()
+        led = None
+        if a.loop:
+            budget = loop_budget_default()
+            if a.loop == "auto":
+                if a.max is not None and a.max > budget:
+                    print(f"[X] --max {a.max} exceeds the configured loop_budget "
+                          f"({budget}) - raise it in config\\omnius.ini [delegation] "
+                          f"if that is really wanted")
+                    return 2
+                led = open_loop(to, min(a.max or budget, budget), a.channel)
+            else:
+                led = load_loop(a.loop)
+                if led is None:
+                    print(f"[X] no loop with id {a.loop} - `loop list` shows them; "
+                          f"--loop auto opens a new one")
+                    return 2
+                if led.get("session") != to:
+                    print(f"[X] loop {led['id']} belongs to {led.get('session')}, "
+                          f"not {to} - a loop is one desk's chain")
+                    return 2
+                if led.get("closed"):
+                    print(f"[X] loop {led['id']} is closed ({led['closed']}) - a "
+                          f"fresh owner instruction opens a NEW loop")
+                    return 2
+                if int(led.get("fired") or 0) >= int(led.get("max") or 0):
+                    print(f"[X] loop {led['id']} has used its budget "
+                          f"({led.get('fired')}/{led.get('max')}) - report what "
+                          f"EXISTS to the owner and ask whether to continue. A "
+                          f"fresh owner instruction opens a NEW loop.")
+                    return 2
+                if a.channel:
+                    led["channelId"] = a.channel
+                    save_loop(led)
+            if any(j.get("loop") == led["id"] for j in load_jobs()):
+                print(f"[X] loop {led['id']} already has a queued continuation - "
+                      f"one at a time; a loop is a chain, not a fan")
+                return 2
+        elif me and to == me:
+            print("[X] a self-addressed continuation must carry --loop - the "
+                  "budgeted form of exactly this (docs\\DELEGATION.md D5):")
+            print("    add --in 2m --to <you> --loop auto "
+                  "--text \"Continue: <step>.  Done when: <command> exits 0.\"")
+            return 2
         try:
-            job = add_job(kind, value, a.to, a.text,
-                          weekdays=a.weekdays, between=a.between)
+            job = add_job(kind, value, to, a.text,
+                          weekdays=a.weekdays, between=a.between,
+                          loop=(led or {}).get("id"),
+                          channel=a.channel or (led or {}).get("channelId"))
         except ValueError as e:
             print(f"[X] {e}")
             return 2
         print(f"scheduled {job['id']} -> {job['to']} at {job['nextRun']}")
+        if led:
+            print(f"  loop {led['id']} run {int(led.get('fired') or 0) + 1}"
+                  f"/{led.get('max')} (fires are counted at delivery)")
         for when in upcoming(job)[1:]:
             print(f"  then {when.strftime(FMT)}")
+        return 0
+
+    if a.cmd == "loop":
+        if a.action == "list":
+            loops = list_loops()
+            if not loops:
+                print("no work loops")
+                return 0
+            for led in loops:
+                print(describe_loop(led))
+            return 0
+        if not a.id:
+            print("[X] loop close wants the loop id (`loop list` shows them)")
+            return 2
+        led = load_loop(a.id)
+        if led is None:
+            print(f"[X] no loop with id {a.id}")
+            return 2
+        if not led.get("closed"):
+            led["closed"] = "done"
+            save_loop(led)
+        jobs = load_jobs()
+        kept = [j for j in jobs if j.get("loop") != led["id"]]
+        if len(kept) != len(jobs):
+            save_jobs(kept)
+            print(f"closed {led['id']} and removed its queued continuation")
+        else:
+            print(f"closed {led['id']}")
         return 0
 
     if a.cmd in ("pause", "resume"):
