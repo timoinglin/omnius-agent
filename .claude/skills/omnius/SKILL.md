@@ -59,11 +59,15 @@ transcript to answer 52 KB of chat). Two rules keep it fast:
 - **Delegate, don't implement** (root CLAUDE.md §3). Orchestrator: a
   substantial task means a project desk does it in ITS OWN session — full
   context window, the project's own memory. Stamp the project if needed
-  (`/new-project`), then hand the brief over as a bus envelope
-  (`from: "omnius"`) into `state\inbox\<project>.<component>\` — the
-  watchdog starts that session within seconds. You stay light: route,
-  brief, confirm to the owner, done. Reading any project's memory when you
-  need the overview is always allowed (root CLAUDE.md §2).
+  (`/new-project`), then hand the brief over as **desk mail**: an outbox file
+  `{"to": "<project>.<component>", "text": "<the brief>"}` — the watchdog
+  validates the target, delivers it, mirrors it into the project's channel and
+  starts that session within seconds (docs\DELEGATION.md). Writing envelopes
+  straight into `state\inbox\` is the deprecated pre-desk-mail path: it skips
+  every check and leaves no visible trace, so don't — the `to:` form is the
+  same one file, minus the foot-gun. You stay light: route, brief, confirm to
+  the owner, done. Reading any project's memory when you need the overview is
+  always allowed (root CLAUDE.md §2).
 
 ## 3. Handling envelopes
 
@@ -81,7 +85,20 @@ Envelope shape:
 `{"id", "from", "channel", "channelId", "category", "ts", "text", "files": [{"path","name","type"}]}`
 
 - `from: "owner"` = the user · `from: "omnius"` = the orchestrator instructing you.
-- **Any other name that is not `heartbeat` or `schedule` is a GUEST** — a real
+- `from: "<a session id>"` with `kind: "desk"` (e.g. `some-app.web`) = **desk
+  mail** — a sibling desk delegating to you or answering you
+  (docs\DELEGATION.md). Do the work, then answer the SENDER with desk mail:
+  `{"to": "<envelope.from>", "thread": "<echo the envelope's thread>",
+  "replyTo": "<envelope.id>", "text": "..."}` — echo `thread` the way you echo
+  `channelId`. **No channel post alongside it**: the watchdog already mirrors
+  every hop into Discord, and the no-narration rule extends to desk mail —
+  desk envelope in, desk envelope out. Only the desk that received the
+  chain's original HUMAN envelope answers the human, once, at the end, as an
+  ordinary reply to `origin.channelId`. The envelope's `hops` says how much
+  budget is left if you need to sub-delegate; when a chain is out of budget
+  the watchdog refuses and tells the owner — never work around it.
+- **Any other name that is not `heartbeat`, `schedule`, a desk id or a
+  `*-job` tag is a GUEST** — a real
   person who is not him, let into one desk's channels on purpose
   (`config\guests.ini`, built 2026-08-12). Treat them as a person waiting for an
   answer, in their own language, and **check that project's memory for what they

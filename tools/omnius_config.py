@@ -242,6 +242,14 @@ SPEC = [
     ("omnius", "omnius", "gateway", "DISCORD_GATEWAY", "1", "bool"),
     ("omnius", "backup", "folder", "OMNIUS_BACKUP_DIR", "", "str"),
     ("omnius", "browser", "device_id", "OMNIUS_BROWSER_DEVICE_ID", "", "str"),
+    # Desk mail (docs\DELEGATION.md). hop_ttl = forward hops a delegation chain
+    # may spend (replies are free); loop_budget = scheduled continuation runs
+    # before a loop must checkpoint with the owner (consumed by schedule.py in
+    # Phase D); cross_project_requires_ok = hold cross-project desk mail for an
+    # ok in Discord - ON by default, an authorisation gate fails closed.
+    ("omnius", "delegation", "hop_ttl", "OMNIUS_HOP_TTL", "3", "int"),
+    ("omnius", "delegation", "loop_budget", "OMNIUS_LOOP_BUDGET", "5", "int"),
+    ("omnius", "delegation", "cross_project_requires_ok", "OMNIUS_CROSS_PROJECT_OK", "1", "bool"),
     ("notes", "notes", "notes_dir", "NOTES_DIR", "notes", "str"),
     ("notes", "notes", "host", "NOTES_HOST", "127.0.0.1", "str"),
     ("notes", "notes", "port", "PORT", "5111", "int"),
@@ -376,6 +384,17 @@ def guests():
         if key in RESERVED_SENDERS:
             _note(f"config\\guests.ini [guest.{label}] uses the reserved name "
                   f"'{key}' - ignored; rename it")
+            continue
+        # Desk mail (docs\DELEGATION.md D2) made session ids first-class `from`
+        # values, so a guest label must never look like one: a dot is the desk-id
+        # shape (project.component, tool.name), `orchestrator`/`daybook` are the
+        # dotless desks, and `*-job` is the tool-handoff tag. A guest wearing any
+        # of those would be classified as the fleet - mail from a person, treated
+        # as nobody waiting. Fails closed like everything else here.
+        if "." in key or key in ("orchestrator", "daybook") or key.endswith("-job"):
+            _note(f"config\\guests.ini [guest.{label}] looks like a desk id or "
+                  f"fleet tag - ignored; pick a plain name (no dot, not "
+                  f"'orchestrator'/'daybook', no -job suffix)")
             continue
         if not _SNOWFLAKE.match(uid):
             _note(f"config\\guests.ini [guest.{label}] user_id "

@@ -56,6 +56,8 @@ try:
     # rename (temp on C:, workspace on W:), which raises WinError 17 and failed
     # five checks for a reason that had nothing to do with them (2026-08-12).
     wd.DROPPED = SAND / "dropped"
+    # Desk mail (docs\DELEGATION.md): chain ledgers + held cross-project asks.
+    wd.THREADS, wd.GATE = SAND / "watchdog" / "threads", SAND / "gate"
     # fake project folders so build_map's folder-existence gate can resolve
     for comp in ("app", "backend"):
         (SAND / "projects" / "demo-app" / comp).mkdir(parents=True)
@@ -5491,6 +5493,283 @@ try:
     # (The boot-grace spawn lease died with terminal spawns: a run's lease now
     # carries the child PID from birth, so adoption/expiry is pid liveness -
     # covered in "one run per desk" above.)
+
+    # == desk mail (docs\DELEGATION.md D1-D4) ==================================
+    # A desk delegates with an outbox `to` file; the watchdog routes it. Driven
+    # both directly and through flush_outboxes, against real sandbox folders -
+    # the registry IS the filesystem, so the folders are the fixture.
+    print("== desk mail: envelope v2 ==")
+    for _comp in ("app", "web", "api"):
+        (SAND / "projects" / "alpha" / _comp).mkdir(parents=True, exist_ok=True)
+    (SAND / "projects" / "beta" / "app").mkdir(parents=True, exist_ok=True)
+    dm = {
+        "id-alpha-app": T("app", "alpha.app", "📁 alpha"),
+        "id-alpha-web": T("web", "alpha.web", "📁 alpha"),
+        "id-alpha-api": T("api", "alpha.api", "📁 alpha"),
+        "id-beta-app":  T("app", "beta.app", "📁 beta"),
+        "id-alerts":    T("alerts", None, "🎛 ORCHESTRATOR"),
+    }
+    _real_ttl, _real_gatereq = wd._hop_ttl, wd._gate_required
+    wd._hop_ttl = lambda: 2          # deterministic: never read this machine's config
+    wd._gate_required = lambda: True
+    wd._desk_id_cache.clear()
+    wd.PERMS.mkdir(parents=True, exist_ok=True)
+    for _p in wd.PERMS.glob("*.json"):
+        _p.unlink()
+
+    def dmail(sender, body, stem):
+        box = wd.OUTBOX / sender
+        box.mkdir(parents=True, exist_ok=True)
+        p = box / f"{stem}.json"
+        p.write_text(json.dumps(body), encoding="utf-8")
+        return p
+
+    sent.clear(); spawned.clear()
+    p1 = dmail("alpha.app", {"to": "alpha.web", "text": "finding 3: fix the api",
+                             "origin": {"channelId": "id-alpha-app", "from": "owner"}},
+               "1700000000001")
+    r1 = wd.deliver_desk_mail(dm, "alpha.app", p1, json.loads(p1.read_text(encoding="utf-8")))
+    _webbox = sorted((wd.INBOX / "alpha.web").glob("*.json"))
+    env1 = json.loads(_webbox[0].read_text(encoding="utf-8")) if _webbox else {}
+    check("desk mail: a 'to' outbox file becomes a v2 inbox envelope",
+          r1 == "delivered" and env1.get("kind") == "desk" and env1.get("from") == "alpha.app"
+          and env1.get("id") == "dm-alpha.app-1700000000001",
+          f"r={r1} env={env1.get('id')}")
+    check("desk mail: the outbox file is consumed on delivery", not p1.exists())
+    check("desk mail: a fresh chain gets hop_ttl from config (2 -> 1 after one hop)",
+          env1.get("hops") == 1 and str(env1.get("thread", "")).startswith("t-"))
+    check("desk mail: origin travels with the chain, stamped with its starter",
+          (env1.get("origin") or {}).get("channelId") == "id-alpha-app"
+          and (env1.get("origin") or {}).get("session") == "alpha.app")
+    check("desk mail: the inbox write is atomic - no .part/.tmp litter",
+          not list((wd.INBOX / "alpha.web").glob("*.tmp"))
+          and not list((wd.INBOX / "alpha.web").glob("*.part")))
+    check("desk mail: the visible copy posts in the RECIPIENT's channel",
+          bool(sent) and sent[-1][0] == "id-alpha-web" and "[desk mail]" in sent[-1][1])
+    check("desk mail: delivery stamps the sender's .last-posted (silence announcer)",
+          (wd.OUTBOX / "alpha.app" / ".last-posted").exists())
+    check("desk mail: delivery kicks ensure_runner on the target", "alpha.web" in spawned)
+
+    def _transcript_tail(sess):
+        d = wd.TRANSCRIPTS / sess
+        fs = sorted(d.glob("*.jsonl")) if d.is_dir() else []
+        return fs[-1].read_text(encoding="utf-8") if fs else ""
+    check("desk mail: both halves reach the bus transcript",
+          "finding 3" in _transcript_tail("alpha.app")
+          and "finding 3" in _transcript_tail("alpha.web"))
+
+    print("== desk mail routing ==")
+    # the today-untested flush refusal first: a foreign-channel envelope
+    (wd.OUTBOX / "alpha.app" / "1700000000010.json").write_text(
+        json.dumps({"text": "x", "channelId": "id-beta-app"}), encoding="utf-8")
+    wd.flush_outboxes(dm)
+    check("flush: a foreign-channel envelope is renamed .refused, never misdelivered",
+          (wd.OUTBOX / "alpha.app" / "1700000000010.refused").exists())
+    sent.clear()
+    p_bad = dmail("alpha.app", {"to": "Not A Desk!", "text": "x"}, "1700000000002")
+    check("desk-target: a malformed id is refused and renamed .refused",
+          wd.deliver_desk_mail(dm, "alpha.app", p_bad,
+                               {"to": "Not A Desk!", "text": "x"}) == "refused"
+          and (wd.OUTBOX / "alpha.app" / "1700000000002.refused").exists())
+    check("desk-target: refusal tells the sender's channel in one line",
+          bool(sent) and sent[-1][0] == "id-alpha-app" and "could not deliver" in sent[-1][1])
+    p_res = dmail("alpha.app", {"to": "omnius", "text": "x"}, "1700000000003")
+    check("desk-target: a reserved sender name as target is refused",
+          wd.deliver_desk_mail(dm, "alpha.app", p_res,
+                               {"to": "omnius", "text": "x"}) == "refused")
+    p_ghost = dmail("alpha.app", {"to": "ghost.desk", "text": "x"}, "1700000000004")
+    check("desk-target: a desk with no folder is refused - no phantom inbox is created",
+          wd.deliver_desk_mail(dm, "alpha.app", p_ghost,
+                               {"to": "ghost.desk", "text": "x"}) == "refused"
+          and not (wd.INBOX / "ghost.desk").exists())
+    p_self = dmail("alpha.app", {"to": "alpha.app", "text": "x"}, "1700000000005")
+    check("desk-target: self-address is refused - continuation is the schedule's job",
+          wd.deliver_desk_mail(dm, "alpha.app", p_self,
+                               {"to": "alpha.app", "text": "x"}) == "refused"
+          and "schedule" in sent[-1][1])
+
+    print("== hops and threads ==")
+    t1 = env1.get("thread")
+    # a threadless reply is glued to the chain that last delivered to the sender
+    p2 = dmail("alpha.web", {"to": "alpha.app", "text": "done, verify me"}, "1700000000011")
+    r2 = wd.deliver_desk_mail(dm, "alpha.web", p2, json.loads(p2.read_text(encoding="utf-8")))
+    _appbox = sorted((wd.INBOX / "alpha.app").glob("*.json"))
+    env2 = json.loads(_appbox[-1].read_text(encoding="utf-8")) if _appbox else {}
+    check("threads: a threadless reply is glued to the thread that woke the sender",
+          r2 == "delivered" and env2.get("thread") == t1)
+    check("hops: a reply along a recorded edge is free",
+          env2.get("hops") == 1, f"hops={env2.get('hops')}")
+    # dedupe: the crash window between inbox-write and outbox-unlink (while the
+    # chain is still open - a closed chain refuses before dedupe is consulted)
+    p_dup = dmail("alpha.app", {"to": "alpha.web", "text": "finding 3: fix the api",
+                                "thread": t1}, "1700000000001")
+    _web_before = len(list((wd.INBOX / "alpha.web").glob("*.json")))
+    check("threads: redelivery after a crash is a no-op, never a duplicate",
+          wd.deliver_desk_mail(dm, "alpha.app", p_dup,
+                               json.loads(p_dup.read_text(encoding="utf-8"))) == "duplicate"
+          and not p_dup.exists()
+          and len(list((wd.INBOX / "alpha.web").glob("*.json"))) == _web_before)
+    # a new edge through the FLUSH branch spends the last hop
+    dmail("alpha.app", {"to": "alpha.api", "text": "and the api half", "thread": t1},
+          "1700000000012")
+    wd.flush_outboxes(dm)
+    _apibox = sorted((wd.INBOX / "alpha.api").glob("*.json"))
+    env3 = json.loads(_apibox[-1].read_text(encoding="utf-8")) if _apibox else {}
+    check("hops: each forward hop decrements the thread ledger (flush branch)",
+          env3.get("id") == "dm-alpha.app-1700000000012" and env3.get("hops") == 0)
+    # a reply is still free at zero hops - unwinding is never starved
+    p4a = dmail("alpha.web", {"to": "alpha.app", "text": "still unwinding", "thread": t1},
+                "1700000000013")
+    check("hops: a reply is free even at zero hops left",
+          wd.deliver_desk_mail(dm, "alpha.web", p4a,
+                               json.loads(p4a.read_text(encoding="utf-8"))) == "delivered")
+    # ...but a NEW edge at zero closes the chain and checkpoints the human
+    sent.clear()
+    p4b = dmail("alpha.api", {"to": "alpha.web", "text": "one more", "thread": t1},
+                "1700000000014")
+    r4b = wd.deliver_desk_mail(dm, "alpha.api", p4b, json.loads(p4b.read_text(encoding="utf-8")))
+    led1 = wd._load_thread(t1)
+    check("hops: an exhausted chain is refused and closed",
+          r4b == "refused" and led1 and led1.get("closed") == "hops")
+    check("hops: the owner sees a checkpoint in the origin channel",
+          any("hop limit" in s[1] and s[0] == "id-alpha-app" for s in sent))
+    # closed chains refuse further mail by id
+    p4c = dmail("alpha.app", {"to": "alpha.web", "text": "zombie", "thread": t1},
+                "1700000000015")
+    check("threads: a closed chain refuses further mail",
+          wd.deliver_desk_mail(dm, "alpha.app", p4c,
+                               json.loads(p4c.read_text(encoding="utf-8"))) == "refused")
+    check("threads: the ledger is a FILE and survives a restart",
+          wd._thread_path(t1).exists() and wd._load_thread(t1).get("closed") == "hops")
+    # the storm backstop: hop-free replies cannot ping-pong forever
+    wd._hop_ttl = lambda: 1          # cap = 4 deliveries
+    ps1 = dmail("alpha.app", {"to": "alpha.web", "text": "storm seed"}, "1700000000030")
+    wd.deliver_desk_mail(dm, "alpha.app", ps1, json.loads(ps1.read_text(encoding="utf-8")))
+    t2 = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
+                    .read_text(encoding="utf-8")).get("thread")
+    _storm = None
+    for i in range(4):
+        psn = dmail("alpha.web", {"to": "alpha.app", "text": f"pong {i}", "thread": t2},
+                    f"170000000004{i}")
+        _storm = wd.deliver_desk_mail(dm, "alpha.web", psn,
+                                      json.loads(psn.read_text(encoding="utf-8")))
+    check("threads: the deliveries backstop stops a ping-pong storm",
+          _storm == "refused" and wd._load_thread(t2).get("closed") == "storm",
+          f"last={_storm}")
+    wd._hop_ttl = lambda: 2
+
+    print("== fleet senders (desk mail classification) ==")
+    check("a desk id in 'from' is not a person", wd.is_human_sender("alpha.web") is False)
+    check("a '-job' sender is fleet mail too (transcribe-job predates this)",
+          wd.is_human_sender("transcribe-job") is False)
+    check("owner, guests and strangers still count as people",
+          wd.is_human_sender("owner") is True and wd.is_human_sender("guestina") is True
+          and wd.is_human_sender("someone new") is True)
+    check("a box holding only desk mail opens no window",
+          wd.human_mail_waiting("alpha.web") is False)
+    check("desk mail never trips the deaf-desk pager",
+          wd.oldest_human_envelope("alpha.web") == (None, 0.0))
+    # guest labels may never look like the fleet (config side, fails closed)
+    import omnius_config as _dcfg                                     # noqa: E402
+    _dreal = _dcfg.load
+    _dfake = {
+        "guest.alpha.web": {"user_id": "424242424242424250", "channels": "c1"},
+        "guest.daybook": {"user_id": "424242424242424251", "channels": "c1"},
+        "guest.render-job": {"user_id": "424242424242424252", "channels": "c1"},
+        "guest.plain": {"user_id": "424242424242424253", "channels": "c1"},
+    }
+    try:
+        _dcfg.load = lambda name, legacy=None: (
+            _dfake if name == "guests" else _dreal(name, legacy))
+        _dread = _dcfg.guests()
+        check("guests: a label with a dot is refused at config load",
+              "alpha.web" not in _dread)
+        check("guests: a dotless desk name is refused at config load",
+              "daybook" not in _dread)
+        check("guests: a -job label is refused at config load",
+              "render-job" not in _dread and "plain" in _dread)
+        check("guests: the desk-shaped rejections are reported, not swallowed",
+              sum(1 for p in _dcfg.problems() if "desk id or" in p) >= 3)
+    finally:
+        _dcfg.load = _dreal
+
+    print("== cross-project gate ==")
+    F = wd.free_pair
+    check("gate: same-project mail passes free", F("alpha.app", "alpha.web") is True)
+    check("gate: orchestrator mail is never gated", F("orchestrator", "beta.app") is True)
+    check("gate: cross-project, orchestrator, tool and daybook targets all hold",
+          F("alpha.app", "beta.app") is False and F("alpha.app", "orchestrator") is False
+          and F("tool.email", "tool.whisper") is False and F("alpha.app", "daybook") is False)
+    sent.clear()
+    pg = dmail("alpha.app", {"to": "beta.app", "text": "cross the border"}, "1700000000020")
+    rg = wd.deliver_desk_mail(dm, "alpha.app", pg, json.loads(pg.read_text(encoding="utf-8")))
+    _gates = wd.pending_gates()
+    check("gate: cross-project mail is HELD, not delivered",
+          rg == "held" and len(_gates) == 1 and not pg.exists()
+          and not list((wd.INBOX / "beta.app").glob("*.json")))
+    check("gate: the ask names both desks and carries a code",
+          bool(sent) and "cross-project" in sent[-1][1] and _gates[0]["code"] in sent[-1][1])
+    spawned.clear()
+    _ans = wd.answer_gate("ok", dm)
+    check("gate: 'ok' delivers the held envelope",
+          bool(_ans) and "delivered" in _ans and not wd.pending_gates()
+          and len(list((wd.INBOX / "beta.app").glob("*.json"))) == 1
+          and "beta.app" in spawned)
+    pg2 = dmail("alpha.app", {"to": "beta.app", "text": "second try"}, "1700000000021")
+    wd.deliver_desk_mail(dm, "alpha.app", pg2, json.loads(pg2.read_text(encoding="utf-8")))
+    _code2 = wd.pending_gates()[0]["code"]
+    _ans2 = wd.answer_gate(f"no {_code2}", dm)
+    check("gate: 'no' drops it and says so",
+          bool(_ans2) and "not delivered" in _ans2 and not wd.pending_gates()
+          and bool(list(wd.GATE.glob("*.refused"))))
+    pg3 = dmail("alpha.app", {"to": "beta.app", "text": "third"}, "1700000000022")
+    wd.deliver_desk_mail(dm, "alpha.app", pg3, json.loads(pg3.read_text(encoding="utf-8")))
+    (wd.PERMS / "permreq1.json").write_text(json.dumps(
+        {"id": "permreq1", "code": "ppp111", "session": "alpha.app", "tool": "Bash"}),
+        encoding="utf-8")
+    check("gate: a bare 'ok' never answers a gate while a permission ask is pending",
+          wd.answer_gate("ok", dm) is None and len(wd.pending_gates()) == 1)
+    (wd.PERMS / "permreq1.json").unlink()
+    _g3 = wd.pending_gates()[0]
+    _g3f = wd.GATE / f"{_g3['id']}.json"
+    _g3rec = json.loads(_g3f.read_text(encoding="utf-8"))
+    _g3rec["askedTs"] = time.time() - 7200
+    _g3f.write_text(json.dumps(_g3rec), encoding="utf-8")
+    sent.clear()
+    wd.sweep_gates(dm)
+    check("gate: silence past the deadline refuses - fail closed",
+          not wd.pending_gates() and any("no answer within" in s[1] for s in sent))
+    pg4 = dmail("alpha.app", {"to": "beta.app", "text": "fourth"}, "1700000000023")
+    wd.deliver_desk_mail(dm, "alpha.app", pg4, json.loads(pg4.read_text(encoding="utf-8")))
+    _g4 = wd.pending_gates()[0]
+    _g4f = wd.GATE / f"{_g4['id']}.json"
+    _g4rec = json.loads(_g4f.read_text(encoding="utf-8"))
+    _g4rec["lastAskTs"] = 0.0        # "asked before this boot"
+    _g4f.write_text(json.dumps(_g4rec), encoding="utf-8")
+    sent.clear()
+    wd.sweep_gates(dm)
+    check("gate: a pending ask survives a restart - re-asked once, same code, old deadline",
+          any(_g4["code"] in s[1] for s in sent)
+          and wd.pending_gates()[0]["code"] == _g4["code"]
+          and json.loads(_g4f.read_text(encoding="utf-8"))["askedTs"] == _g4rec["askedTs"])
+    sent.clear()
+    wd.sweep_gates(dm)
+    check("gate: ...and only once per boot, not per tick",
+          not any(_g4["code"] in s[1] for s in sent))
+    _r5 = wd.handle_message(msg("999999999999999999", f"ok {_g4['code']}"), "CID_OM",
+                            T("omnius", "orchestrator"), me, dm)
+    check("gate: the owner's answer is consumed at dispatch, never delivered as mail",
+          _r5 == "gate" and not wd.pending_gates())
+    check("config: the [delegation] keys are in SPEC and visible to !config",
+          any(s == "delegation" and k == "hop_ttl" for _, s, k, _e, _d, _k2 in _dcfg.SPEC)
+          and any(s == "delegation" and k == "cross_project_requires_ok"
+                  for _, s, k, _e, _d, _k2 in _dcfg.SPEC)
+          and any(s == "delegation" and k == "loop_budget"
+                  for _, s, k, _e, _d, _k2 in _dcfg.SPEC))
+    # restore the config-backed readers and tidy shared fixtures
+    wd._hop_ttl, wd._gate_required = _real_ttl, _real_gatereq
+    wd._desk_id_cache.clear()
+    sent.clear(); spawned.clear()
 
     # == permission escalation =================================================
     # Relaying a prompt to Discord is what lets the profile be TIGHTENED instead

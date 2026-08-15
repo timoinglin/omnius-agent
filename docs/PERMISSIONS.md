@@ -120,3 +120,5 @@ routine keeps asking, add it to `allow` rather than widening a wildcard.
 **Company-server note.** Relayed permission prompts include the command line
 (token shapes redacted) and land in `#alerts`. Set that channel's visibility
 accordingly.
+
+**2026-08-15 — the cross-project desk-mail gate reuses this rail's grammar, not its hook.** Desk-to-desk delegation (`docs\DELEGATION.md`) holds an envelope that crosses a project boundary in `state\gate\` and asks ok/no in Discord with the same word list and 6-char codes as a permission ask. The differences are deliberate: it parks a **file**, never blocks a hook, and a blocked hook always outranks a parked envelope — while permission asks are pending, a bare `ok` answers the permission, and a gate then needs its code. Unanswered gates fail closed after 60 minutes; silence delivers nothing.

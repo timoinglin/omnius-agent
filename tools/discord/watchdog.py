@@ -17,6 +17,7 @@ import argparse
 import atexit
 import ctypes
 import json
+import hashlib
 import os
 import queue
 import re
@@ -50,6 +51,9 @@ WD_STATE = STATE / "watchdog"
 RUNS = WD_STATE / "runs"          # one lease per desk while a headless run is active
 PERMS = STATE / "permissions"     # permission escalation: <tool_use_id>.json / .answer
 TURNS = STATE / "turns"           # hook stamps: <sid>.busy while a terminal turn runs
+THREADS = WD_STATE / "threads"    # desk-mail chain ledgers (docs\DELEGATION.md D1)
+GATE = STATE / "gate"             # held cross-project desk mail awaiting ok/no (D4).
+# NOT under state\inbox\ - every folder there is treated as a desk (see DROPPED).
 BRIDGES = STATE / "bridges"       # <sid>.json: a live desk bridge owns this desk
 
 # The watchdog runs under pythonw (no console), so EVERY console child it starts
@@ -918,8 +922,13 @@ def is_human_sender(who):
     Used by the guards that decide whether someone is WAITING - a window on his
     desktop, the deaf-desk alarm. A heartbeat going unanswered is a log line; a
     person going unanswered is the failure this whole layer exists to prevent,
-    and that is just as true when the person is a guest."""
-    return bool(who) and str(who).strip().lower() not in SYSTEM_SENDERS
+    and that is just as true when the person is a guest.
+
+    Since desk mail (docs\\DELEGATION.md D2) the negative space grew: a session
+    id or a tool's job tag in `from` is the fleet talking to itself, and the
+    fleet waiting on the fleet is a log line too - never a window, never a
+    page. is_fleet_sender (desk-mail section) is the positive predicate."""
+    return bool(who) and not is_fleet_sender(who)
 
 
 def cwd_for(session):
@@ -2888,8 +2897,9 @@ def write_envelope(session, channel_name, msg, files, channel_id=None, category=
                 "channelId": channel_id, "category": category,
                 "ts": msg.get("timestamp", now_iso()), "text": msg.get("content", ""),
                 "files": files}
-    (box / f"{msg['id']}.json").write_text(
-        json.dumps(envelope, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Atomic since desk mail (docs\DELEGATION.md): with more writers than the
+    # watchdog composing envelopes, a torn read by ensure_runners is reachable.
+    write_json_atomic(box / f"{msg['id']}.json", envelope)
     transcribe(session, "in", msg.get("content", ""), channel=channel_name,
                channel_id=channel_id, files=[f.get("path") for f in (files or [])],
                who=sender)
@@ -3585,6 +3595,12 @@ def flush_outboxes(mapping):
                 log(f"outbox {session}/{f.name}: unreadable ({e}) - renamed .bad")
                 f.rename(f.with_suffix(".bad"))
                 continue
+            if data.get("to"):
+                # Desk mail (docs\DELEGATION.md): addressed to a DESK, not a
+                # channel - routed, never posted. Runs before channel
+                # resolution so a `to` file can never fall through to Discord.
+                deliver_desk_mail(mapping, session, f, data)
+                continue
             cid = resolve_outbox_target(mapping, session, data)
             if cid == REFUSED:
                 log(f"outbox {session}: refused - {data.get('channelId') or data.get('channel')} "
@@ -3620,6 +3636,483 @@ def flush_outboxes(mapping):
                 log(f"posted outbox {session}/{f.name}")
             except api.ApiError as e:
                 log(f"outbox post failed ({session}/{f.name}): {e}")
+
+
+# --- desk mail (delegation) -----------------------------------------------------
+# docs\DELEGATION.md D1-D4. A desk delegates by writing an outbox file with a
+# `to` field; THIS side routes it. Senders never write foreign inboxes: one
+# gate validates every target (the phantom-desk class closes at its last entry
+# point), hops and cross-project policy live in one place, and the visible
+# copy the doctrine promises (ARCHITECTURE par.3.4: "delegation is always
+# watchable") can only be posted by the one process allowed to speak in every
+# channel - this one.
+
+THREAD_IDLE_SECONDS = 48 * 3600   # open chains idle this long are swept (breadcrumb logged)
+GATE_WAIT_SECONDS = 3600          # an unanswered cross-project ask fails CLOSED after this
+_BOOT_TS = time.time()            # gate asks re-post once per watchdog boot, never per tick
+_desk_id_cache = {}               # id -> (verdict, checked_at); envelope scans run per tick
+DESK_ID_CACHE_SECONDS = 30.0
+
+
+def _hop_ttl():
+    """Forward hops a chain may spend (replies are free). Config, default 3."""
+    return max(1, ocfg.get_int(OMNIUS_CFG, "delegation", "hop_ttl",
+                               "OMNIUS_HOP_TTL", 3, env=api.ENV))
+
+
+def _gate_required():
+    """Is cross-project desk mail held for an ok? Default ON - fail closed."""
+    return ocfg.get_bool(OMNIUS_CFG, "delegation", "cross_project_requires_ok",
+                         "OMNIUS_CROSS_PROJECT_OK", True, env=api.ENV)
+
+
+def legal_desk_shape(s):
+    """The id grammar, mirroring inbox_watch.py's own table: orchestrator |
+    daybook | tool.<name> | <project>.<component>. Kebab-case, one dot."""
+    if s in ("orchestrator", "daybook"):
+        return True
+    return bool(re.fullmatch(r"[a-z0-9][a-z0-9-]*\.[a-z0-9][a-z0-9-]*", s))
+
+
+def is_desk_id(who):
+    """A legal id whose folder EXISTS. The registry is the filesystem - the
+    same check routing uses - cached briefly because the per-tick envelope
+    scans consult this for every queued envelope."""
+    now = time.time()
+    hit = _desk_id_cache.get(who)
+    if hit and now - hit[1] < DESK_ID_CACHE_SECONDS:
+        return hit[0]
+    ok = legal_desk_shape(who) and cwd_for(who).is_dir()
+    _desk_id_cache[who] = (ok, now)
+    return ok
+
+
+def is_fleet_sender(who):
+    """The fleet talking to itself: the three system tags, tool job handoffs
+    (`*-job` - transcribe-job predates this and used to count as a person, a
+    latent window-popper), and any real desk id (docs\\DELEGATION.md D2)."""
+    w = str(who or "").strip().lower()
+    if not w:
+        return False
+    if w in SYSTEM_SENDERS or w.endswith("-job"):
+        return True
+    return is_desk_id(w)
+
+
+def free_pair(sender, to):
+    """Desk mail that skips the gate: the orchestrator delegating downward (its
+    whole job, and the pre-desk-mail hand path was never gated), or two desks
+    of the SAME project. Everything else - project<->project, anything->
+    orchestrator, tool desks, daybook - holds for an ok. Ambiguity fails
+    closed."""
+    if sender == "orchestrator":
+        return True
+    sp, sdot, _ = sender.partition(".")
+    tp, tdot, _ = to.partition(".")
+    return bool(sdot and tdot and sp == tp and sp != "tool")
+
+
+# --- the thread ledger: one file per chain, the AUTHORITATIVE hop count ---------
+# (an envelope's `hops` field is informational; a desk cannot refill a budget
+# it merely echoes)
+
+def _thread_path(tid):
+    return THREADS / f"{tid}.json"
+
+
+def _load_thread(tid):
+    if not tid:
+        return None
+    try:
+        d = json.loads(_thread_path(tid).read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) and d.get("id") else None
+    except (OSError, ValueError):
+        return None
+
+
+def _save_thread(led):
+    led["lastAt"] = now_iso()
+    THREADS.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(_thread_path(led["id"]), led)
+
+
+def _new_thread(sender, origin, stem):
+    led = {"id": f"t-{stem}-{sender}", "origin": origin, "hopsLeft": _hop_ttl(),
+           "deliveries": [], "edges": [], "lastDeliveredTo": None,
+           "startedAt": now_iso(), "lastAt": now_iso(), "closed": None}
+    _save_thread(led)
+    return led
+
+
+def _close_thread(led, reason):
+    led["closed"] = reason
+    _save_thread(led)
+
+
+def _clean_origin(sender, origin):
+    """Keep only what the spec names. The chain STARTER supplies origin (it
+    just drained that human envelope); later hops echo `thread` instead."""
+    if not isinstance(origin, dict):
+        return None
+    out = {"channelId": str(origin.get("channelId") or "") or None,
+           "from": str(origin.get("from") or "") or None,
+           "session": sender}
+    return out if (out["channelId"] or out["from"]) else None
+
+
+def _infer_thread(sender):
+    """The chain that last delivered TO this sender - glues a threadless reply
+    to its chain. Newest open ledger wins; a wrong guess is bounded by the hop
+    and storm caps, so inference is a convenience, not a trust decision."""
+    best = None
+    try:
+        for f in THREADS.glob("*.json"):
+            led = _load_thread(f.stem)
+            if not led or led.get("closed") or led.get("lastDeliveredTo") != sender:
+                continue
+            if best is None or str(led.get("lastAt") or "") > str(best.get("lastAt") or ""):
+                best = led
+    except OSError:
+        pass
+    return best
+
+
+def _thread_notice(mapping, led, sender, text):
+    """One line where the humans are: the chain's origin channel, else the
+    sender's own. The watchdog's voice, never an envelope - a notice cannot
+    wake a run, so notices cannot loop."""
+    cid = (led.get("origin") or {}).get("channelId") if led else None
+    if not (cid and cid in mapping):
+        cid = primary_channel_id(mapping, sender)
+    if not cid:
+        log(f"desk mail notice (no channel): {text}")
+        return
+    try:
+        api.send_message(cid, text)
+    except api.ApiError as e:
+        log(f"desk mail notice failed: {e}")
+
+
+def _post_desk_mail_copy(mapping, sender, to, env):
+    """The visible copy - the transport keeps ARCHITECTURE par.3.4's promise.
+    Posted in the RECIPIENT's channel, best-effort and AFTER delivery: Discord
+    being down delays visibility, never delivery. ~200 chars of redacted
+    preview; whole briefs belong in transcripts, not chat (the no-narration
+    rule is about exactly that noise)."""
+    preview = api.redact(str(env.get("text") or ""))[:200]
+    head = (f"📨 `[desk mail]` `{sender}` → `{to}` · `{env.get('thread')}` · "
+            f"{env.get('hops')} hop(s) left")
+    cid = primary_channel_id(mapping, to) or primary_channel_id(mapping, sender)
+    if not cid:
+        log(f"desk mail copy (no channel): {sender} -> {to}")
+        return
+    try:
+        api.send_message(cid, f"{head}\n> {preview}")
+    except api.ApiError as e:
+        log(f"desk mail copy failed: {e}")
+
+
+def _refuse_desk_mail(mapping, sender, path, why):
+    """Uniform refusal: rename `.refused` (the outbox idiom - evidence, never
+    deletion), log, one watchdog-voice line in the sender's channel. No run is
+    woken for a refusal."""
+    log(f"desk mail {sender}/{path.name}: refused - {why}")
+    try:
+        path.rename(path.with_suffix(".refused"))
+    except OSError:
+        path.unlink(missing_ok=True)
+    cid = primary_channel_id(mapping, sender)
+    if cid:
+        try:
+            api.send_message(cid, f"✗ could not deliver desk mail from `{sender}` - {why}")
+        except api.ApiError:
+            pass
+    return "refused"
+
+
+def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
+    """Route one desk-addressed outbox file (docs\\DELEGATION.md D1).
+
+    -> delivered | refused | held | duplicate (status tokens, also for tests).
+    The step order is the crash-safety story: the inbox write lands before the
+    outbox file is unlinked, and the DETERMINISTIC envelope id makes the
+    in-between window redeliver-safe instead of duplicate-prone."""
+    to = str(data.get("to") or "").strip().lower()
+    text = str(data.get("text") or "")
+
+    # 1. Grammar + reserved names. Refused by name for a crisp message; they
+    #    would fail the folder check anyway.
+    if not legal_desk_shape(to) or to in ocfg.RESERVED_SENDERS:
+        return _refuse_desk_mail(
+            mapping, sender, path,
+            f"`{to or '(empty)'}` is not a desk id (orchestrator, daybook, "
+            f"tool.<name>, <project>.<component>)")
+
+    # 2. Self-address. Doctrine: a session ignores its own origin - and the
+    #    sanctioned self-continuation is the schedule, whose envelopes arrive
+    #    as system mail with a budget (Phase D).
+    if to == sender:
+        return _refuse_desk_mail(mapping, sender, path,
+                                 "self-mail is a loop - queue a continuation "
+                                 "with schedule.py instead")
+
+    # 3. Existence. The registry IS the filesystem, and refusing WITHOUT ever
+    #    creating the folder is what closes the phantom-desk class
+    #    (_unrunnable's docstring carries the incident this prevents).
+    if not cwd_for(to).is_dir():
+        return _refuse_desk_mail(mapping, sender, path,
+                                 f"no such desk `{to}` (no folder)")
+
+    # 4. Thread: echoed id (unknown ones are NOT resurrected) -> inferred ->
+    #    fresh with the configured TTL.
+    led = _load_thread(str(data.get("thread") or "").strip())
+    if led is None:
+        led = _infer_thread(sender)
+    if led is None:
+        led = _new_thread(sender, _clean_origin(sender, data.get("origin")), path.stem)
+    if led.get("closed"):
+        return _refuse_desk_mail(mapping, sender, path,
+                                 f"chain `{led['id']}` is closed ({led['closed']})")
+
+    # 5. Idempotence: a crash between inbox-write and unlink redelivers here.
+    env_id = f"dm-{sender}-{path.stem}"
+    if env_id in (led.get("deliveries") or []):
+        path.unlink(missing_ok=True)
+        return "duplicate"
+
+    # 6. Storm backstop: bounds every pathological shape, including the reply
+    #    ping-pong that hop-free replies would otherwise permit.
+    if len(led.get("deliveries") or []) >= _hop_ttl() * 4:
+        _close_thread(led, "storm")
+        return _refuse_desk_mail(mapping, sender, path,
+                                 f"chain `{led['id']}` hit its message cap")
+
+    # 7. Hops. A reply - reversing a recorded edge - is FREE, so a chain can
+    #    always unwind to its starter. Only NEW edges spend budget.
+    is_reply = [to, sender] in (led.get("edges") or [])
+    if not is_reply and led.get("hopsLeft", 0) <= 0:
+        _close_thread(led, "hops")
+        _thread_notice(mapping, led, sender,
+                       f"⛔ delegation chain `{led['id']}` hit its hop limit "
+                       f"({_hop_ttl()}) at `{sender}` → `{to}` - re-instruct to "
+                       f"continue (fresh mail starts a fresh chain)")
+        return _refuse_desk_mail(mapping, sender, path, "hops exhausted")
+
+    # 8. The cross-project gate (D4) - held mail leaves the outbox entirely.
+    if not gate_approved and _gate_required() and not free_pair(sender, to):
+        return hold_for_gate(mapping, sender, to, led, path, data)
+
+    # 9. Deliver.
+    hops_after = led.get("hopsLeft", 0) - (0 if is_reply else 1)
+    files = [{"path": str(p), "name": Path(str(p)).name, "type": None}
+             for p in (data.get("files") or [])]
+    env = {"id": env_id, "from": sender, "channel": None, "channelId": None,
+           "category": None, "ts": now_iso(), "text": text, "files": files,
+           "kind": "desk", "thread": led["id"], "origin": led.get("origin"),
+           "hops": hops_after, "replyTo": data.get("replyTo"), "slash": None}
+    box = INBOX / to
+    box.mkdir(parents=True, exist_ok=True)
+    write_json_atomic(box / f"{env_id}.json", env)
+    if not is_reply:
+        led["hopsLeft"] = hops_after
+        led.setdefault("edges", []).append([sender, to])
+    led.setdefault("deliveries", []).append(env_id)
+    led["lastDeliveredTo"] = to
+    _save_thread(led)
+    # Both halves reach the bus transcript - the paper trail must not go dark
+    # just because no Discord channel was involved.
+    paths = [f["path"] for f in files]
+    transcribe(sender, "out", text, who=sender, files=paths)
+    transcribe(to, "in", text, who=sender, files=paths)
+    path.unlink(missing_ok=True)
+    try:
+        # Proof-of-reply: a desk that ONLY delegated is not a silent desk. The
+        # Stop hook reads this stamp exactly like a posted reply's.
+        (OUTBOX / sender / ".last-posted").write_text(now_iso(), encoding="utf-8")
+    except OSError:
+        pass
+    _post_desk_mail_copy(mapping, sender, to, env)
+    log(f"desk mail {sender} -> {to} ({env_id}, thread {led['id']}, "
+        f"{hops_after} hop(s) left)")
+    ensure_runner(to)
+    return "delivered"
+
+
+# --- the cross-project gate: holds a FILE, never a hook -------------------------
+
+def pending_gates():
+    """-> list of held cross-project asks, oldest first (mirror of
+    pending_permissions)."""
+    out = []
+    if not GATE.is_dir():
+        return out
+    for p in sorted(GATE.glob("*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and d.get("id"):
+                out.append(d)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def _post_gate_ask(mapping, rec, led=None):
+    """Ask where the human is: the chain's origin channel, else the sender's,
+    else #alerts. Redacted preview - a brief can quote anything."""
+    preview = api.redact(str((rec.get("data") or {}).get("text") or ""))[:200]
+    cid = (led.get("origin") or {}).get("channelId") if led else None
+    if not (cid and cid in mapping):
+        cid = primary_channel_id(mapping, rec["sender"]) \
+            or broadcast_channel_id(mapping, "alerts")
+    if not cid:
+        log(f"gate ask {rec['id']}: no channel to ask in - held silently")
+        return
+    try:
+        api.send_message(cid, f"🔀 `[cross-project]` `{rec['sender']}` wants to mail "
+                              f"`{rec['to']}`\n> {preview}\n"
+                              f"reply `ok` to deliver or `no` to drop · code `{rec['code']}`")
+    except api.ApiError as e:
+        log(f"gate ask failed: {e}")
+
+
+def hold_for_gate(mapping, sender, to, led, path, data):
+    """Park a cross-project envelope for the owner's ok/no (docs\\DELEGATION.md
+    D4). Reuses the permission relay's INTERACTION (ok/no + code) but holds a
+    file instead of blocking a hook - nothing anywhere waits in-process. The
+    sender's honest last word was "queued"; the owner decides from the
+    channel."""
+    GATE.mkdir(parents=True, exist_ok=True)
+    gid = f"gate-{sender}-{path.stem}"
+    rec = {"id": gid, "code": hashlib.md5(gid.encode()).hexdigest()[:6],
+           "sender": sender, "to": to, "thread": led["id"], "stem": path.stem,
+           "data": data, "askedAt": now_iso(), "askedTs": time.time(),
+           "lastAskTs": time.time()}
+    write_json_atomic(GATE / f"{gid}.json", rec)
+    path.unlink(missing_ok=True)
+    try:
+        # The sender DID act; being held must not read as silence to its Stop hook.
+        (OUTBOX / sender / ".last-posted").write_text(now_iso(), encoding="utf-8")
+    except OSError:
+        pass
+    _post_gate_ask(mapping, rec, led)
+    log(f"desk mail {sender} -> {to}: HELD for cross-project ok (code {rec['code']})")
+    return "held"
+
+
+def _resolve_gate(mapping, rec, behavior, how):
+    """Apply a verdict to a held envelope. `how` is "answered" or "timeout" -
+    the difference matters only for the ledger note and the wording."""
+    gp = GATE / f"{rec['id']}.json"
+    led = _load_thread(rec.get("thread") or "")
+    if behavior == "allow":
+        box = OUTBOX / rec["sender"]
+        box.mkdir(parents=True, exist_ok=True)
+        p = box / f"{rec['stem']}.json"
+        data = dict(rec.get("data") or {})
+        # Pin the chain resolved at hold time - inference must not re-guess,
+        # and the approval travels in-process, never as a field a desk could
+        # write into its own outbox.
+        data["thread"] = rec.get("thread")
+        p.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+        gp.unlink(missing_ok=True)
+        r = deliver_desk_mail(mapping, rec["sender"], p, data, gate_approved=True)
+        log(f"gate {rec['id']}: allowed ({how}) -> {r}")
+        if r == "delivered":
+            return f"✅ delivered — `{rec['sender']}` → `{rec['to']}`"
+        return f"⚠️ approved, but delivery came back `{r}` — see `{rec['sender']}`'s channel"
+    try:
+        gp.rename(gp.with_suffix(".refused"))
+    except OSError:
+        gp.unlink(missing_ok=True)
+    if led and not led.get("closed"):
+        _close_thread(led, "gate-denied" if how == "answered" else "gate-timeout")
+    why = "dropped" if how == "answered" else "dropped (no answer within 60m)"
+    log(f"gate {rec['id']}: {why}")
+    return f"🗑 {why} — `{rec['sender']}`'s mail to `{rec['to']}` was not delivered"
+
+
+def answer_gate(text, mapping):
+    """Interpret an owner reply as a verdict on a held cross-project envelope.
+
+    Mirrors answer_permission's grammar, with the spec's precedence rule: a
+    blocked hook outranks a parked envelope. handle_message consults the
+    permission answerer FIRST, so while permission asks are pending a bare ok
+    never reaches here; and with several gates pending the code is required."""
+    pend = pending_gates()
+    if not pend:
+        return None
+    words = text.lower().replace("`", "").split()
+    if not words:
+        return None
+    head = words[0].strip(".,!")
+    two = " ".join(words[:2]).strip(".,!")
+    if head in ALLOW_WORDS or two in ALLOW_WORDS:
+        behavior = "allow"
+    elif head in DENY_WORDS or two in DENY_WORDS:
+        behavior = "deny"
+    else:
+        return None
+    codes = {d.get("code"): d for d in pend}
+    rec = None
+    for w in words[1:]:
+        w = w.strip("`.,!")
+        if w in codes:
+            rec = codes[w]
+            break
+    if rec is None:
+        if pending_permissions():
+            return None       # the permission answerer owns bare words right now
+        if len(pend) > 1:
+            listing = ", ".join(f"`{d.get('code')}` ({d['sender']} → {d['to']})"
+                                for d in pend)
+            return (f"⚠️ {len(pend)} desk-mail asks are waiting - answer with "
+                    f"the code: {listing}")
+        rec = pend[0]
+    return _resolve_gate(mapping, rec, behavior, "answered")
+
+
+def sweep_gates(mapping):
+    """Per tick: fail closed on stale asks; re-post pending asks once per boot.
+    Files are the whole state, so a restart keeps the code AND the original
+    deadline - `askedTs` never moves."""
+    if GATE.is_dir():
+        for f in sorted(GATE.glob("*.json")):
+            try:
+                rec = json.loads(f.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(rec, dict) or not rec.get("id"):
+                continue
+            if time.time() - float(rec.get("askedTs") or 0) > GATE_WAIT_SECONDS:
+                msg = _resolve_gate(mapping, rec, "deny", "timeout")
+                _thread_notice(mapping, _load_thread(rec.get("thread") or ""),
+                               rec["sender"], msg)
+            elif float(rec.get("lastAskTs") or 0) < _BOOT_TS:
+                _post_gate_ask(mapping, rec, _load_thread(rec.get("thread") or ""))
+                rec["lastAskTs"] = time.time()
+                write_json_atomic(f, rec)
+    sweep_threads()
+
+
+def sweep_threads():
+    """Ledger hygiene: closed chains linger briefly (post-mortems read them),
+    open chains idle past THREAD_IDLE_SECONDS are swept with a breadcrumb."""
+    if not THREADS.is_dir():
+        return
+    for f in THREADS.glob("*.json"):
+        led = _load_thread(f.stem)
+        if led is None:
+            continue
+        try:
+            idle = time.time() - f.stat().st_mtime
+        except OSError:
+            continue
+        if led.get("closed") and idle > 600:
+            f.unlink(missing_ok=True)
+        elif idle > THREAD_IDLE_SECONDS:
+            if not led.get("closed"):
+                log(f"thread {led['id']} expired unfinished (48h idle) - swept")
+            f.unlink(missing_ok=True)
 
 
 # --- inbound dispatch ---------------------------------------------------------
@@ -3800,6 +4293,17 @@ def handle_message(m, cid, target, me, mapping):
             except api.ApiError:
                 pass
             return "takeover"
+        # Held cross-project desk mail (docs\DELEGATION.md D4). AFTER the
+        # permission answerer on purpose: a blocked hook outranks a parked
+        # envelope, so a bare "ok" reaches a gate only when no permission ask
+        # consumed it first.
+        gate = answer_gate(text, mapping)
+        if gate:
+            try:
+                api.send_message(cid, gate)
+            except api.ApiError:
+                pass
+            return "gate"
     if not target.session:
         # An ok/no in #alerts that arrives after the request timed out matched
         # nothing, so the owner got "nobody listens here" for answering exactly
@@ -4056,6 +4560,7 @@ def main():
                         sys.exit(4)
 
             flush_outboxes(mapping)
+            sweep_gates(mapping)
             check_backlogs()
             reap_runs()
             ensure_runners()
