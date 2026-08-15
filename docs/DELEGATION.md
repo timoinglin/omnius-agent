@@ -1,8 +1,9 @@
 # Delegation — desks that mail desks, loops that end, verbs that travel
 
-> **Status: built 2026-08-15 — all of D1–D6** (desk mail, classification, reply path, cross-project
-> gate, budgeted loops, slash pass-through). Suite-covered end to end; **the live pilot (Phase E)
-> is what remains** before this counts as proven. This is the design
+> **Status: built and proven 2026-08-15 — all of D1–D6** (desk mail, classification, reply path,
+> cross-project gate, budgeted loops, slash pass-through). Suite-covered end to end, and the live
+> pilot ran the worked example below for real: a four-hop chain across three desks closed in ~69
+> seconds, hop budget and free replies behaving exactly as specified. This is the design
 > for the current capability phase: desk-to-desk envelopes over the existing file bus, budgeted work
 > loops, and owner slash-commands passed through Discord. Companion to
 > [ARCHITECTURE.md](ARCHITECTURE.md) (the bus this extends) and [RELIABILITY.md](RELIABILITY.md)
@@ -492,7 +493,8 @@ never learns what a "changelog" is. The fleet does.
 | **B** — *shipped 2026-08-15* | D1 + D2 + D3 + D4: routing branch, ledger, classification, gate — and the full `== desk mail ==` / `== hops ==` / gate test sections (47 checks) | suite green ✓; live proof moved to E: one auditor→back finding delivered, mirrored, replied, closed on a stamped demo project |
 | **C** — *shipped 2026-08-15* | D6 slash pass-through + `config\skills.ini` (8 checks) | suite green ✓; live half moves to E: `/status` from a phone reaches a desk, an unlisted verb is refused in-channel |
 | **D** — *shipped 2026-08-15* | D5 loops (`--loop`, budgets at add-time AND fire-time, `loop close/list`, `!cron` section, `--to` validation on every add, `--channel` into the envelope) — 16 checks | suite green ✓; live half moves to E: a 3-run loop closes on its done-command; a budget-spent loop checkpoints instead of running again |
-| **E** | pilot on a real project + latency measurement of a full chain | the measured numbers decide whether warm desks (the bridge) get promoted into the delegation path as a Phase F |
+| **E** — *passed 2026-08-15* | live pilot of the worked example on a stamped demo project, on the real watchdog and a real server | ✓ chain closed itself: finding recorded → delegated → fixed → replied → verified → one human summary. **~69 s end to end, ~22 s per hop** (cold headless runs, no warm desks) |
+| **F** — *not needed* | warm desks in the delegation path | the measurement above settled it: ~20 s of cold-start per hop is not what makes a chain slow. Revisit only if longer chains drag |
 
 Each phase lands as one commit with its tests; nothing merges on prose alone. *Documentation is
 not a mechanism — including this document.*
