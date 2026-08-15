@@ -43,16 +43,58 @@ Set aside about 15 minutes for accounts. Only the first two are required.
 off until it has both a provider and a key, and turning one on never requires
 touching code — just `config\` and `.env`.
 
-### Getting the Discord values (5 minutes)
+### Creating the Discord bot, step by step (~5 minutes)
 
-1. Go to <https://discord.com/developers/applications> → **New Application** → name it *Omnius*.
-2. **Bot** tab → **Reset Token** → copy it. That is `DISCORD_BOT_TOKEN`.
-3. Same tab, scroll down → enable **Message Content Intent**. *(Miss this and the bot sees empty messages.)*
-4. **OAuth2 → URL Generator** → scopes `bot` + `applications.commands` → permissions *Send Messages*, *Read Message History*, *Manage Channels*, *Attach Files* → open the generated URL → invite it to **your own private server**.
-5. In Discord: **Settings → Advanced → Developer Mode ON**. Right-click your server → *Copy Server ID* (`DISCORD_GUILD_ID`). Right-click your own name → *Copy User ID* (`DISCORD_OWNER_ID`).
+The bot is how you talk to Omnius from anywhere. You create it once, in your
+browser, and it ends with three values pasted into `.env`. The guided setup
+walks this same list with you — and then **verifies every value live against
+Discord**, including the one checkbox almost everyone misses.
 
-> The bot obeys **only** your user ID. Messages from anyone else — and from other
-> bots — are ignored. Use a private server you own.
+1. **Create the app.** Go to <https://discord.com/developers/applications> →
+   **New Application** → give it a name. The name is what will answer you in
+   chat — *Omnius* works fine.
+
+2. **Make it private.** Open the **Bot** tab → switch **Public Bot** *off*.
+   Only you should be able to add this bot anywhere.
+
+3. **Let it read messages.** Same tab, under **Privileged Gateway Intents** →
+   switch **Message Content Intent** *on* → then **press Save Changes** in the
+   green bar at the bottom. Leave the page without pressing it and the switch
+   silently resets — and without this intent, Discord hands the bot every
+   message *empty*: no text, no attachments, and nothing tells you why. It is
+   the single most common setup failure, which is why setup tests it with a
+   real connection at the end.
+
+4. **Copy the token.** Still on the **Bot** tab → **Reset Token** → copy the
+   long string somewhere safe for a minute. That is `DISCORD_BOT_TOKEN`. Treat
+   it like a password — whoever holds it *is* your bot.
+
+5. **Build the invite link.** **OAuth2 → URL Generator** → tick the `bot`
+   scope → under *Bot Permissions* tick **Administrator**. On a private server
+   that's the simple, fine choice; if you prefer scoped permissions, the
+   minimal set is in [docs/DISCORD.md](docs/DISCORD.md) §4. Copy the generated
+   URL from the bottom of the page.
+
+6. **Create the server.** In the normal Discord app: **+** (Add a Server) →
+   *Create My Own*. Private, just for you — no invite links, no other members.
+   This is where Omnius' channels will live.
+
+7. **Connect the bot to it.** Open the URL from step 5 in your browser, pick
+   the new server, **Authorize**. The bot appears in the member list —
+   offline, which is right: nothing is running on your PC yet.
+
+8. **Copy the two IDs.** In Discord: **User Settings → Advanced → Developer
+   Mode on** (this adds the right-click entries). Right-click the server's
+   name → **Copy Server ID** → that is `DISCORD_GUILD_ID`. Right-click your
+   own name in any chat → **Copy User ID** → that is `DISCORD_OWNER_ID`.
+
+Paste the three values into `.env`, save, and setup takes it from there — it
+checks the token, the server *and* the message-content intent against Discord
+live, then creates the channels for you.
+
+> The owner ID matters more than it looks: the bot obeys **only** that user.
+> Messages from anyone else — people and bots alike — are dropped before any
+> agent ever sees them. That, plus a private server, is the security model.
 
 ### Getting the Mistral key (2 minutes)
 
