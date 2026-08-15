@@ -3493,6 +3493,15 @@ try:
     check("install warns when the workspace is somewhere it should not live",
           "Downloads" in _inst0 and "-main$|-master$" in _inst0
           and "OneDrive" in _inst0)
+
+    # The one-liner and pack.ps1 are two halves of one contract, maintained
+    # apart: get.ps1 hardcoded the zip's inner folder as 'omnius' while pack
+    # names it after the repo, so the FIRST public release was downloaded and
+    # then refused by the very script the README advertises (2026-08-15).
+    # The archive's identity is install.bat, never a folder name.
+    _get = (real_root / "get.ps1").read_text(encoding="utf-8")
+    check("get.ps1 finds the unpacked root by install.bat, not by a hardcoded name",
+          "install.bat" in _get and "Join-Path $tmp 'omnius'" not in _get)
     check("Node has a direct route too, so a winget-less box is not half-installed",
           "Install-NodeDirect" in _inst0 and "nodejs.org/dist/index.json" in _inst0)
     # The direct routes are for machines nobody here owns, so they need a way to

@@ -82,14 +82,21 @@ function Install-Omnius {
 
   Write-Host '  [..] unpacking'
   Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force
-  $inner = Join-Path $tmp 'omnius'
-  if (-not (Test-Path (Join-Path $inner 'install.bat'))) {
+  # The root folder's NAME is not the contract - install.bat inside it is.
+  # v0.1.0 shipped omnius\, v0.1.1 ships omnius-agent\ (pack.ps1 names it after
+  # the repo), and a hardcoded 'omnius' here made this script refuse the very
+  # release it had just downloaded (2026-08-15 - caught by running the
+  # one-liner end to end before telling anyone else to).
+  $inner = Get-ChildItem -LiteralPath $tmp -Directory |
+           Where-Object { Test-Path (Join-Path $_.FullName 'install.bat') } |
+           Select-Object -First 1
+  if (-not $inner) {
     Write-Host '  [X] the archive does not look like an Omnius release (no install.bat).' -ForegroundColor Red
     return
   }
   $parent = Split-Path $Path -Parent
   if ($parent -and -not (Test-Path $parent)) { New-Item -ItemType Directory -Path $parent -Force | Out-Null }
-  Move-Item -LiteralPath $inner -Destination $Path
+  Move-Item -LiteralPath $inner.FullName -Destination $Path
   Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
   Write-Host "  [OK] unpacked to $Path"
 
