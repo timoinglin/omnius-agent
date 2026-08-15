@@ -993,8 +993,10 @@ if (-not (Test-Cmd 'node')) {
     # node_modules existing is not the same as remotion WORKING. Newer npm
     # blocks packages' install scripts until they are approved, and esbuild -
     # which remotion bundles with - fetches its platform binary in exactly such
-    # a script. Seen 2026-08-15: "added 245 packages", then
-    # "npm warn allow-scripts esbuild@0.28.1 (postinstall: node install.js)".
+    # a script. Seen 2026-08-15: "added 245 packages", then a warn line naming
+    # esbuild 0.28.1 and its blocked postinstall.
+    # (Written without the name@version form on purpose: the release audit reads
+    # that shape as an email address and refuses the build.)
     # Without that binary the packages are all present and rendering still dies.
     $esbuild = Get-ChildItem 'tools\remotion\node_modules\@esbuild' -Recurse -Filter 'esbuild.exe' `
                              -File -ErrorAction SilentlyContinue | Select-Object -First 1
