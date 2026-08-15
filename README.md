@@ -24,7 +24,7 @@
 irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/get.ps1 | iex
 ```
 
-One line in PowerShell. It fetches the latest release, unpacks it where you choose, and hands over to a guided setup that installs its own prerequisites and walks you through the Discord bot.
+One line in PowerShell. It fetches the latest release, unpacks it where you choose, and hands over to a guided setup that installs its own prerequisites — winget or not — and walks you through the Discord bot. Proven on stock Windows 10 with nothing preinstalled.
 
 ## Why this exists
 
@@ -34,6 +34,26 @@ Seriously: I work across several machines and I'm not always at any of them. Omn
 
 **It runs on the Claude subscription you already have.** The CLI signs in with your account — no API key, no second bill, and nothing spends a token while the fleet is idle.
 
+### Not a replacement for OpenClaw or Hermes
+
+For **me** it works far better than either — and that sentence means nothing without the *for me*. They are broader products with big communities, and I kept finding them overkill where I don't need breadth while still missing the things my days actually depend on. Judge the shape, not the size:
+
+**What Omnius deliberately is**
+
+- **One messenger: Discord.** I don't need 27 channels — I need the one already on my phone. Doing exactly one means push delivery, live *typing…*, a channel per desk, ok/no permission asks and voice notes all get real attention instead of lowest-common-denominator support. (The file bus keeps the door open if you ever want another.)
+- **One folder = the whole instance.** Code, memory, notes, projects, history. Zip it, unzip it on any PC, sign in with any Claude account — it wakes up knowing everything it knew. Portability was my missing feature everywhere else.
+- **The agents are plain Claude Code sessions.** A desk is a folder plus a real terminal you can sit down at, not a runtime of its own. Whatever Claude Code learns to do, the whole fleet can do the same day — and there is no framework between you and it when something needs debugging.
+- **Small enough to own.** One always-on stdlib-Python script, files as the database, no accounts, no server. You can read the entire moving part in an afternoon.
+
+**What it deliberately is not**
+
+- Not multi-messenger, not model-agnostic, no canvas UI, no TTS — recorded as *decisions*, not gaps, in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+- Not multi-user: the bot obeys exactly one Discord account (plus explicitly invited guests, confined to their project).
+- Not cross-platform: Windows is load-bearing, see below.
+- Not a supported product — a personal tool, shared for the curious.
+
+Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-inspired, the one-shot delegation Hermes-inspired, both credited in the architecture doc. If their shape fits your life, use them. This one fits mine.
+
 ## Why this actually makes a coder faster
 
 - **Agents work; you don't watch them work.** Kick off a refactor from the sofa, redirect it from the supermarket queue. The answer finds *you* — every minute an agent grinds is a minute you spend elsewhere, and the *typing…* indicator plus the fleet board mean you glance, not babysit.
@@ -41,7 +61,7 @@ Seriously: I work across several machines and I'm not always at any of them. Omn
 - **Parallel by default.** The backend desk migrates a schema while the web desk builds the UI against the *interface notes the backend desk wrote* — siblings coordinate through project memory, not through you repeating yourself.
 - **Nothing blocks on your screen.** Permission asks arrive as ok/no in the channel; one `ok` teaches the whole fleet permanently. The class of "came back after lunch, it was stuck on a dialog" is designed out.
 - **Recurring work stops being your job.** Say the schedule in plain words once; routines run it and speak only when something needs you. Silence is the feature — no notification fatigue.
-- **Friction becomes a commit.** Anything that annoys you, you type into the orchestrator's channel — and Omnius modifies Omnius, gated by its own ~1,300-check test suite. The tool sharpens itself while you use it.
+- **Friction becomes a commit.** Anything that annoys you, you type into the orchestrator's channel — and Omnius modifies Omnius, gated by its own test suite (1,300+ checks). Its verbs are ordinary committed skills (`/new-project`, `/status`, `/archive-project`, …), so every self-improvement is a reviewable commit that travels to every future instance. The tool sharpens itself while you use it.
 - **The chat is the audit log.** Every decision, every answer, every screenshot is already threaded per project and searchable in Discord — no separate tracker to feed.
 
 ## What a day with it looks like
@@ -118,7 +138,7 @@ The brief plants those tensions on purpose. Whether the builders handled them �
 - **Windows 10/11** — paths, ConPTY and Task Scheduler are load-bearing; this is Windows-only.
 - **A Claude subscription** — the CLI logs in with it. No API key.
 - **A Discord server of your own** plus a bot token (guided; the bot answers only you and needs four scoped permissions, not admin).
-- Everything else the installer checks and offers to install via winget (Python, Node, ffmpeg, Claude Code). Optional extras stay off until you add a key: OCR for scans (Mistral), email passwords, image/video/speech providers. Playwright's ~150 MB browser is asked about, not assumed.
+- Everything else the installer brings itself — via winget when you have it, **straight from the official sources when you don't** (Git, Python, Node, ffmpeg, the Claude CLI), including the repair a clean Windows usually needs (the MSVC runtime that C++ wheels want). Optional extras stay off until you add a key: OCR for scans (Mistral), email passwords, image/video/speech providers. Playwright's ~150 MB browser is asked about, not assumed.
 
 ## Security posture, in one paragraph
 
@@ -126,7 +146,7 @@ Desks run with a wide allow-list and **no permission prompts** — a prompt on a
 
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it; also the web app's Guide tab · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the ~1,300-check suite that gates every release
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it; also the web app's Guide tab · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ checks that gate every release, and what only real machines caught
 
 ---
 
