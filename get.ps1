@@ -69,7 +69,7 @@ function Install-Omnius {
   }
   $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -First 1
   if (-not $asset) {
-    Write-Host ("  [X] release {0} has no zip asset - build one with pack.bat, or clone instead." -f $rel.tag_name) -ForegroundColor Red
+    Write-Host ("  [X] release {0} has no zip asset - re-cut it with release.bat, or clone instead." -f $rel.tag_name) -ForegroundColor Red
     return
   }
   Write-Host ("  [OK] {0}  ({1:N1} MB, release {2})" -f $asset.name, ($asset.size / 1MB), $rel.tag_name)
