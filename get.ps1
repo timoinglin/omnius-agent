@@ -35,8 +35,9 @@ function Install-Omnius {
     [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 
   # Never clobber. An existing folder is somebody's instance - their memory,
-  # notes and projects. Updating an install is `git pull` or a new release
-  # unpacked NEXT to it, never this script over the top of it.
+  # notes and projects. Updating an install is `!update` in Discord or
+  # `git pull` at the desk (installs attach to the repo since 2026-08-15),
+  # never this script over the top of it.
   if ((Test-Path $Path) -and @(Get-ChildItem -LiteralPath $Path -Force -ErrorAction SilentlyContinue).Count) {
     Write-Host "  [X] $Path already exists and is not empty." -ForegroundColor Red
     Write-Host '      If that is an Omnius install, update it from inside instead.'
