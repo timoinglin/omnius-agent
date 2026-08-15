@@ -82,7 +82,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - Text, images, files and voice notes in — answers, files and screenshots back. Voice is transcribed locally; nothing leaves the machine for it.
 - Live *typing…* while a desk works, a **fleet board** in `#fleet-status` edited in place, and a deadman alarm that pages you if mail ever sits with nothing alive to take it.
 - Push delivery over Discord's Gateway websocket, with a REST sweep as the authority behind it — a dropped frame costs latency, never a message.
-- **Eleven instant control commands**, handled by the watchdog itself: `!status` `!model` `!restart` `!stop` `!kill` `!killall` `!cron` `!config` `!screen` `!desktop` `!reload`.
+- **Thirteen instant control commands**, handled by the watchdog itself: `!status` `!model` `!restart` `!stop` `!kill` `!killall` `!cron` `!config` `!screen` `!desktop` `!reload` `!update` `!trace`.
 - **Guests**: give a client or collaborator write access to exactly one project's channels — they're answered in their own language and can't touch anything else.
 
 **Running the fleet**

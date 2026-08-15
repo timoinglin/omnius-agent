@@ -53,6 +53,8 @@ Handled by the always-on watchdog itself, never by a model:
 | `!cron [list\|pause\|resume\|rm\|adopt <id>]` | Routines — and the work-loop ledgers ride along in the same listing |
 | `!config` | Read-only settings dump: values, sources, secrets as set/NOT-SET, guests, slash list |
 | `!screen` / `!desktop <verb>` | Screenshot / desktop control of the machine (see `memory\shared\DESKTOP-CONTROL.md`) |
+| `!update` / `!update go` | Self-update from the repo: preview what's new, then pull → suite (red rolls back) → reload |
+| `!trace [id]` | One chain's, loop's or envelope's whole story — every hop, timestamps, gate holds, budget. Bare `!trace` lists recent ones |
 | `!reload` | Restart the watchdog to pick up pulled code — compile-checked first, refuses rather than kill the bus |
 
 ## 4. Permissions: the three fences

@@ -128,7 +128,7 @@ STUCK_QUIET_SECONDS = 3 * 60    # a session writing more recently than this is W
 _stuck_notified = {}            # session -> when we last said it was stuck
 CONTROL_COMMANDS = ("!kill", "!restart", "!status", "!killall", "!reload",
                     "!screen", "!desktop", "!config", "!stop", "!cron", "!model",
-                    "!update")
+                    "!update", "!trace")
 # An envelope's `from` is either a PERSON or the fleet talking to itself. These
 # three are the fleet; "owner" and every configured guest label are people.
 # Stated as an exclusion list on purpose: guests are configured, not compiled,
@@ -3616,6 +3616,8 @@ def handle_control(text, cid, target, mapping):
             api.send_message(cid, f"could not read config: {type(e).__name__}: {e}")
     elif cmd == "!update":
         handle_update(text, cid)
+    elif cmd == "!trace":
+        handle_trace(text, cid)
     elif cmd == "!reload":
         do_reload(cid)
     elif cmd in ("!screen", "!desktop"):
@@ -3940,6 +3942,16 @@ def _close_thread(led, reason):
     _save_thread(led)
 
 
+def _delivery_ids(led):
+    """Delivery ids from a ledger whose entries may be bare strings (pre-trace)
+    or the enriched {id, from, to, ts, reply} dicts (OBSERVABILITY O1,
+    2026-08-15). Mid-flight ledgers carry both; readers must accept both."""
+    out = set()
+    for d in (led.get("deliveries") or []):
+        out.add(d.get("id") if isinstance(d, dict) else d)
+    return out
+
+
 def _clean_origin(sender, origin):
     """Keep only what the spec names. The chain STARTER supplies origin (it
     just drained that human envelope); later hops echo `thread` instead."""
@@ -4067,7 +4079,7 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
 
     # 5. Idempotence: a crash between inbox-write and unlink redelivers here.
     env_id = f"dm-{sender}-{path.stem}"
-    if env_id in (led.get("deliveries") or []):
+    if env_id in _delivery_ids(led):
         path.unlink(missing_ok=True)
         return "duplicate"
 
@@ -4107,7 +4119,12 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
     if not is_reply:
         led["hopsLeft"] = hops_after
         led.setdefault("edges", []).append([sender, to])
-    led.setdefault("deliveries", []).append(env_id)
+    # Enriched since O1: the ledger is the chain's story, so each delivery
+    # records who, whom, when and whether it travelled free. !trace reads
+    # exactly this - state, never logs.
+    led.setdefault("deliveries", []).append(
+        {"id": env_id, "from": sender, "to": to, "ts": now_iso(),
+         "reply": bool(is_reply)})
     led["lastDeliveredTo"] = to
     _save_thread(led)
     # Both halves reach the bus transcript - the paper trail must not go dark
@@ -4310,6 +4327,153 @@ def sweep_threads():
             if not led.get("closed"):
                 log(f"thread {led['id']} expired unfinished (48h idle) - swept")
             f.unlink(missing_ok=True)
+
+
+# --- !trace: one story per chain, from state alone (docs\OBSERVABILITY.md O1) ---
+# A delegated instruction crosses a dozen surfaces; every hop is recorded
+# SOMEWHERE. This is the join - ledgers, gate records, loop files - assembled
+# into one screen. Never the logs: logs are for humans, state is for machines.
+
+def _short_ts(iso):
+    s = str(iso or "")
+    return s[11:19] if len(s) >= 19 else (s or "?")
+
+
+def _gate_notes_for(thread_id):
+    """Gate holds touching this chain: pending asks and preserved .refused
+    records. An ALLOWED hold leaves no file on purpose - its delivery is the
+    record, and it appears in the hop list like any other."""
+    notes = []
+    if not GATE.is_dir():
+        return notes
+    for f in sorted(GATE.glob("*.json")) + sorted(GATE.glob("*.refused")):
+        try:
+            rec = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(rec, dict) or rec.get("thread") != thread_id:
+            continue
+        try:
+            deadline = time.strftime(
+                "%H:%M:%S", time.localtime(float(rec.get("askedTs") or 0)
+                                           + GATE_WAIT_SECONDS))
+        except (ValueError, OverflowError, OSError):
+            deadline = "?"
+        if f.suffix == ".refused":
+            notes.append(f"gate  {rec.get('sender')} → {rec.get('to')}  held "
+                         f"{_short_ts(rec.get('askedAt'))} → DROPPED "
+                         f"(deadline was {deadline})")
+        else:
+            notes.append(f"gate  {rec.get('sender')} → {rec.get('to')}  held "
+                         f"{_short_ts(rec.get('askedAt'))} · WAITING for ok "
+                         f"`{rec.get('code')}` · drops at {deadline}")
+    return notes
+
+
+def _trace_thread(led):
+    state = f"closed: {led['closed']}" if led.get("closed") else "open"
+    lines = [f"THREAD {led.get('id')}", f"state    {state}"]
+    o = led.get("origin") or {}
+    if o:
+        lines.append(f"origin   channel {o.get('channelId') or '-'} · "
+                     f"from {o.get('from') or '?'} · starter {o.get('session') or '?'}")
+    lines.append(f"span     {_short_ts(led.get('startedAt'))} → {_short_ts(led.get('lastAt'))}")
+    dels = led.get("deliveries") or []
+    spent = sum(1 for d in dels if isinstance(d, dict) and not d.get("reply"))
+    free = sum(1 for d in dels if isinstance(d, dict) and d.get("reply"))
+    legacy = sum(1 for d in dels if not isinstance(d, dict))
+    budget = f"hops     {spent} spent · {free} free · {led.get('hopsLeft', '?')} left"
+    if legacy:
+        budget += f" · {legacy} pre-trace (id only)"
+    lines.append(budget)
+    for i, d in enumerate(dels, 1):
+        if isinstance(d, dict):
+            kind = "reply" if d.get("reply") else "hop"
+            lines.append(f"{i:02d}  {_short_ts(d.get('ts'))}  "
+                         f"{d.get('from')} → {d.get('to')}   [{kind}]")
+        else:
+            lines.append(f"{i:02d}  --:--:--  {d}   [pre-trace entry]")
+    lines.extend(_gate_notes_for(led.get("id")))
+    return "\n".join(lines)
+
+
+def _trace_loop(led):
+    state = f"closed: {led['closed']}" if led.get("closed") else "open"
+    last = _short_ts(led.get("lastFiredAt")) if led.get("lastFiredAt") else "-"
+    lines = [f"LOOP {led.get('id')}",
+             f"desk     {led.get('session')}",
+             f"state    {state}",
+             f"budget   {led.get('fired', 0)}/{led.get('max', 0)} run(s) used",
+             f"opened   {_short_ts(led.get('openedAt'))} · last fire {last}",
+             f"channel  {led.get('channelId') or '-'}"]
+    try:
+        queued = [j for j in schedule.load_jobs() if j.get("loop") == led.get("id")]
+        note = f"queued   {len(queued)} continuation(s)"
+        if queued:
+            note += f" · next {queued[0].get('nextRun') or '?'}"
+        lines.append(note)
+        if queued and queued[0].get("text"):
+            lines.append(f"task     {str(queued[0].get('text'))[:120]}")
+    except Exception:                                        # noqa: BLE001
+        pass
+    return "\n".join(lines)
+
+
+def _trace_listing():
+    lines, leds = [], []
+    if THREADS.is_dir():
+        for f in THREADS.glob("*.json"):
+            led = _load_thread(f.stem)
+            if led:
+                leds.append(led)
+    leds.sort(key=lambda x: str(x.get("lastAt") or ""), reverse=True)
+    if leds:
+        lines.append("CHAINS (newest first)")
+        for led in leds[:10]:
+            state = f"closed:{led['closed']}" if led.get("closed") else "open"
+            n = len(led.get("deliveries") or [])
+            who = (led.get("origin") or {}).get("session") or "?"
+            lines.append(f"{led['id']}  {state} · {n} delivery(ies) · starter {who}")
+    loops = schedule.list_loops()
+    if loops:
+        lines.append("LOOPS")
+        for led in loops:
+            state = f"closed:{led['closed']}" if led.get("closed") else "open"
+            lines.append(f"{led['id']}  run {led.get('fired', 0)}/{led.get('max', 0)} · {state}")
+    return "\n".join(lines) if lines else \
+        "no chains and no loops yet - delegation and work loops write them"
+
+
+def handle_trace(text, cid):
+    """!trace [id] - the lifecycle of one chain, loop or envelope; bare !trace
+    lists what exists. Zero tokens, watchdog-handled, like every control verb:
+    seeing what the fleet did must never cost a run."""
+    parts = text.split()
+    arg = parts[1].strip("`.,") if len(parts) > 1 else ""
+    body = None
+    if not arg:
+        body = _trace_listing()
+    else:
+        led = _load_thread(arg)
+        if led:
+            body = _trace_thread(led)
+        else:
+            loop = schedule.load_loop(arg)
+            if loop:
+                body = _trace_loop(loop)
+            elif arg.startswith("dm-") and THREADS.is_dir():
+                for f in THREADS.glob("*.json"):
+                    t = _load_thread(f.stem)
+                    if t and arg in _delivery_ids(t):
+                        body = f"envelope {arg} travelled on:\n\n" + _trace_thread(t)
+                        break
+        if body is None:
+            body = (f"nothing called '{arg}' - no chain, loop or delivery by that id.\n"
+                    f"What exists:\n\n{_trace_listing()}")
+    try:
+        api.send_message(cid, f"```\n{body}\n```")
+    except api.ApiError as e:
+        log(f"!trace post failed: {e}")
 
 
 # --- inbound dispatch ---------------------------------------------------------

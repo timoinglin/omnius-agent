@@ -6069,6 +6069,98 @@ try:
     check("...and the stamp itself can never be committed",
           "RELEASE-COMMIT" in (real_root / ".gitignore").read_text(encoding="utf-8"))
 
+    # == !trace (docs\OBSERVABILITY.md O1) =====================================
+    # One chain's whole story from state alone - ledgers, gate records, loop
+    # files. Never the logs.
+    print("== !trace ==")
+    _real_ttl2, _real_gatereq2 = wd._hop_ttl, wd._gate_required
+    wd._hop_ttl = lambda: 2
+    wd._gate_required = lambda: True
+    wd._desk_id_cache.clear()
+    sent.clear()
+    ptr1 = dmail("alpha.app", {"to": "alpha.web", "text": "trace me",
+                               "origin": {"channelId": "id-alpha-app", "from": "owner"}},
+                 "1700000000060")
+    wd.deliver_desk_mail(dm, "alpha.app", ptr1, json.loads(ptr1.read_text(encoding="utf-8")))
+    t_tr = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
+                      .read_text(encoding="utf-8")).get("thread")
+    ptr2 = dmail("alpha.web", {"to": "alpha.app", "text": "traced back", "thread": t_tr},
+                 "1700000000061")
+    wd.deliver_desk_mail(dm, "alpha.web", ptr2, json.loads(ptr2.read_text(encoding="utf-8")))
+    _led_tr = wd._load_thread(t_tr)
+    _d0 = (_led_tr.get("deliveries") or [{}])[0]
+    check("trace: a chain's deliveries carry from/to/ts since O1",
+          isinstance(_d0, dict) and _d0.get("from") == "alpha.app"
+          and _d0.get("to") == "alpha.web" and str(_d0.get("ts", "")).endswith("Z")
+          and _d0.get("reply") is False)
+    sent.clear()
+    wd.handle_trace(f"!trace {t_tr}", "CID_OM")
+    _tr_out = sent[-1][1]
+    check("trace: a spent hop and a free reply are labelled differently",
+          "[hop]" in _tr_out and "[reply]" in _tr_out
+          and "alpha.app → alpha.web" in _tr_out)
+    check("trace: the chain's origin and budget are on the screen",
+          "id-alpha-app" in _tr_out and "1 spent · 1 free" in _tr_out)
+    # old bare-string deliveries (a mid-flight ledger) still render
+    _legacy = {"id": "t-legacy-alpha.app", "origin": None, "hopsLeft": 1,
+               "deliveries": ["dm-alpha.app-1699999999999"], "edges": [],
+               "lastDeliveredTo": "alpha.web", "startedAt": now(), "lastAt": now(),
+               "closed": None}
+    wd._save_thread(_legacy)
+    sent.clear()
+    wd.handle_trace("!trace t-legacy-alpha.app", "CID_OM")
+    check("trace: old bare-string deliveries still render (mid-flight upgrade)",
+          "dm-alpha.app-1699999999999" in sent[-1][1]
+          and "pre-trace" in sent[-1][1])
+    # a held gate shows WAITING with its deadline; a dropped one shows DROPPED
+    pg_tr = dmail("alpha.app", {"to": "beta.app", "text": "cross for trace"},
+                  "1700000000062")
+    wd.deliver_desk_mail(dm, "alpha.app", pg_tr, json.loads(pg_tr.read_text(encoding="utf-8")))
+    _g_tr = wd.pending_gates()[-1]
+    sent.clear()
+    wd.handle_trace(f"!trace {_g_tr['thread']}", "CID_OM")
+    check("trace: a waiting gate hold appears with its deadline",
+          "WAITING" in sent[-1][1] and "drops at" in sent[-1][1])
+    wd._resolve_gate(dm, _g_tr, "deny", "timeout")
+    sent.clear()
+    wd.handle_trace(f"!trace {_g_tr['thread']}", "CID_OM")
+    check("trace: a dropped gate hold shows its outcome and old deadline",
+          "DROPPED" in sent[-1][1] and "deadline was" in sent[-1][1])
+    # loops: fires against budget
+    _lp_tr = sch.open_loop("orchestrator", 3)
+    _lp_tr["fired"] = 2
+    sch.save_loop(_lp_tr)
+    sent.clear()
+    wd.handle_trace(f"!trace {_lp_tr['id']}", "CID_OM")
+    check("trace: a loop trace shows fires against budget",
+          "2/3" in sent[-1][1] and "orchestrator" in sent[-1][1])
+    # bare listing, newest first (two hand-stamped ledgers with known order)
+    for _tid, _at in (("t-newest-alpha.app", "2099-01-02T00:00:00Z"),
+                      ("t-older-alpha.app", "2099-01-01T00:00:00Z")):
+        (wd.THREADS / f"{_tid}.json").write_text(json.dumps(
+            {"id": _tid, "origin": {"session": "alpha.app"}, "hopsLeft": 1,
+             "deliveries": [], "edges": [], "lastDeliveredTo": None,
+             "startedAt": _at, "lastAt": _at, "closed": None}), encoding="utf-8")
+    sent.clear()
+    wd.handle_trace("!trace", "CID_OM")
+    _ls = sent[-1][1]
+    check("trace: bare !trace lists recent chains newest-first",
+          "CHAINS" in _ls and 0 < _ls.index("t-newest-alpha.app") < _ls.index("t-older-alpha.app"))
+    check("trace: loops ride along in the bare listing", "run 2/3" in _ls)
+    sent.clear()
+    wd.handle_trace("!trace nope-999", "CID_OM")
+    check("trace: an unknown id says so and lists what exists",
+          "nothing called" in sent[-1][1] and "CHAINS" in sent[-1][1])
+    sent.clear(); spawned.clear()
+    _r_tr = wd.handle_message(msg("999999999999999999", "!trace"), "CID_OM",
+                              T("omnius", "orchestrator"), me, dm)
+    check("trace: !trace is a control verb and spawns nothing",
+          _r_tr == "control" and spawned == [] and bool(sent))
+    (wd.THREADS / "t-newest-alpha.app.json").unlink(missing_ok=True)
+    (wd.THREADS / "t-older-alpha.app.json").unlink(missing_ok=True)
+    wd._hop_ttl, wd._gate_required = _real_ttl2, _real_gatereq2
+    sent.clear()
+
     # == permission escalation =================================================
     # Relaying a prompt to Discord is what lets the profile be TIGHTENED instead
     # of widened until prompts stop. Silence must never mean "allow".
