@@ -411,6 +411,28 @@ def guests():
     return out
 
 
+def slash_skills():
+    """-> set of skill names owner mail may fire with `/<name>` (docs\\DELEGATION.md D6).
+
+    `config\\skills.ini`, `[skills] allowed = status, watch`. An AUTHORISATION
+    list, so it fails closed like guests(): missing file, missing key or an
+    empty value = NOTHING passes. Labels are validated `[a-z0-9_-]+`; anything
+    else is reported through problems() and skipped. Guests never pass slashes
+    regardless of this list - the watchdog checks the sender first."""
+    out = set()
+    raw = str((load("skills").get("skills") or {}).get("allowed") or "")
+    for name in re.split(r"[,\s]+", raw):
+        if not name:
+            continue
+        n = name.strip().lower().lstrip("/")
+        if re.fullmatch(r"[a-z0-9_-]+", n):
+            out.add(n)
+        else:
+            _note(f"config\\skills.ini: '{name}' is not a skill name "
+                  f"([a-z0-9_-] only) - skipped")
+    return out
+
+
 def guest_status():
     """-> list of (label, name, user_id, channels) for every USABLE guest.
 
@@ -588,6 +610,9 @@ def describe():
         for label, name, uid, chans in people:
             who = f" `{name}`" if name and name.lower() != label else ""
             lines.append(f"`{label}`{who} — id `{uid}` · {chans}")
+    passes = sorted(slash_skills())
+    lines.append("**slash pass-through** (`config\\skills.ini`, owner mail only): "
+                 + (", ".join(f"`/{s}`" for s in passes) if passes else "(none - closed)"))
     caps = capability_status()
     if any(state != "off" for _n, _p, _k, state in caps):
         lines.append("**AI capabilities** (keys live in `.env`)")

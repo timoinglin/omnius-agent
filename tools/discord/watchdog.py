@@ -134,6 +134,7 @@ CONTROL_COMMANDS = ("!kill", "!restart", "!status", "!killall", "!reload",
 # so a list of people would silently omit every guest added after this line.
 SYSTEM_SENDERS = ("omnius", "heartbeat", "schedule")
 GUESTS = {}   # label -> guest, from config\guests.ini; reloaded with the map
+SLASH_SKILLS = set()   # /<name> owner mail may fire, from config\skills.ini; same cadence
 DROPPED = STATE / "dropped"   # cancelled mail, kept rather than deleted.
 # NOT under state\inbox\: ensure_runners() treats every folder there as a
 # SESSION, so parking envelopes inside it would invent a desk named after the
@@ -891,7 +892,21 @@ def reload_guests():
         # unreadable guest list means "no guests", never "everyone".
         log(f"guests.ini unreadable ({type(e).__name__}: {e}) - no guests this round")
         GUESTS = {}
+    reload_slash_skills()
     return GUESTS
+
+
+def reload_slash_skills():
+    """Re-read config\\skills.ini into SLASH_SKILLS (docs\\DELEGATION.md D6).
+    Rides reload_guests' cadence - both are authorisation lists, both fail
+    closed: unreadable means NOTHING passes, never everything."""
+    global SLASH_SKILLS
+    try:
+        SLASH_SKILLS = ocfg.slash_skills()
+    except Exception as e:                                   # noqa: BLE001
+        log(f"skills.ini unreadable ({type(e).__name__}: {e}) - no pass-through this round")
+        SLASH_SKILLS = set()
+    return SLASH_SKILLS
 
 
 def guest_for(author_id):
@@ -2879,7 +2894,7 @@ def transcribe(session, direction, text, channel=None, channel_id=None, files=No
 
 
 def write_envelope(session, channel_name, msg, files, channel_id=None, category=None,
-                   sender="owner"):
+                   sender="owner", slash=None):
     box = INBOX / session
     box.mkdir(parents=True, exist_ok=True)
     # channelId is what a reply should echo back: names collide across projects,
@@ -2897,6 +2912,11 @@ def write_envelope(session, channel_name, msg, files, channel_id=None, category=
                 "channelId": channel_id, "category": category,
                 "ts": msg.get("timestamp", now_iso()), "text": msg.get("content", ""),
                 "files": files}
+    if slash:
+        # The watchdog validated an owner /<skill> against config\skills.ini
+        # (docs\DELEGATION.md D6). Only THIS writer may stamp it: desk mail
+        # never carries slash, guests never reach the gate.
+        envelope["slash"] = slash
     # Atomic since desk mail (docs\DELEGATION.md): with more writers than the
     # watchdog composing envelopes, a torn read by ensure_runners is reachable.
     write_json_atomic(box / f"{msg['id']}.json", envelope)
@@ -4327,13 +4347,36 @@ def handle_message(m, cid, target, me, mapping):
             pass
         log(f"note: message in unmapped #{target.channel_name} - redirected owner")
         return "unmapped"
+    # Slash pass-through (docs\DELEGATION.md D6). Owner mail only - a guest's
+    # /anything is ordinary text. /omnius is an always-allowed no-op alias (the
+    # run already IS `-p "/omnius"`; stamping it would recurse the skill into
+    # itself). Anything unlisted delivers NOTHING: handing it over as plain
+    # text would make the desk improvise the verb he asked for, which is worse
+    # than refusing out loud.
+    slash = None
+    if sender == "owner" and text.startswith("/"):
+        _m = re.match(r"/([A-Za-z0-9_-]+)", text)
+        name = _m.group(1).lower() if _m else ""
+        if name in SLASH_SKILLS:
+            slash = name
+        elif name != "omnius":
+            try:
+                api.send_message(cid, f"⛔ `/{name or '?'}` is not on the pass-through "
+                                      f"list (`config\\skills.ini`) - nothing was "
+                                      f"delivered. Say it in words, or add the skill "
+                                      f"to the list.")
+            except api.ApiError:
+                pass
+            log(f"slash refused: /{name or '?'} in #{target.channel_name}")
+            return "slash-refused"
     try:
         api.add_reaction(cid, m["id"])
     except api.ApiError:
         pass
     files = save_attachments(m)
     write_envelope(target.session, target.channel_name, m, files,
-                   channel_id=cid, category=target.category_name, sender=sender)
+                   channel_id=cid, category=target.category_name, sender=sender,
+                   slash=slash)
     preview = text[:60].replace("\n", " ")
     # Log what actually happened, not what was intended - "spawned" when nothing
     # spawned is the comfortable lie that hid a stalled desk for three hours.

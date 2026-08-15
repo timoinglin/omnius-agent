@@ -36,10 +36,11 @@ misspelled is *reported* and then ignored, and the default is used. Ask
 
 | File | What it configures |
 |---|---|
-| `omnius.ini` | machine label, heartbeat interval, Discord gateway on/off |
+| `omnius.ini` | machine label, heartbeat interval, Discord gateway on/off, desk-mail delegation budgets |
 | `notes.ini` | the notes web server — folder, port, bind address |
 | `fleet.json` | which model and effort each desk runs with |
 | `guests.ini` | people who are **not you** and may write to one desk (see `guests.example.ini`) |
+| `skills.ini` | slash commands your Discord mail may fire on a desk (see `skills.example.ini`) — closed until you fill it |
 | `email.ini` | mail accounts (see `email.example.ini`) — **not built yet** |
 
 Files ending in `.example.ini` are templates that ship with Omnius. Copy one to

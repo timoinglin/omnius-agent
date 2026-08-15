@@ -5771,6 +5771,76 @@ try:
     wd._desk_id_cache.clear()
     sent.clear(); spawned.clear()
 
+    # == slash pass-through (docs\DELEGATION.md D6) ============================
+    print("== slash pass-through ==")
+    _saved_slash = wd.SLASH_SKILLS
+    _slashbox = wd.INBOX / "demo-app.app"
+
+    def _slash_env():
+        fs = sorted(_slashbox.glob("*.json")) if _slashbox.is_dir() else []
+        return json.loads(fs[-1].read_text(encoding="utf-8")) if fs else {}
+
+    def _clean_slashbox():
+        if _slashbox.is_dir():
+            for f in _slashbox.glob("*.json"):
+                f.unlink()
+
+    wd.SLASH_SKILLS = {"status"}
+    _clean_slashbox(); sent.clear()
+    r = wd.handle_message(msg("999999999999999999", "/status all desks please"),
+                          "CID_APP", T("app", "demo-app.app"), me, {})
+    _e = _slash_env()
+    check("slash: an allow-listed /skill stamps the envelope, text verbatim",
+          r in ("spawned", "queued", "delivered") and _e.get("slash") == "status"
+          and _e.get("text") == "/status all desks please")
+    _clean_slashbox(); sent.clear()
+    r = wd.handle_message(msg("999999999999999999", "/deploy prod"),
+                          "CID_APP", T("app", "demo-app.app"), me, {})
+    check("slash: an unlisted /skill is refused in-channel and nothing is delivered",
+          r == "slash-refused" and not list(_slashbox.glob("*.json"))
+          and bool(sent) and "pass-through" in sent[-1][1])
+    _clean_slashbox()
+    r = wd.handle_message(msg("999999999999999999", "/omnius"),
+                          "CID_APP", T("app", "demo-app.app"), me, {})
+    check("slash: /omnius is a no-op alias for plain mail - delivered, no stamp",
+          r in ("spawned", "queued", "delivered")
+          and list(_slashbox.glob("*.json")) and "slash" not in _slash_env())
+    _saved_g2 = dict(wd.GUESTS)
+    wd.GUESTS = {"guestina": {"id": "424242424242424260", "channels": ["CID_APP"],
+                              "name": "Guestina", "scope": ""}}
+    _clean_slashbox()
+    r = wd.handle_message(msg("424242424242424260", "/status please"),
+                          "CID_APP", T("app", "demo-app.app"), me, {})
+    check("slash: a guest's slash is plain text - never passed through",
+          r in ("spawned", "queued", "delivered")
+          and list(_slashbox.glob("*.json")) and "slash" not in _slash_env())
+    wd.GUESTS = _saved_g2
+    wd.SLASH_SKILLS = set()
+    _clean_slashbox()
+    r = wd.handle_message(msg("999999999999999999", "/status now"),
+                          "CID_APP", T("app", "demo-app.app"), me, {})
+    check("slash: an empty allow-list passes nothing - closed by default",
+          r == "slash-refused" and not list(_slashbox.glob("*.json")))
+    # the config reader itself, patched like the guest loader above
+    _sreal = _dcfg.load
+    try:
+        _dcfg.load = lambda name, legacy=None: (
+            {"skills": {"allowed": "status, /watch, bad*name"}}
+            if name == "skills" else _sreal(name, legacy))
+        _sread = _dcfg.slash_skills()
+        check("slash config: names are validated, slashes stripped, junk skipped",
+              _sread == {"status", "watch"})
+        check("slash config: the junk label is reported, not swallowed",
+              any("skills.ini" in p for p in _dcfg.problems()))
+        _dcfg.load = lambda name, legacy=None: (
+            {} if name == "skills" else _sreal(name, legacy))
+        check("slash config: no file means nothing passes",
+              _dcfg.slash_skills() == set())
+    finally:
+        _dcfg.load = _sreal
+    wd.SLASH_SKILLS = _saved_slash
+    _clean_slashbox(); sent.clear()
+
     # == permission escalation =================================================
     # Relaying a prompt to Discord is what lets the profile be TIGHTENED instead
     # of widened until prompts stop. Silence must never mean "allow".
