@@ -61,7 +61,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - **Parallel by default.** The backend desk migrates a schema while the web desk builds the UI against the *interface notes the backend desk wrote* — siblings coordinate through project memory, not through you repeating yourself.
 - **Nothing blocks on your screen.** Permission asks arrive as ok/no in the channel; one `ok` teaches the whole fleet permanently. The class of "came back after lunch, it was stuck on a dialog" is designed out.
 - **Recurring work stops being your job.** Say the schedule in plain words once; routines run it and speak only when something needs you. Silence is the feature — no notification fatigue.
-- **Friction becomes a commit.** Anything that annoys you, you type into the orchestrator's channel — and Omnius modifies Omnius, gated by its own test suite (1,300+ checks). Its verbs are ordinary committed skills (`/new-project`, `/status`, `/archive-project`, …), so every self-improvement is a reviewable commit that travels to every future instance. The tool sharpens itself while you use it.
+- **Friction becomes a commit.** Anything that annoys you, you type into the orchestrator's channel — and Omnius modifies Omnius, gated by its own test suite (1,300+ checks). Its verbs are ordinary committed skills (`/new-project`, `/status`, `/goal`, `/backup`, `/release`, …), so every self-improvement is a reviewable commit that travels to every future instance. The tool sharpens itself while you use it.
 - **The chat is the human-facing audit trail.** Every decision, every answer, every screenshot is already threaded per project and searchable in Discord — no separate tracker to feed. The machine keeps its own records underneath: per-desk transcripts, run logs and chain ledgers in `state\`.
 
 ## What a day with it looks like
@@ -95,7 +95,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - A desk hands work to a sibling by **addressing an envelope to it**; the watchdog validates the target, delivers, and mirrors every hop into the recipient's channel — the fleet talking to itself is always on your screen. Fan-out workflows are just envelopes in sequence.
 - **Hop budgets** with free replies stop runaway chains; a **cross-project gate** holds anything that crosses a project boundary for your ok/no, failing closed on silence.
 - **Budgeted work loops**: a desk grinds toward a checkable done-condition across runs — five by default, then it must report what exists and ask. Loops never extend themselves.
-- **Slash pass-through**: `/status`, `/watch <url>` or any skill you allow-list runs *as that skill* on the desk; the list ships empty on purpose, and guests never pass one.
+- **Slash pass-through**: `/goal <objective>`, `/status`, `/watch <url>` or any skill you allow-list runs *as that skill* on the desk; the list ships empty on purpose, and guests never pass one.
 
 **Automation**
 - Routines created by talking, managed with `!cron` (list / pause / resume / remove / adopt): intervals, daily times, one-shots, weekday and time-window clamps.

@@ -139,13 +139,22 @@ Copy `config\skills.example.ini` → `config\skills.ini` and uncomment:
 
 ```ini
 [skills]
-allowed = status, watch
+allowed = status, watch, goal
 ```
 
 Then `/watch <url>` or `/status` typed in a channel runs **that skill** on the
 desk — no improvisation. Unlisted slashes deliver nothing and tell you so;
 guests' slashes are always plain words; the empty list means the feature is
 off. Live within a minute of editing, shown in `!config`.
+
+Skills worth allowing, all shipped: `goal` (hand over an objective — it gets
+decomposed into checkable done-conditions and reported against them with
+receipts), `backup` (pack the workspace + verified copy to your backup
+folder), `release` (re-cut the rolling release, suites and all), `brief`
+(fleet briefing: needs-you → moved today → running → open), the fleet verbs
+(`new-project`, `spawn-session`, `archive-project`), and Claude Code's own
+`code-review`, `simplify`, `security-review` and `run` for working a
+project's diff from your phone.
 
 ## 9. Routines, reminders, schedules
 
