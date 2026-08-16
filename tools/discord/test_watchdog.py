@@ -3222,6 +3222,39 @@ try:
         wd.run_active, wd.session_alive = _ra, _sa
         wd.FLEET_CFG = _fleet_real
 
+    # Today's live shape (2026-08-16): he put THIS desk on fable/max with
+    # !model. That lands in desks["orchestrator"], which overlays role:
+    # orchestrator - it must change model and effort and NOTHING else, or the
+    # model choice silently costs the orchestrator its fresh-boot policy (the
+    # 200x context-tax fix) the day it happens.
+    print("== !model on the orchestrator keeps the role policy ==")
+    _fleet_real2 = wd.FLEET_CFG
+    wd.FLEET_CFG = SAND / "fleet-orch.json"
+    wd.FLEET_CFG.write_text(json.dumps({
+        "defaults": {"model": "opus", "effort": "xhigh", "resume": "transcript",
+                     "permissionMode": None, "window": "terminal"},
+        "roles": {"orchestrator": {"resume": "fresh"}},
+        "desks": {}}, indent=2) + "\n", encoding="utf-8")
+    try:
+        wd.fleet_set_desk("orchestrator", model="fable", effort="max")
+        _ocfg = wd.desk_config("orchestrator")
+        check("the override lands in desks[orchestrator]",
+              json.loads(wd.FLEET_CFG.read_text(encoding="utf-8"))
+                  ["desks"].get("orchestrator", {}).get("model") == "fable")
+        check("desk_config resolves the overridden model/effort",
+              _ocfg["model"] == "fable" and _ocfg["effort"] == "max")
+        check("...and resume stays 'fresh' from the role",
+              _ocfg["resume"] == "fresh",
+              "a model override must never drag the 11 MB transcript back")
+        check("...and the permission profile survives too",
+              _ocfg["permissionMode"] is None)
+        wd.fleet_set_desk("orchestrator", clear=True)
+        check("reset returns the desk to the pure role/default stack",
+              wd.desk_config("orchestrator")["model"] == "opus"
+              and wd.desk_config("orchestrator")["resume"] == "fresh")
+    finally:
+        wd.FLEET_CFG = _fleet_real2
+
     # == BOM: an invisible byte that empties every setting ====================
     # configparser rejects a whole .ini with MissingSectionHeaderError if it
     # starts with a BOM - so every value silently reverts to its default. BOMs
@@ -4985,9 +5018,13 @@ try:
     _real_cfg = wd.FLEET_CFG
     # The shipped defaults, not a fixture - and since 2026-08-14 what SHIPS is
     # the example: config\* is gitignored, install copies it to fleet.json.
-    wd.FLEET_CFG = real_root / "config" / "fleet.json"
+    # So test the EXAMPLE first. The machine's own fleet.json is instance
+    # state - `!model` exists to mutate it, and the owner using a shipped verb
+    # must never fail the shipped-defaults check (found 2026-08-16: this desk
+    # ran fable/max by his hand and the suite blamed the product).
+    wd.FLEET_CFG = real_root / "config" / "fleet.example.json"
     if not wd.FLEET_CFG.is_file():
-        wd.FLEET_CFG = real_root / "config" / "fleet.example.json"
+        wd.FLEET_CFG = real_root / "config" / "fleet.json"
     try:
         orch = wd.desk_config("orchestrator")
         proj = wd.desk_config("demo-proj.democomp")
