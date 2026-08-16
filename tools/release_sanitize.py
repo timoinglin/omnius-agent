@@ -38,6 +38,18 @@ IDENTIFYING = {
     # shipped file is somebody's actual account.
     "email address": re.compile(
         r"[\w.+-]+@(?!example\.(?:com|net|org)\b)[\w-]+\.[\w.-]*[\w]", re.I),
+    # Credential SHAPES - the same list api.redact strips from outbound posts;
+    # the suite pins the two lists together so they cannot drift. Added
+    # 2026-08-16 after GitHub's secret scanner proved the gap from OUTSIDE: it
+    # flagged a fake key in the suite's redaction fixtures (alert #1), and
+    # nothing in THIS gate would have refused a real one in a doc or example.
+    "github token": re.compile(r"gh[pousr]_[A-Za-z0-9]{16,}"),
+    "github fine-grained pat": re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    "openai/anthropic key": re.compile(r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
+    "google api key": re.compile(r"AIza[A-Za-z0-9_-]{30,}"),
+    "aws access key id": re.compile(r"AKIA[0-9A-Z]{16}"),
+    "slack token": re.compile(r"xox[baprs]-[A-Za-z0-9-]{10,}"),
+    "private key block": re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"),
 }
 # Files whose job is to NAME what remains above. Exempting them is not a
 # loophole: a guard must contain the structural patterns it checks for.

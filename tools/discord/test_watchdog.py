@@ -153,16 +153,23 @@ try:
     # other. The permission relay posts the command line it is asking about
     # straight into a channel, so `curl -H "Authorization: Bot ..."` published a
     # live credential. Same path carries session output. CLAUDE.md par.5.
+    # Assembled at RUNTIME on purpose. GitHub's secret scanner (and every
+    # third-party scanner pointed at this public repo) pattern-matches source
+    # literals, and a convincing fake is indistinguishable from a leak when
+    # seen from outside - GitHub alert #1 (2026-08-14) was exactly this list's
+    # Google entry. Concatenation keeps the tested VALUE identical while the
+    # file carries no scannable literal, which also lets the repo-is-the-
+    # product scan below hunt these shapes with no fixture exemption.
     for _label, _secret in [
-        ("github PAT",        "ghp_abcdefghijklmnopqrstuvwxyz0123456789"),
-        ("openai key",        "export OPENAI_API_KEY=sk-proj-abc123def456ghi789jkl012"),
-        ("anthropic key",     "sk-ant-abc123def456ghi789jkl012mno"),
-        ("google api key",    "AIzaSyD-abcdefghijklmnopqrstuvwxyz12345"),
-        ("aws key id",        "AKIAIOSFODNN7EXAMPLE"),
-        ("slack token",       "xoxb-123456789012-abcdefghijkl"),
+        ("github PAT",        "ghp_" + "abcdefghijklmnopqrstuvwxyz0123456789"),
+        ("openai key",        "export OPENAI_API_KEY=" + "sk-" + "proj-abc123def456ghi789jkl012"),
+        ("anthropic key",     "sk-" + "ant-abc123def456ghi789jkl012mno"),
+        ("google api key",    "AIza" + "SyD-abcdefghijklmnopqrstuvwxyz12345"),
+        ("aws key id",        "AKIA" + "IOSFODNN7EXAMPLE"),
+        ("slack token",       "xoxb-" + "123456789012-abcdefghijkl"),
         ("bearer header",     'curl -H "Authorization: Bearer abcdefghijklmnopqrstuvwxyz"'),
         ("named assignment",  "DB_PASSWORD=hunter2xyz"),
-        ("private key block", "-----BEGIN RSA PRIVATE KEY-----"),
+        ("private key block", "-----BEGIN RSA" + " PRIVATE KEY-----"),
     ]:
         check(f"{_label} never reaches a channel", "[redacted]" in api.redact(_secret),
               api.redact(_secret))
@@ -2408,6 +2415,41 @@ try:
                     break
         check("no tracked file names a real home directory (use a placeholder)",
               not _paths, f"{_paths[:5]}")
+
+        # Credential SHAPES, not just names: the same list api.redact strips
+        # from outbound posts and release_sanitize refuses in a zip. GitHub's
+        # own scanner proved the gap from OUTSIDE (alert #1, 2026-08-14) by
+        # flagging this suite's redaction fixtures - convincing literals then,
+        # runtime-assembled now, so this scan holds with only the guards
+        # themselves exempt (a guard must contain the shapes it hunts).
+        _shapes = [r"gh[pousr]_[A-Za-z0-9]{16,}",
+                   r"github_pat_[A-Za-z0-9_]{20,}",
+                   r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}",
+                   r"AIza[A-Za-z0-9_-]{30,}",
+                   r"AKIA[0-9A-Z]{16}",
+                   r"xox[baprs]-[A-Za-z0-9-]{10,}",
+                   r"-----BEGIN [A-Z ]*PRIVATE KEY-----"]
+        _cred = []
+        for _f in _tracked:
+            if _f.endswith((".png", ".ico", ".jpg", ".zip")) \
+                    or _f in ("tools/discord/test_watchdog.py",
+                              "tools/discord/api.py", "tools/release_sanitize.py"):
+                continue
+            try:
+                _body = (real_root / _f).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            for _srx in _shapes:
+                if re.search(_srx, _body):
+                    _cred.append(f"{_f} ({_srx[:20]})")
+                    break
+        check("no tracked file carries a credential-shaped string",
+              not _cred, f"{_cred[:5]}")
+        _api_src2 = (real_root / "tools" / "discord" / "api.py").read_text(encoding="utf-8")
+        _san_src2 = (real_root / "tools" / "release_sanitize.py").read_text(encoding="utf-8")
+        _shape_missing = [s for s in _shapes if s not in _api_src2 or s not in _san_src2]
+        check("the redactor and the release gate hunt the SAME credential shapes",
+              not _shape_missing, f"missing from a guard: {_shape_missing}")
     else:
         check("no .git here - a fresh instance, nothing to check", True)
 
