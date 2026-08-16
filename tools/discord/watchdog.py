@@ -3643,14 +3643,20 @@ def update_pending_confirm():
     _pending_path().unlink(missing_ok=True)
 
 
+RELEASE_CHECK_SECONDS = 24 * 3600   # poll-loop re-check cadence (boot checks too)
+_release_last = [0.0]               # when update_boot_notice last ran, this process
+
+
 def update_boot_notice(mapping):
-    """Boot-time release check (owner ask, 2026-08-16): if origin/main has
-    commits this install lacks, post WHAT they are and that `!update go`
-    applies them - then stay quiet. It never applies anything by itself, and
-    it never speaks when current, unattached or offline: a boot on a dead
-    network is a log line, not a page. "Only tell once" is enforced per
-    ORIGIN TIP, stamped in state - a crash-looping service boots every
-    minute, and the same news must not be broken every time."""
+    """Release check (owner ask, 2026-08-16): if origin/main has commits this
+    install lacks, post WHAT they are and that `!update go` applies them -
+    then stay quiet. It never applies anything by itself, and it never speaks
+    when current, unattached or offline: a dead network is a log line, not a
+    page. Runs at boot and once a day from the poll loop (a watchdog can run
+    for weeks without a boot). "Only tell once" is enforced per ORIGIN TIP,
+    stamped in state - a crash-looping service boots every minute, and the
+    same news must not be broken every time."""
+    _release_last[0] = time.time()
     rc, _out = _git("rev-parse", "--is-inside-work-tree")
     if rc != 0:
         return                # unattached zip install - !update explains when asked
@@ -5132,6 +5138,12 @@ def main():
                     log(f"guest list changed -> {', '.join(sorted(GUESTS)) or 'none'}")
                 last_refresh = time.time()
                 rotate_log()
+                # A watchdog can run for weeks without a boot, so the boot-time
+                # release notice alone would never fire on the machines that
+                # need it most. Re-check daily on the refresh cadence - the
+                # per-tip stamp inside keeps it to one announcement per news.
+                if time.time() - _release_last[0] >= RELEASE_CHECK_SECONDS:
+                    update_boot_notice(mapping)
 
             # While the socket is healthy the REST sweep is a backstop, not the
             # transport, so it runs every RECONCILE_SECONDS. The moment the

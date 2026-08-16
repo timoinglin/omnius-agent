@@ -6255,6 +6255,14 @@ try:
     _src_bn = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
     check("boot notice: wired into main() right after hello_post",
           "update_boot_notice(mapping)" in _src_bn.split("hello_post(mapping)")[-1][:120])
+    # A watchdog can run for weeks with no boot, so boot-only would never fire
+    # on exactly the machines that drift furthest - the poll loop re-checks
+    # daily, same function, same per-tip stamp.
+    check("boot notice: the poll loop re-checks daily (same function, both sites)",
+          _src_bn.count("update_boot_notice(mapping)") == 3   # def + boot + poll
+          and "RELEASE_CHECK_SECONDS" in _src_bn.split("rotate_log()")[-1][:500])
+    check("boot notice: every run stamps the process clock for that cadence",
+          wd._release_last[0] > 0)
     (wd.WD_STATE / "update-announced.json").unlink(missing_ok=True)
 
     wd._git, wd._update_suite, wd.do_reload = _real_git, _real_us, _real_dr

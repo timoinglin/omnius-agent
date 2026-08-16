@@ -224,9 +224,9 @@ calls for it — you can also address the desks directly:
   `!reload` at the desk still works.) Zip installs attach themselves to the
   repo at install time, so this works on every instance. New config keys
   arrive commented in `config\*.example.ini` — copy what you want.
-  The watchdog also checks **once at startup**: new commits on origin get
-  announced in `#omnius` with the `!update go` hint — announced, never
-  applied, and the same news is never repeated on later boots.
+  The watchdog also checks **at startup and once a day**: new commits on
+  origin get announced in `#omnius` with the `!update go` hint — announced,
+  never applied, and the same news is never repeated.
 - **Backups:** `pack.bat` builds one zip (memory, projects, notes, media —
   secrets excluded) next to the workspace and the heartbeat nags if the backup
   folder goes stale. **Moving machines** = unzip, `install.bat`, `!cron adopt
