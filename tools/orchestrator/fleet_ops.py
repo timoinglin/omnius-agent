@@ -304,8 +304,18 @@ def open_desk(session, model=None, effort=None, force=False):
         flags += f' --settings "{proj_settings}"'
     # --continue only with own history: in a virgin folder it attaches to the
     # most recent conversation from SOMEWHERE ELSE (see watchdog.start_run).
+    #
+    # ...and only when the desk's RESUME POLICY allows it. This was the third
+    # and last launch path still deaf to `resume: "fresh"` (2026-08-16): the
+    # watchdog's headless runs honoured it from 2026-08-01, the bridge from
+    # earlier today, and a hand-opened `/spawn-session` orchestrator desk still
+    # dragged the 5.9 MB dev transcript in behind it. Same ~200x context tax,
+    # just entered through a different door. All three paths now read one
+    # policy from fleet.json, so a future desk inherits it by ROLE with no
+    # configuration at all.
+    resume_mode = str(desk.get("resume") or "transcript").strip().lower()
     inner = (f'claude {flags} --continue "/omnius" || claude {flags} "/omnius"'
-             if wd.has_history(cwd) else f'claude {flags} "/omnius"')
+             if resume_mode != "fresh" and wd.has_history(cwd) else f'claude {flags} "/omnius"')
     wt = shutil.which("wt")
     try:
         if wt:

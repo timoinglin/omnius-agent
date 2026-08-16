@@ -2620,6 +2620,17 @@ try:
               "a launch path without it turns 'restart' into 'forget'")
         check(f"...and {_who} gates it on has_history", "has_history" in _s,
               "in a virgin folder --continue attaches to ANOTHER folder's chat")
+        # ...and on the desk's RESUME POLICY, which is the same invariant seen
+        # from the other side: resuming is right by default, and wrong for a
+        # desk fleet.json marks `fresh`. The paths learned it one at a time -
+        # start_run 2026-08-01, the bridge 2026-08-16 (a takeover dragged 5.9 MB
+        # into every Discord line), open_desk the same day. Checking it HERE, in
+        # the loop over every launch path, is what makes the answer to "does
+        # this hold for all desks, including future ones?" a yes with a test
+        # behind it: a fourth door added later fails this check on arrival.
+        check(f"...and {_who} honours the desk's resume policy",
+              'resume_mode != "fresh"' in _s,
+              "a path deaf to resume:fresh re-imports the ~200x context tax")
 
     _real_home = Path.home
     fake_home = SAND / "home"
