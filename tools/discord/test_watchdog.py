@@ -345,6 +345,53 @@ try:
     last = json.loads(envs[-1].read_text(encoding="utf-8"))
     check("attachment saved into envelope + media/inbox", last["files"] and "media" in last["files"][0]["path"])
 
+    # A control-LOOKING word is not a control. "!killswitch ideas" prefix-
+    # matches !kill and "!modelo fable" prefix-matches !model, and until
+    # 2026-08-16 the dispatch used startswith(CONTROL_COMMANDS), so both
+    # entered a chain where no branch fired - the message VANISHED: no action,
+    # no reply, no envelope. (His "!goal ..." of the same day survived only
+    # because !goal shares no prefix with a real verb.) Exact token, or mail.
+    spawned.clear()
+    _m = msg("999999999999999999", "!killswitch ideas for the launch")
+    _m["id"] = "20260816001"
+    _before = {p.name for p in (wd.INBOX / "demo-app.backend").glob("*.json")}
+    r = wd.handle_message(_m, "C", T("backend", "demo-app.backend"), me, {})
+    check("a !word that only PREFIXES a verb is mail, not control",
+          r in ("spawned", "queued", "delivered"))
+    _new = {p.name for p in (wd.INBOX / "demo-app.backend").glob("*.json")} - _before
+    check("...its envelope is written (nothing swallowed)", len(_new) == 1)
+    _kenv = (json.loads((wd.INBOX / "demo-app.backend" / next(iter(_new))).read_text(encoding="utf-8"))
+             if _new else {})
+    check("...text intact for the desk to read",
+          _kenv.get("text", "").startswith("!killswitch"))
+    _m2 = msg("999999999999999999", "!modelo fable para este desk")
+    _m2["id"] = "20260816002"
+    _fj_before = wd.FLEET_CFG.read_text(encoding="utf-8") if wd.FLEET_CFG.is_file() else None
+    r = wd.handle_message(_m2, "C", T("backend", "demo-app.backend"), me, {})
+    check("Spanish '!modelo ...' does not fire !model",
+          r in ("spawned", "queued", "delivered"))
+    _fj_after = wd.FLEET_CFG.read_text(encoding="utf-8") if wd.FLEET_CFG.is_file() else None
+    check("...and fleet.json is untouched", _fj_before == _fj_after)
+    sent.clear()
+    check("the exact verb still routes to control",
+          wd.handle_message(msg("999999999999999999", "!status"), "C",
+                            T("orchestrator", "orchestrator"), me, {}) == "control")
+    # And if the tuple and the chain ever drift apart (a verb listed but never
+    # wired), the owner is TOLD - a swallowed control is the failure he cannot
+    # distinguish from a dead fleet.
+    _saved_cc = wd.CONTROL_COMMANDS
+    wd.CONTROL_COMMANDS = _saved_cc + ("!ghostverb",)
+    sent.clear()
+    r = wd.handle_message(msg("999999999999999999", "!ghostverb now"), "C",
+                          T("backend", "demo-app.backend"), me, {})
+    check("a listed verb with no handler ANSWERS instead of swallowing",
+          r == "control" and bool(sent) and "wiring bug" in sent[-1][1])
+    wd.CONTROL_COMMANDS = _saved_cc
+    # Tidy only what THIS block wrote - the guests section below counts on the
+    # earlier deliveries staying in the box.
+    for _n in ("20260816001.json", "20260816002.json"):
+        (wd.INBOX / "demo-app.backend" / _n).unlink(missing_ok=True)
+
     print("== guests: a second person on the bus ==")
     # Until 2026-08-12 handle_message dropped EVERY non-owner message, silently,
     # so the artist whose brand a project is being built for had no way to talk

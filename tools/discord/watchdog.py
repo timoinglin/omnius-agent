@@ -3875,6 +3875,13 @@ def handle_control(text, cid, target, mapping):
             return
         results = [kill_session(f.stem) for f in sorted(SESSIONS.glob("*.json"))]
         api.send_message(cid, "**fleet stop**\n" + ("\n".join(results) or "nothing was running"))
+    else:
+        # Only reachable if CONTROL_COMMANDS and this chain drift apart: the
+        # dispatch admits exact listed verbs alone, so an unmatched cmd means a
+        # verb was added to the tuple without a branch. Never swallow his
+        # message silently - that is the one failure he cannot see.
+        api.send_message(cid, f"`{cmd}` is listed as a control verb but nothing handles it - "
+                              "that is a wiring bug; the message was not delivered anywhere")
     log(f"control: {cmd} in #{target.channel_name}")
 
 
@@ -4784,7 +4791,13 @@ def handle_message(m, cid, target, me, mapping):
     # takeover prompt closes his own terminal window. Guests only ever send
     # mail; everything below this block is reachable by the owner only.
     if sender == "owner":
-        if text.lower().startswith(CONTROL_COMMANDS):
+        # Exact FIRST-TOKEN match, not startswith: "!killswitch ideas" and
+        # "!modelo fable" prefix-match !kill / !model, and a prefix dispatch
+        # sent them into a chain where no branch fires - the message was
+        # swallowed whole: no action, no reply, no mail (found 2026-08-16).
+        # An unknown !word is just text; the desk should read it.
+        first_token = text.lower().split(None, 1)[0] if text else ""
+        if first_token in CONTROL_COMMANDS:
             handle_control(text, cid, target, mapping)
             return "control"
         verdict = answer_permission(text)
