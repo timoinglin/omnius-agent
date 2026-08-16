@@ -152,11 +152,13 @@ def claude_argv(session, cwd, model=None, effort=None):
     exe = shutil.which("claude")
     if not exe:
         fail("claude CLI not found on PATH")
+    resume_mode = "transcript"
     try:
         import watchdog as wd
         desk = wd.desk_config(session)
         model = model or desk.get("model")
         effort = effort or desk.get("effort")
+        resume_mode = str(desk.get("resume") or "transcript").strip().lower()
     except Exception:
         pass                                   # fleet.json must never block a desk
     argv = [exe, "--add-dir", str(ROOT)]
@@ -178,9 +180,18 @@ def claude_argv(session, cwd, model=None, effort=None):
     #
     # Gated on has_history for the reason start_run states: in a virgin folder
     # --continue attaches to the most recent conversation from SOMEWHERE ELSE.
+    #
+    # ...and gated on the desk's RESUME POLICY, which this path ignored until
+    # 2026-08-16. start_run honours `resume: "fresh"`; this did not, so the
+    # orchestrator - the one desk configured fresh, because its dev transcript
+    # dwarfs the chat it is answering - resumed a 5.9 MB conversation to reply
+    # to a Discord line the moment a takeover moved it onto the bridge. That is
+    # the ~200x context tax fleet.json calls "the owner's 'really slow'",
+    # fixed for headless runs on 2026-08-01 and still live here. He felt it as
+    # "after the takeover your responses were really slow" and was right.
     try:
         import watchdog as wd
-        if wd.has_history(cwd):
+        if resume_mode != "fresh" and wd.has_history(cwd):
             argv += ["--continue"]
     except Exception:
         pass                                   # cold start is always safe

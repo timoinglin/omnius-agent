@@ -1159,6 +1159,25 @@ try:
     _b.nudge_took = False; _b.last_nudge = 0.0
     for f in _b.box.glob("*.json"):
         f.unlink()
+    # The bridge must obey the desk's RESUME POLICY, not just its own instinct
+    # to stay warm. Until 2026-08-16 it always passed --continue, so a takeover
+    # moved the orchestrator - the one desk set `resume: "fresh"` because its
+    # dev transcript dwarfs the chat - onto a multi-MB conversation to answer a
+    # Discord line. He felt it immediately: "after the takeover your responses
+    # were really slow". start_run had honoured this since 2026-08-01.
+    _real_deskcfg, _real_hashist = wd.desk_config, wd.has_history
+    try:
+        wd.desk_config = lambda s: {"model": "opus", "effort": "xhigh",
+                                    "resume": "fresh" if s == "orchestrator" else "transcript"}
+        wd.has_history = lambda cwd: True
+        _argv_fresh = _db.claude_argv("orchestrator", wd.ROOT)
+        _argv_warm = _db.claude_argv("demo-app.app", wd.ROOT / "projects" / "demo-app" / "app")
+        check("bridge: a `resume: fresh` desk is NOT resumed - no --continue",
+              "--continue" not in _argv_fresh, f"got {_argv_fresh}")
+        check("bridge: ...while every other desk still resumes its own conversation",
+              "--continue" in _argv_warm)
+    finally:
+        wd.desk_config, wd.has_history = _real_deskcfg, _real_hashist
     # Tab naming. Claude Code renames every tab "Claude Code" via ESC ]0;...,
     # so six open desks were indistinguishable (owner, 2026-08-02). The bridge
     # is in the byte stream, so it strips the app's title and re-asserts the
