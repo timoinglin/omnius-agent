@@ -3643,6 +3643,58 @@ def update_pending_confirm():
     _pending_path().unlink(missing_ok=True)
 
 
+def update_boot_notice(mapping):
+    """Boot-time release check (owner ask, 2026-08-16): if origin/main has
+    commits this install lacks, post WHAT they are and that `!update go`
+    applies them - then stay quiet. It never applies anything by itself, and
+    it never speaks when current, unattached or offline: a boot on a dead
+    network is a log line, not a page. "Only tell once" is enforced per
+    ORIGIN TIP, stamped in state - a crash-looping service boots every
+    minute, and the same news must not be broken every time."""
+    rc, _out = _git("rev-parse", "--is-inside-work-tree")
+    if rc != 0:
+        return                # unattached zip install - !update explains when asked
+    rc, out = _git("fetch", "origin", "main", timeout=20)
+    if rc != 0:
+        log(f"boot release check: fetch failed ({out.strip()[:120] or 'no output'}) - skipped")
+        return
+    rc, behind = _git("rev-list", "--count", "HEAD..origin/main")
+    behind_n = int(behind.strip()) if rc == 0 and behind.strip().isdigit() else 0
+    if behind_n == 0:
+        return
+    _rc, tip = _git("rev-parse", "origin/main")
+    tip = tip.strip()
+    stamp = WD_STATE / "update-announced.json"
+    try:
+        if json.loads(stamp.read_text(encoding="utf-8")).get("tip") == tip:
+            return            # an earlier boot already broke exactly this news
+    except (OSError, ValueError, AttributeError):
+        pass
+    cid = primary_channel_id(mapping, "orchestrator")
+    if not cid:
+        log(f"boot release check: {behind_n} commit(s) behind but no orchestrator "
+            f"channel - log only")
+        return
+    _rc, lg = _git("log", "--oneline", "HEAD..origin/main", "-n", "8")
+    more = "" if behind_n <= 8 else f"\n… and {behind_n - 8} more"
+    try:
+        api.send_message(cid, f"⬆ **{behind_n} new commit(s)** on origin/main since this "
+                              f"machine last updated:\n```\n{lg.strip()}{more}\n```\n"
+                              f"`!update go` applies them (ff-only pull → test suite → "
+                              f"reload, auto-rollback on a red suite). Nothing is "
+                              f"applied without that word.")
+    except api.ApiError as e:
+        log(f"boot release check: could not post ({e})")
+        return                # unstamped on purpose - the next boot may reach Discord
+    try:
+        stamp.parent.mkdir(parents=True, exist_ok=True)
+        stamp.write_text(json.dumps({"tip": tip, "behind": behind_n,
+                                     "at": int(time.time())}), encoding="utf-8")
+    except OSError as e:
+        log(f"boot release check: stamp failed ({e})")
+    log(f"boot release check: {behind_n} commit(s) behind origin/main - announced")
+
+
 def handle_control(text, cid, target, mapping):
     cmd = text.split()[0].lower()
     if cmd == "!status":
@@ -5002,6 +5054,7 @@ def main():
     for _label, _g in sorted(GUESTS.items()):
         log(f"guest '{_label}' ({_g['id']}) may write in: {', '.join(_g['channels'])}")
     hello_post(mapping)
+    update_boot_notice(mapping)
 
     last_ids_file = WD_STATE / "last_ids.json"
     try:

@@ -6199,6 +6199,64 @@ try:
           and any("baseline" in s[1] for s in sent)
           and any("pre-existing" in s[1] for s in sent)
           and not any(c[:2] == ("reset", "--hard") for c in _upd_calls))
+    # == boot release notice ==================================================
+    # Owner ask 2026-08-16: when the watchdog STARTS, say once what origin/main
+    # has and how to apply it - never apply on its own. "Once" is per origin
+    # tip, stamped in state, so a crash-looping service (a boot per self-heal)
+    # cannot break the same news every minute.
+    print("== boot release notice ==")
+    _bn_map = {"c_orch": T("omnius", "orchestrator")}
+    _bn_behind = [
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-list",), (0, "2\n")),
+        (("rev-parse", "origin/main"), (0, "feedbeef" * 5 + "\n")),
+        (("log",), (0, "bbb2222 fix a\nccc3333 fix b\n")),
+    ]
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
+    wd._git = _script_git(_bn_behind)
+    (wd.WD_STATE / "update-announced.json").unlink(missing_ok=True)
+    wd.update_boot_notice(_bn_map)
+    check("boot notice: behind -> posts the commits and the go verb",
+          len(sent) == 1 and "2 new commit(s)" in sent[0][1]
+          and "!update go" in sent[0][1] and "bbb2222" in sent[0][1])
+    check("boot notice: it never pulls or reloads on its own",
+          not any(c[:1] == ("pull",) for c in _upd_calls) and not _reloaded)
+    wd.update_boot_notice(_bn_map)
+    check("boot notice: the same origin tip is announced only once",
+          len(sent) == 1)
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-list",), (0, "3\n")),
+        (("rev-parse", "origin/main"), (0, "cafef00d" * 5 + "\n")),
+        (("log",), (0, "ddd4444 x\neee5555 y\nfff6666 z\n")),
+    ])
+    wd.update_boot_notice(_bn_map)
+    check("boot notice: a NEW tip is fresh news and posts again",
+          len(sent) == 2 and "3 new commit(s)" in sent[-1][1])
+    sent.clear()
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (1, "fatal: unable to access github")),
+    ])
+    wd.update_boot_notice(_bn_map)
+    check("boot notice: offline is a log line, not a page", not sent)
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-list",), (0, "0\n")),
+    ])
+    wd.update_boot_notice(_bn_map)
+    check("boot notice: current -> silent", not sent)
+    wd._git = _script_git([(("rev-parse", "--is-inside-work-tree"), (1, "fatal"))])
+    wd.update_boot_notice(_bn_map)
+    check("boot notice: an unattached install stays silent at boot", not sent)
+    _src_bn = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
+    check("boot notice: wired into main() right after hello_post",
+          "update_boot_notice(mapping)" in _src_bn.split("hello_post(mapping)")[-1][:120])
+    (wd.WD_STATE / "update-announced.json").unlink(missing_ok=True)
+
     wd._git, wd._update_suite, wd.do_reload = _real_git, _real_us, _real_dr
     wd._update_restamp = _real_restamp
     sent.clear()
