@@ -4444,7 +4444,7 @@ def _post_gate_ask(mapping, rec, led=None):
     cid = (led.get("origin") or {}).get("channelId") if led else None
     if not (cid and cid in mapping):
         cid = primary_channel_id(mapping, rec["sender"]) \
-            or broadcast_channel_id(mapping, "alerts")
+            or broadcast_channel_id("alerts")
     if not cid:
         log(f"gate ask {rec['id']}: no channel to ask in - held silently")
         return
@@ -4798,7 +4798,7 @@ def sweep_twofa(mapping):
         if rec.get("posted"):
             continue
         cid = primary_channel_id(mapping, rec.get("session") or "orchestrator") \
-            or broadcast_channel_id(mapping, "alerts")
+            or broadcast_channel_id("alerts")
         if not cid:
             continue
         try:

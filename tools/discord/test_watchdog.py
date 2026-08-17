@@ -6623,6 +6623,28 @@ try:
           "483920" not in _after_tr and _after_tr == _before_tr)
     check("2fa: a guest's six digits are NOT an answer (owner-only rail)",
           "answer_twofa" in _wd_src.split('if sender == "owner":')[1][:2000])
+    # The FALLBACK path, which no happy-path test or live check ever reaches:
+    # a desk with no channel of its own falls back to #alerts. Both the gate
+    # ask and the 2FA ask called broadcast_channel_id(mapping, "alerts") - one
+    # argument too many, a TypeError raised inside the main loop, and only when
+    # something had already gone wrong (2026-08-17, found by a docs audit
+    # reading the source rather than by any test). Exercised here, not asserted
+    # in source, so the arity is proven by calling it.
+    _bc_real = wd.build_map
+    try:
+        wd.build_map = lambda schema: {"C-ALERTS": T("alerts", None, "🎛 ORCHESTRATOR")}
+        check("2fa/gate fallback: broadcast_channel_id takes the NAME only",
+              wd.broadcast_channel_id("alerts") == "C-ALERTS")
+        _ask2fa(rid="nochan-1", session="ghost.desk")
+        sent.clear()
+        wd.sweep_twofa({})                    # no mapping at all -> fallback path
+        check("2fa: a deskless ask still reaches #alerts instead of crashing the tick",
+              any("6-digit" in s[1] for s in sent))
+        for _f in wd.TWOFA.glob("*"):
+            _f.unlink()
+    finally:
+        wd.build_map = _bc_real
+    sent.clear()
     for _f in wd.TWOFA.glob("*"):
         _f.unlink()
     sent.clear(); spawned.clear()
