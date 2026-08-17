@@ -1506,23 +1506,76 @@ def bridge_started_at(session):
         return time.time()
 
 
+def _tree_pids(root_pid, table=None):
+    """root + every recorded descendant, walked over a ppid snapshot.
+
+    Works when the ROOT IS ALREADY DEAD: Windows keeps a child's recorded
+    ppid pointing at the vanished pid, so the subtree is still enumerable -
+    which is the whole point. A ConPTY child outlives the python that spawned
+    it, and `taskkill /T` on a dead root kills nothing (verified 2026-08-17:
+    /T does traverse a LIVE root's whole tree - the pty parent link is intact
+    - so the leak was never /T, it was the kill being skipped for dead
+    roots). Pure over `table` ({pid: ppid}) so the suite can feed synthetic
+    trees; None snapshots the real machine via psutil."""
+    if not root_pid:
+        return []
+    if table is None:
+        try:
+            import psutil
+            table = {p.info["pid"]: p.info["ppid"]
+                     for p in psutil.process_iter(["pid", "ppid"])}
+        except Exception:                                    # noqa: BLE001
+            return [int(root_pid)]     # cannot map: at least try the root
+    out, frontier = [int(root_pid)], [int(root_pid)]
+    while frontier:
+        kids = [pid for pid, ppid in table.items()
+                if ppid in frontier and pid not in out]
+        out.extend(kids)
+        frontier = kids
+    return out
+
+
+def _kill_tree(root_pid, why=""):
+    """Kill a process tree WE OWN, dead root included. -> (tried, survivors).
+
+    Enumerates the subtree itself (see _tree_pids) and kills each pid
+    directly, so a dead root no longer shields its living children - the
+    orphan-claude leak a second instance measured on 2026-08-17: bridges
+    killed without /T (or crashed) left their ConPTY claude running, the
+    presence file was unlinked anyway, and the tree became invisible to every
+    surface. Survivors are REPORTED, never assumed dead."""
+    tried = _tree_pids(root_pid)
+    for pid in tried:
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
+                       capture_output=True, creationflags=NO_WINDOW)
+    time.sleep(0.3)
+    survivors = [p for p in tried if pid_alive(p)]
+    if tried and (len(tried) > 1 or survivors):
+        log(f"kill_tree({root_pid}{', ' + why if why else ''}): "
+            f"tried {len(tried)} pid(s), {len(survivors)} survived"
+            + (f" ({survivors})" if survivors else ""))
+    return tried, survivors
+
+
 def recover_bridge(session):
     """Replace a bridge that is not delivering. -> status token.
 
     Safe to do unasked because the bridge is OURS: the watchdog started it, it
     holds no work of the owner's, and its conversation survives on disk. That
     is exactly why native windows are asked about and this one is not.
+
+    The kill is NOT gated on the bridge python being alive (that gate was the
+    orphan leak): a dead python's claude children are still ours, still
+    enumerable through the recorded ppids, and still holding RAM. Only after
+    the tree is dealt with does the presence file go - deleting it first is
+    what made every leaked tree invisible.
     """
-    pids = []
     try:
         d = json.loads((BRIDGES / f"{session}.json").read_text(encoding="utf-8"))
-        if pid_alive(d.get("pid"), expect="python"):
-            pids.append(d["pid"])
+        if d.get("pid"):
+            _kill_tree(d["pid"], why=f"bridge {session}")
     except (OSError, json.JSONDecodeError, ValueError):
         pass
-    for pid in pids:
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"],
-                       capture_output=True, creationflags=NO_WINDOW)
     (BRIDGES / f"{session}.json").unlink(missing_ok=True)
     (TURNS / f"{session}.busy").unlink(missing_ok=True)
     n, oldest = inbox_backlog(session)
@@ -2507,10 +2560,14 @@ def kill_session(session):
     # The bridge too, or !restart leaves the window holding the desk: its
     # presence file keeps bridge_active() true, so the watchdog would refuse to
     # start a run and the desk would be deadlocked by its own rescue.
+    # DEAD python included - its ConPTY claude children live on (the orphan
+    # leak, 2026-08-17); _tree_pids enumerates them through recorded ppids.
     try:
         bd = json.loads((BRIDGES / f"{session}.json").read_text(encoding="utf-8"))
-        if pid_alive(bd.get("pid")):
-            pids.append(bd["pid"])
+        if bd.get("pid"):
+            for _p in _tree_pids(bd["pid"]):
+                if _p not in pids:
+                    pids.append(_p)
     except (OSError, json.JSONDecodeError, ValueError):
         pass
     (BRIDGES / f"{session}.json").unlink(missing_ok=True)

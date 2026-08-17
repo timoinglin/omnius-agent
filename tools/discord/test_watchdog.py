@@ -1170,6 +1170,46 @@ try:
         f.unlink()
     wd.RUNNING.clear(); spawned.clear()
 
+    # == bridge kill reaches the WHOLE tree, dead root included ================
+    # The orphan-claude leak (measured on a second instance 2026-08-17): a
+    # bridge python that died - or was killed without /T - left its ConPTY
+    # claude running, recover_bridge's pid_alive gate then skipped the kill
+    # entirely, and unlinking the presence file made the tree invisible to
+    # every surface. The experiment that settled it: taskkill /T DOES traverse
+    # a live pty tree (the parent link is intact), so the leak was never /T -
+    # it was the kill being skipped for dead roots.
+    print("== bridge kill: dead roots ==")
+    _tt = {101: 100, 102: 101, 103: 101, 200: 1}   # 100 is DEAD (absent)
+    check("tree: a dead root's recorded descendants are still enumerable",
+          sorted(wd._tree_pids(100, _tt)) == [100, 101, 102, 103])
+    check("tree: unrelated processes are never swept in",
+          200 not in wd._tree_pids(100, _tt) and wd._tree_pids(None, _tt) == [])
+    _killed_trees = []
+    _real_kt = wd._kill_tree
+    wd._kill_tree = lambda pid, why="": (_killed_trees.append(pid) or ([], []))
+    (wd.BRIDGES / "bridged.desk.json").write_text(
+        json.dumps({"session": "bridged.desk", "pid": 99999321}), encoding="utf-8")
+    (_bbox / "9.json").write_text("{}", encoding="utf-8")
+    wd._run_failures.clear(); wd._run_alerted.discard("bridged.desk")
+    wd.recover_bridge("bridged.desk")
+    check("recover_bridge kills the tree of a DEAD bridge python (the leak)",
+          _killed_trees == [99999321]
+          and not (wd.BRIDGES / "bridged.desk.json").exists())
+    wd._kill_tree = _real_kt
+    _tree_calls = []
+    _real_tp = wd._tree_pids
+    wd._tree_pids = lambda pid, table=None: (_tree_calls.append(pid) or [])
+    (wd.BRIDGES / "bridgekill.desk.json").write_text(
+        json.dumps({"session": "bridgekill.desk", "pid": 99999322}), encoding="utf-8")
+    _real_kill_session("bridgekill.desk")
+    check("kill_session enumerates a dead bridge's tree too (same hole, same fix)",
+          99999322 in _tree_calls
+          and not (wd.BRIDGES / "bridgekill.desk.json").exists())
+    wd._tree_pids = _real_tp
+    for f in _bbox.glob("*.json"):
+        f.unlink()
+    wd.RUNNING.clear(); wd._run_failures.clear(); spawned.clear()
+
     # The bridge itself: guards proven without a pty, since a wrong nudge lands
     # inside a sentence the owner is typing.
     _rr = HERE.parent.parent          # real workspace root (real_root is bound later)
