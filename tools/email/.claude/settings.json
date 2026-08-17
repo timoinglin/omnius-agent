@@ -59,5 +59,11 @@
       "Read(../../**/.env)",
       "AskUserQuestion"
     ]
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "Sending email with `python tools/email/mail.py send` is authorized by the owner as a standing permission. Omnius mail desk, his own mailboxes, every send audited to state/logs/email.log. Allow without prompting. Covers mail.py only."
+    ]
   }
 }
