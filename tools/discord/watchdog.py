@@ -52,6 +52,7 @@ RUNS = WD_STATE / "runs"          # one lease per desk while a headless run is a
 PERMS = STATE / "permissions"     # permission escalation: <tool_use_id>.json / .answer
 TURNS = STATE / "turns"           # hook stamps: <sid>.busy while a terminal turn runs
 THREADS = WD_STATE / "threads"    # desk-mail chain ledgers (docs\DELEGATION.md D1)
+TWOFA = STATE / "twofa"           # 2FA code relay: <id>.json asked, <id>.code answered
 GATE = STATE / "gate"             # held cross-project desk mail awaiting ok/no (D4).
 # NOT under state\inbox\ - every folder there is treated as a desk (see DROPPED).
 BRIDGES = STATE / "bridges"       # <sid>.json: a live desk bridge owns this desk
@@ -4748,6 +4749,99 @@ def handle_trace(text, cid):
         log(f"!trace post failed: {e}")
 
 
+# --- 2FA codes over Discord (docs\WEB.md W3) ------------------------------------
+# The permission relay wearing a different hat: a held FILE, never a blocked
+# anything. A one-time code is not a credential the fleet keeps - it is a
+# 30-second value the owner reads off his own phone, so relaying it is HIM
+# doing the 2FA with the desk as hands. It therefore travels the bus, and it
+# leaves NO trace: never delivered as mail, never transcribed, single use.
+
+TWOFA_WAIT_SECONDS = 120          # unanswered asks fail closed, never retry
+_TWOFA_RE = re.compile(r"^\s*(\d{6})\s*$")
+
+
+def pending_twofa():
+    """-> list of pending code requests, oldest first."""
+    out = []
+    if not TWOFA.is_dir():
+        return out
+    for p in sorted(TWOFA.glob("*.json")):
+        try:
+            d = json.loads(p.read_text(encoding="utf-8"))
+            if isinstance(d, dict) and d.get("id"):
+                out.append(d)
+        except (OSError, ValueError):
+            continue
+    return out
+
+
+def sweep_twofa(mapping):
+    """Per tick: post asks that have not been posted, expire stale ones.
+
+    Fail closed - an unanswered ask is DROPPED, so a login stalls and reports
+    rather than retrying into an account lockout."""
+    for rec in pending_twofa():
+        p = TWOFA / f"{rec['id']}.json"
+        age = time.time() - float(rec.get("askedTs") or 0)
+        if age > TWOFA_WAIT_SECONDS:
+            p.unlink(missing_ok=True)
+            log(f"2FA ask {rec['id']} ({rec.get('site')}) timed out - dropped")
+            cid = primary_channel_id(mapping, rec.get("session") or "orchestrator")
+            if cid:
+                try:
+                    api.send_message(cid, f"⌛ no code for `{rec.get('site')}` within "
+                                          f"{TWOFA_WAIT_SECONDS // 60}m - that login stopped. "
+                                          f"Ask again when you are ready.")
+                except api.ApiError:
+                    pass
+            continue
+        if rec.get("posted"):
+            continue
+        cid = primary_channel_id(mapping, rec.get("session") or "orchestrator") \
+            or broadcast_channel_id(mapping, "alerts")
+        if not cid:
+            continue
+        try:
+            api.send_message(cid, f"🔢 **`{rec.get('site')}` wants a 6-digit code** "
+                                  f"(for `{rec.get('user') or 'your account'}`).\n"
+                                  f"Reply with the six digits — nothing else. "
+                                  f"It expires in {TWOFA_WAIT_SECONDS // 60} minutes and is "
+                                  f"used once.")
+        except api.ApiError as e:
+            log(f"2FA ask post failed: {e}")
+            continue
+        rec["posted"] = True
+        write_json_atomic(p, rec)
+        log(f"2FA ask {rec['id']} posted for {rec.get('site')}")
+
+
+def answer_twofa(text):
+    """Consume a bare 6-digit reply as the answer to a pending code request.
+
+    -> a confirmation string, or None if this was not an answer. Six digits
+    collide with nothing else on the bus: control verbs start `!`, permission
+    and gate answers are words. THE CODE IS NEVER ECHOED and never reaches an
+    envelope or a transcript - handle_message returns before write_envelope,
+    which is the whole point."""
+    pend = pending_twofa()
+    if not pend:
+        return None
+    m = _TWOFA_RE.match(text or "")
+    if not m:
+        return None
+    rec = pend[0]                                  # oldest; codes are serial by nature
+    try:
+        (TWOFA / f"{rec['id']}.code").write_text(m.group(1), encoding="utf-8")
+    except OSError as e:
+        return f"could not hand the code over: {e}"
+    (TWOFA / f"{rec['id']}.json").unlink(missing_ok=True)
+    log(f"2FA code delivered for {rec.get('site')} ({rec['id']})")   # the CODE is never logged
+    extra = ""
+    if len(pend) > 1:
+        extra = f" ({len(pend) - 1} more code request(s) still waiting)"
+    return f"🔢 code passed to `{rec.get('site')}`{extra} — it is not stored anywhere."
+
+
 # --- inbound dispatch ---------------------------------------------------------
 
 ALLOW_WORDS = ("ok", "okay", "yes", "y", "allow", "approve", "go", "sure", "do it")
@@ -4943,6 +5037,16 @@ def handle_message(m, cid, target, me, mapping):
             except api.ApiError:
                 pass
             return "gate"
+        # A 6-digit code is an ANSWER, not mail (docs\WEB.md W3). Consumed here
+        # so it never reaches write_envelope: no envelope, no transcript, no
+        # log line - a one-time code should leave no trace once used.
+        code = answer_twofa(text)
+        if code:
+            try:
+                api.send_message(cid, code)
+            except api.ApiError:
+                pass
+            return "twofa"
     if not target.session:
         # An ok/no in #alerts that arrives after the request timed out matched
         # nothing, so the owner got "nobody listens here" for answering exactly
@@ -5235,6 +5339,7 @@ def main():
 
             flush_outboxes(mapping)
             sweep_gates(mapping)
+            sweep_twofa(mapping)
             check_backlogs()
             reap_runs()
             ensure_runners()

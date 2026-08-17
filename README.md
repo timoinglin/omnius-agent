@@ -108,7 +108,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 | 📼 **transcribe** | A desk that turns recordings into transcript + key frames + summary, as detached zero-token jobs |
 | 📧 **email** | IMAP/SMTP **and** Microsoft Graph, one contract — a Discord channel per account, auto-created from config |
 | 📄 **documents** | PDF text locally, OCR fallback for scans, structured extraction (invoices) with checksum validation |
-| 🌐 **playwright** | Headless browsing + a polite parallel crawler. Logged-in browsing uses the Claude Chrome extension instead — no credentials in scripts, ever |
+| 🌐 **playwright** | Headless browsing + a polite parallel crawler, and `weblogin` for sites you register: the **tool** holds the password (from `.env`, which desks may not read) and hands the desk a signed-in session — **a 6-digit 2FA code is asked for in your channel** and used once. Or skip scripting entirely: sign in yourself and let desks drive your real browser through the Chrome extension |
 | 🎬 **watch** | Watch a video (URL or file) and answer questions about it — frames + transcript, captions or local Whisper |
 | 📓 **daybook** | Notes & tasks app: plain markdown files are the data, stdlib-only server, web UI at `localhost:5111`. Its Today page replays **any day** — your notes plus every commit and desk that worked that day |
 
@@ -164,7 +164,7 @@ Desks run with a wide allow-list and **no permission prompts** — a prompt on a
 
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — the next phase, spec'd before its code · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ automated checks that gate every release, **plus** the live-machine validation the suite can't substitute for (documented where it happened, including what only real machines caught)
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/WEB.md](docs/WEB.md) — driving websites: the site registry, scripted login, 2FA over Discord · [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — the next phase, spec'd before its code · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ automated checks that gate every release, **plus** the live-machine validation the suite can't substitute for (documented where it happened, including what only real machines caught)
 
 There is no roadmap: this repo ships what exists, specs land in `docs\` before their code does, and the [commit log](https://github.com/timoinglin/omnius-agent/commits/main) is the honest history of both.
 

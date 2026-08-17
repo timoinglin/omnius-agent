@@ -72,8 +72,22 @@ that match the request you actually send.
 **Never work around the split by putting credentials in a Playwright script.**
 A login here would mean a password in a file, in a scheduled job, on disk —
 which is exactly what `.env`-only exists to prevent, and the extension already
-solves the problem properly. If a task seems to need a logged-in page
-headlessly, that is the signal to ask him, not to script a login.
+solves the problem properly.
+
+**The one sanctioned exception, added 2026-08-17: `weblogin.py`** (docs\WEB.md).
+For an instance whose work IS a set of logged-in sites, the extension path
+means a human clicking at the machine — which defeats a fleet you drive from a
+phone. So there is a narrow, honest route: the site is registered in
+`config\websites.ini` (url, user, and the **name** of a `.env` key), and
+`weblogin.py` — a TOOL, never the model — resolves the secret, signs the
+browser in, and saves the session to `state\web\<site>.json`. A 6-digit 2FA
+code is asked for in Discord and used once. Everything after login runs on a
+saved session with no secret involved.
+
+It is still second-best, and this file says so: a scripted login trips bot
+detection on plenty of sites, and the extension remains the right answer
+whenever he can sign in by hand. What has NOT changed: **no credential in a
+script, in a config file, or in a session's context — ever.**
 
 ## Install
 

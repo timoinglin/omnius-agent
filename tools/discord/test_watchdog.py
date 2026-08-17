@@ -56,6 +56,7 @@ try:
     # rename (temp on C:, workspace on W:), which raises WinError 17 and failed
     # five checks for a reason that had nothing to do with them (2026-08-12).
     wd.DROPPED = SAND / "dropped"
+    wd.TWOFA = SAND / "twofa"          # the 2FA code relay (docs\WEB.md W3)
     # Desk mail (docs\DELEGATION.md): chain ledgers + held cross-project asks.
     wd.THREADS, wd.GATE = SAND / "watchdog" / "threads", SAND / "gate"
     # fake project folders so build_map's folder-existence gate can resolve
@@ -6551,6 +6552,137 @@ try:
     (wd.THREADS / "t-older-alpha.app.json").unlink(missing_ok=True)
     wd._hop_ttl, wd._gate_required = _real_ttl2, _real_gatereq2
     sent.clear()
+
+    # == 2FA over Discord (docs\WEB.md W3) =====================================
+    # A one-time code is the owner doing his own 2FA with the desk as hands, so
+    # it may travel the bus - but it must leave NO trace: never an envelope,
+    # never a transcript line, never a log line, single use, fail closed.
+    print("== 2FA relay ==")
+    wd.TWOFA.mkdir(parents=True, exist_ok=True)
+    for _f in wd.TWOFA.glob("*"):
+        _f.unlink()
+    sent.clear()
+
+    def _ask2fa(rid="ionos-abc123", site="ionos", session="orchestrator", age=0.0):
+        wd.write_json_atomic(wd.TWOFA / f"{rid}.json",
+                             {"id": rid, "site": site, "user": "me@example.com",
+                              "session": session, "askedTs": _time.time() - age})
+        return rid
+
+    check("2fa: nothing pending -> a 6-digit message is ordinary mail",
+          wd.answer_twofa("123456") is None)
+    _ask2fa()
+    check("2fa: a pending ask is listed", len(wd.pending_twofa()) == 1)
+    _dm2 = {"CID_OM": T("omnius", "orchestrator")}
+    sent.clear()
+    wd.sweep_twofa(_dm2)
+    check("2fa: the ask is posted to the desk's channel, and says six digits",
+          bool(sent) and "6-digit" in sent[-1][1] and "ionos" in sent[-1][1])
+    sent.clear()
+    wd.sweep_twofa(_dm2)
+    check("2fa: ...once, not every tick", sent == [])
+    check("2fa: ordinary words are not an answer", wd.answer_twofa("ok") is None)
+    check("2fa: five digits or seven are not an answer",
+          wd.answer_twofa("12345") is None and wd.answer_twofa("1234567") is None)
+    _r2fa = wd.answer_twofa(" 483920 ")
+    check("2fa: a bare six-digit reply is consumed and handed to the waiting tool",
+          bool(_r2fa) and (wd.TWOFA / "ionos-abc123.code").read_text(encoding="utf-8") == "483920"
+          and not (wd.TWOFA / "ionos-abc123.json").exists())
+    check("2fa: the confirmation NEVER echoes the code back",
+          "483920" not in _r2fa and "not stored" in _r2fa)
+    check("2fa: used once - the next reply finds nothing pending",
+          wd.answer_twofa("483920") is None)
+    for _f in wd.TWOFA.glob("*"):
+        _f.unlink()
+    # fail closed: an unanswered ask is dropped, never left to be answered late
+    _ask2fa(rid="stale-1", age=wd.TWOFA_WAIT_SECONDS + 30)
+    sent.clear()
+    wd.sweep_twofa(_dm2)
+    check("2fa: an unanswered ask times out and is dropped (fail closed)",
+          not wd.pending_twofa() and not (wd.TWOFA / "stale-1.json").exists()
+          and any("no code for" in s[1] for s in sent))
+    # the whole point: a code is consumed at DISPATCH, so no envelope is written
+    for _f in wd.TWOFA.glob("*"):
+        _f.unlink()
+    _ask2fa(rid="dispatch-1")
+    _obox = wd.INBOX / "orchestrator"
+    _obox.mkdir(parents=True, exist_ok=True)
+    for _f in _obox.glob("*.json"):
+        _f.unlink()
+    _before_tr = ""
+    _trf = wd.TRANSCRIPTS / "orchestrator" / f"{datetime.now().strftime('%Y-%m')}.jsonl"
+    if _trf.is_file():
+        _before_tr = _trf.read_text(encoding="utf-8")
+    sent.clear(); spawned.clear()
+    _r_disp = wd.handle_message(msg("999999999999999999", "483920"), "CID_OM",
+                                T("omnius", "orchestrator"), me, _dm2)
+    _after_tr = _trf.read_text(encoding="utf-8") if _trf.is_file() else ""
+    check("2fa: the code is consumed at dispatch - NO envelope, no run",
+          _r_disp == "twofa" and not list(_obox.glob("*.json")) and spawned == [])
+    check("2fa: ...and nothing about it reaches the transcript",
+          "483920" not in _after_tr and _after_tr == _before_tr)
+    check("2fa: a guest's six digits are NOT an answer (owner-only rail)",
+          "answer_twofa" in _wd_src.split('if sender == "owner":')[1][:2000])
+    for _f in wd.TWOFA.glob("*"):
+        _f.unlink()
+    sent.clear(); spawned.clear()
+
+    # == websites registry (docs\WEB.md W1) ====================================
+    # A registry, never a vault: the block names the .env KEY, the value stays
+    # in .env which desks are denied from reading.
+    print("== websites registry ==")
+    _wreal = _dcfg.load
+    _wfake = {
+        "ionos": {"url": "www.ionos.es", "user": "me@example.com",
+                  "password_env": "WEB_IONOS_PWD"},
+        "handsite": {"url": "https://app.example.com", "user": "me@example.com"},
+        "spelling": {"url": "https://x.example.com", "password_key": "WEB_X_PWD"},
+        "nourl": {"user": "nobody@example.com"},
+    }
+    try:
+        _dcfg.load = lambda name, legacy=None: (
+            _wfake if name == "websites" else _wreal(name, legacy))
+        _ws = _dcfg.websites()
+        check("websites: a block is parsed and a bare domain gets https://",
+              _ws["ionos"]["url"] == "https://www.ionos.es"
+              and _ws["ionos"]["password_env"] == "WEB_IONOS_PWD")
+        check("websites: password_key is accepted as his spelling of password_env",
+              _ws["spelling"]["password_env"] == "WEB_X_PWD")
+        check("websites: a site with no password_env is legal (sign in by hand)",
+              "handsite" in _ws and _ws["handsite"]["password_env"] == "")
+        check("websites: a block with no url is refused, not guessed at",
+              "nourl" not in _ws
+              and any("websites.ini" in p for p in _dcfg.problems()))
+        _st = dict((s[0], s[4]) for s in _dcfg.website_status(env={"WEB_IONOS_PWD": "x"}))
+        check("websites: !config reports set / NOT SET / browser session, never a value",
+              _st["ionos"] == "set" and _st["spelling"] == "NOT SET"
+              and _st["handsite"] == "browser session")
+    finally:
+        _dcfg.load = _wreal
+    _wl_src = (real_root / "tools" / "playwright" / "weblogin.py").read_text(encoding="utf-8")
+    check("weblogin: the TOOL resolves the secret, and only to fill the field",
+          "ocfg.secret(" in _wl_src and "pw.fill(password)" in _wl_src
+          and "del password" in _wl_src)
+    check("weblogin: it asks for a 2FA code through the relay, never invents one",
+          "TWOFA" in _wl_src and "ask_for_code" in _wl_src)
+    check("weblogin: a site with no password_env is sent to the browser path",
+          "sign-in-by-hand" in _wl_src)
+    check("weblogin: an unanswered code stops the login instead of retrying",
+          "nothing retried" in _wl_src)
+
+    # == desk audit (docs\WEB.md W4) ===========================================
+    print("== desk audit ==")
+    _da = subprocess.run([sys.executable,
+                          str(real_root / "tools" / "discord" / "desk_audit.py"), "--quiet"],
+                         capture_output=True, text=True)
+    check("desk audit: this fleet passes its own stability review",
+          _da.returncode == 0, (_da.stdout or _da.stderr or "").strip()[:300])
+    _da_src = (real_root / "tools" / "discord" / "desk_audit.py").read_text(encoding="utf-8")
+    check("desk audit: it REPORTS and never edits a settings file",
+          "write_text" not in _da_src and "never fixes" in _da_src)
+    for _inv in ("AskUserQuestion", "PermissionRequest", "_kill_tree",
+                 "interactive_busy", "RUN_BACKOFF_SECONDS"):
+        check(f"desk audit: it checks the {_inv} invariant", _inv in _da_src)
 
     # == permission escalation =================================================
     # Relaying a prompt to Discord is what lets the profile be TIGHTENED instead

@@ -261,6 +261,28 @@ A reply he cannot answer from a phone is the same as no reply. Two shapes of it:
   a confirmation window. He may be at home. If a step truly needs the machine,
   say so plainly and say it can wait until he is there.
 
+### Websites and their passwords — you never hold one
+
+A site he uses is registered in `config\websites.ini` (url, user, and the NAME
+of a `.env` key). **You never read that password**: `.env` is denied to you on
+purpose, and a secret in your context is a secret in your transcript.
+
+```
+python tools\playwright\weblogin.py <site>          sign in, save the session
+python tools\playwright\weblogin.py <site> --check  is the saved session good?
+python tools\playwright\weblogin.py --list          what is configured
+```
+
+The tool resolves the secret, types it, and saves `state\web\<site>.json`;
+after that you drive an already-authenticated browser with no secret involved.
+If the site asks for a **6-digit code**, the tool asks him in Discord and waits
+— you do nothing but report what came back. It fails closed after 2 minutes
+rather than retrying a login, so "no code arrived" is an answer, not a retry.
+**Never type a password yourself, never ask him for one in a channel, and
+never put one in a file.** A site that refuses scripted login belongs in the
+Chrome extension, where he signed in by hand and the session already exists
+(docs\WEB.md).
+
 **The browser, specifically.** The Chrome extension refuses to act while more
 than one browser is connected and demands you pick — and picking is a click in
 Chrome. So do not ask: read `omnius_config.browser_device_id()` and call

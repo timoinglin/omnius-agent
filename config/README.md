@@ -41,6 +41,7 @@ misspelled is *reported* and then ignored, and the default is used. Ask
 | `fleet.json` | which model and effort each desk runs with |
 | `guests.ini` | people who are **not you** and may write to one desk (see `guests.example.ini`) |
 | `skills.ini` | slash commands your Discord mail may fire on a desk (see `skills.example.ini`) — closed until you fill it |
+| `websites.ini` | sites your desks log into: url, user, and the **name** of the `.env` key holding the password (see `websites.example.ini` and `docs\WEB.md`) — never the password itself |
 | `email.ini` | mail accounts (see `email.example.ini`) — **not built yet** |
 
 Files ending in `.example.ini` are templates that ship with Omnius. Copy one to

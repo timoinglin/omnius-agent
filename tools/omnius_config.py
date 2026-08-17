@@ -411,6 +411,68 @@ def guests():
     return out
 
 
+def websites(env=None):
+    """-> {site: {"url", "user", "password_env", "selectors": {...}}} per
+    `[<site>]` in config\\websites.ini (docs\\WEB.md W1).
+
+    A REGISTRY, not a vault: the block names the .env KEY that holds the
+    password (`password_env`, or `password_key` - his spelling - as an alias),
+    never the password. Desks are denied from reading .env, so the secret stays
+    out of the model entirely; only tools\\playwright\\weblogin.py resolves it.
+
+    Sections are bare site names (`[ionos]`), not the `group()` prefix shape:
+    this file has exactly one kind of entry, and a stranger writing it by hand
+    should not have to learn a prefix.
+
+    FAILS CLOSED like guests(): a block with no `url` is ignored and reported,
+    because a login target nobody can verify is not a target. A site with a
+    user and no password_env is LEGAL and means the safest thing - sign in by
+    hand in the browser once, let the session persist, script nothing.
+    """
+    out = {}
+    for site, body in sorted(load("websites").items()):
+        key = str(site).strip().lower()
+        body = body or {}
+        url = str(body.get("url") or "").strip()
+        if not url:
+            _note(f"config\\websites.ini [{site}] names no url - entry ignored")
+            continue
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        out[key] = {
+            "url": url,
+            "user": str(body.get("user") or "").strip(),
+            # his spelling first-class: password_key is the same thing
+            "password_env": str(body.get("password_env")
+                                or body.get("password_key") or "").strip(),
+            "selectors": {k: str(body.get(k) or "").strip()
+                          for k in ("user_selector", "pass_selector",
+                                    "submit_selector", "otp_selector",
+                                    "success_selector")
+                          if str(body.get(k) or "").strip()},
+        }
+    return out
+
+
+def website_status(env=None):
+    """-> list of (site, url, user, env_key, 'set'|'NOT SET'|'browser session').
+
+    Same reason account_status exists: these are DISCOVERED from config, so a
+    fixed SECRET_KEYS tuple cannot describe them. Values are never returned -
+    only whether the named key has one.
+    """
+    env = load_env() if env is None else env
+    out = []
+    for site, body in sorted(websites().items()):
+        env_key = body.get("password_env") or ""
+        if not env_key:
+            state = "browser session"       # signs in by hand; nothing scripted
+        else:
+            state = "set" if env_value(env_key, env) else "NOT SET"
+        out.append((site, body.get("url", ""), body.get("user", ""), env_key, state))
+    return out
+
+
 def slash_skills():
     """-> set of skill names owner mail may fire with `/<name>` (docs\\DELEGATION.md D6).
 
@@ -610,6 +672,14 @@ def describe():
         for label, name, uid, chans in people:
             who = f" `{name}`" if name and name.lower() != label else ""
             lines.append(f"`{label}`{who} — id `{uid}` · {chans}")
+    # Only shown once sites are configured - an instance that drives no
+    # websites should see nothing about them.
+    sites = website_status()
+    if sites:
+        lines.append("**websites** (passwords live in `.env`, never here)")
+        for site, url, user, env_key, state in sites:
+            who = f" `{user}`" if user else ""
+            lines.append(f"`{site}`{who} — {url} · {env_key or 'no key'}: {state}")
     passes = sorted(slash_skills())
     lines.append("**slash pass-through** (`config\\skills.ini`, owner mail only): "
                  + (", ".join(f"`/{s}`" for s in passes) if passes else "(none - closed)"))

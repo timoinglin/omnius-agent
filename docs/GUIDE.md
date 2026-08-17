@@ -192,7 +192,8 @@ calls for it — you can also address the desks directly:
 | Drop a **recording** in `#transcribe` | Detached zero-token job: transcript + key frames + summary land back in the channel |
 | *"read this PDF / invoice"* | Local text extraction; OCR fallback for scans (Mistral key); invoices come back as fields, checksum-validated |
 | *"watch this video"* / `/watch <url>` | Download, frames, transcript (captions or local Whisper) — then ask it anything about the content |
-| *"crawl these docs pages"* | Playwright, **public pages only** — anything behind a login uses the Claude Chrome extension on a real browser, never scripted credentials |
+| *"crawl these docs pages"* | Playwright for public pages. **Behind a login:** either the Claude Chrome extension on your real browser (you signed in by hand — safest, nothing scripted), or a site registered in `config\websites.ini` where `weblogin.py` signs in *for* the browser without the desk ever seeing the password — [docs/WEB.md](WEB.md) |
+| A site asks for a **6-digit code** | It appears in your channel: *"`ionos` wants a 6-digit code"*. Reply with the six digits, nothing else. They're passed straight to the waiting login, used once, never stored, never transcribed — and an unanswered ask expires in 2 minutes rather than retrying into a lockout |
 | *"render a video of…"* | Remotion project scaffold — programmatic video |
 | `!screen`, `!desktop <verb>` | See and drive the desktop remotely — the phone-to-PC escape hatch |
 
@@ -247,6 +248,14 @@ self-improvement is a reviewable commit that reaches every future instance.
 `!reload` puts watchdog changes live.
 
 ## 15. When something looks wrong
+
+Before blaming a desk, you can **prove the whole fleet is sane** in one command — it checks, per desk, that no permission prompt can hang it, that its hooks are wired to this machine, that escalation to Discord is live, and that the watchdog's self-recovery is in place:
+
+```
+python tools\discord\desk_audit.py
+```
+
+It reports and never edits: exit 0 means every desk is green, exit 1 names the desk and the invariant it breaks.
 
 | Symptom | Do |
 |---|---|
