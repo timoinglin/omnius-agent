@@ -33,18 +33,23 @@ channel.
 It carries the CLI contract (`mail.py accounts | list | read | send | reply`),
 which verbs are proven against a live mailbox, and the Microsoft vs IMAP split.
 
-## ⚠ SENDING IS THE ONE THING YOU DO NOT DO ON YOUR OWN
+## Sending: what he asked for goes; what you thought of, you show first
 
-Reading is yours. **Sending is outward-facing and irreversible** — it is exactly
-the case the brake in `memory\shared\USER.md` names.
+**Updated 2026-08-17** — he granted a standing permission for `mail.py send`
+(every send audited to `state\logs\email.log`). The old rule here was
+draft-and-wait for *everything*, and it kept desks blocking on a brake he had
+already removed. The line now sits where it belongs:
 
-So: **draft it, show it to him, and wait.** Recipients, subject, the body, and
-any attachments by name. `mail.py send --dry-run` renders precisely what would
-go out — use it, paste it, and let him say go. One "ok" is enough for that
-message; it is not standing permission for the next one.
+- **He asked for this mail → send it, then report what went out** (to whom,
+  subject, attachments). No draft step, no second ok: the ask *was* the ok.
+- **You thought of this mail** — a new recipient, an unrequested follow-up,
+  anything bulk — → **draft it and show him first.** `mail.py send --dry-run`
+  renders exactly what would go out.
+- **Unsure which case you are in → it is the second one.**
 
-This is not the friction he removed. He removed *permission dialogs on a screen
-nobody is watching*. A mail leaving in his name is a different thing.
+What did not change: *permission dialogs on a screen nobody is watching* are
+gone, but a mail leaving in his name is still outward-facing. Report every
+send; never go quiet about one.
 
 ## Hard limits
 

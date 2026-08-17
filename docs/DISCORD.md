@@ -4,23 +4,30 @@
 
 ## 1. Day one — a fresh instance
 
+Stamped from `tools\discord\schema.json` — that file is the source of truth, this is its picture:
+
 ```
 Discord Server "Omnius"          (private: you + the bot, nobody else)
-└── 🎛 ORCHESTRATOR
-    ├── #orchestrator      ← the main door: talk to Omnius (wakes/spawns on demand)
-    ├── #daybook           ← quick capture → daybook: notes, tasks, voice notes (transcribed)
-    ├── #fleet-status      ← bot-maintained pinned overview — mute it, don't post
-    └── #alerts            ← errors + approval requests from all sessions
+├── 🎛 ORCHESTRATOR
+│   ├── #omnius           ← the main door: talk to Omnius (#orchestrator also accepted)
+│   ├── #daybook          ← quick capture → daybook: notes, tasks, voice notes (transcribed)
+│   ├── #fleet-status     ← bot-maintained pinned overview — mute it, don't post
+│   ├── #transcribe       ← drop a recording, get transcript + frames + summary back
+│   └── #alerts           ← errors + approval requests from all sessions
+└── 📧 EMAIL                (only once config\email.ini has accounts)
+    └── #<address>        ← one channel per account: you@example.com → #you-example
 ```
 
-That is the **whole** initial server — deliberately minimal. Project categories appear only when projects are stamped (§3); nothing exists "in advance".
+Project categories appear only when projects are stamped (§3); nothing exists "in advance".
 
 | Channel | Who answers | Behavior |
 |---|---|---|
-| `#orchestrator` | Omnius (root session) | any message wakes/spawns Omnius; full fleet control from the phone |
-| `#daybook` | Omnius | text/voice → note or task in `daybook\` (voice notes transcribed first); personal data never leaves the orchestrator context |
-| `#fleet-status` | nobody — bot-maintained | one pinned embed, updated by `/status` and every fleet mutation; treat as read-only |
-| `#alerts` | the session that asked | errors, confirmations; Phase 4: Approve/Deny buttons — replying here approves destructive ops |
+| `#omnius` | `orchestrator` | any message wakes it; full fleet control from the phone. `#orchestrator` is accepted as the same door |
+| `#daybook` | the **`daybook` desk** | text/voice → note or task in `daybook\` (voice transcribed first). The orchestrator never posts here — its outbox to this channel is refused by design |
+| `#fleet-status` | `tool.fleet` | one embed, edited in place by the watchdog itself; treat as read-only |
+| `#transcribe` | `tool.transcribe` | recordings become detached zero-token jobs; the result comes back here |
+| `#alerts` | the session that asked | errors, permission asks (`ok`/`no`, with a 6-char code when several are pending), cross-project gate asks |
+| `#<address>` | `tool.email` | one per account in `config\email.ini`, created automatically when you add one |
 
 ## 2. Conventions
 

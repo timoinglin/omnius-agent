@@ -69,12 +69,22 @@ Discord**, including the one checkbox almost everyone misses.
    it like a password — whoever holds it *is* your bot.
 
 5. **Build the invite link.** **OAuth2 → URL Generator** → tick the `bot`
-   scope → under *Bot Permissions* tick exactly four: **Send Messages**,
-   **Read Message History**, **Manage Channels**, **Attach Files**. That is
-   everything Omnius uses — least privilege is the whole security posture
-   here, and the bot should model it. (Administrator also works on a private
-   server, but don't start there; details in [docs/DISCORD.md](docs/DISCORD.md)
-   §4.) Copy the generated URL from the bottom of the page.
+   scope → under *Bot Permissions* tick these eight: **Manage Channels**,
+   **View Channels**, **Send Messages**, **Read Message History**,
+   **Embed Links**, **Attach Files**, **Add Reactions**, **Manage Messages**.
+   That is the whole set Omnius uses — least privilege is the security posture
+   here, and the bot should model it. (Shortcut: the generated URL ends in
+   `permissions=…`; the eight above are `permissions=126032`. Administrator
+   works too on a private server, but don't start there — details in
+   [docs/DISCORD.md](docs/DISCORD.md) §4.) Copy the URL from the bottom of the
+   page.
+
+   Why each: *Manage Channels* stamps the categories and channels · *Send /
+   Read / View* carry the mail · **Embed Links** is the `#fleet-status` board ·
+   **Attach Files** sends screenshots and reports · **Add Reactions** is the 👀
+   receipt on every message · *Manage Messages* pins and tidies. Skip Embed
+   Links or Add Reactions and the fleet still runs, but the board and the
+   receipts fail quietly against a locked-down `@everyone`.
 
 6. **Create the server.** In the normal Discord app: **+** (Add a Server) →
    *Create My Own*. Private, just for you — no invite links, no other members.
@@ -266,7 +276,7 @@ Notes are **append-only**: nothing you write is ever silently rewritten.
 
 ## Browsing
 
-Omnius has **two** ways to use the web, and which one it picks is about
+Omnius has **three** ways to use the web, and which one it picks is about
 **sessions**, not difficulty.
 
 **Playwright — headless, no login.** A real Chromium with no screen and no
@@ -279,11 +289,19 @@ sign-in: your dashboards, Zoho, the bank, a webmail UI, an admin panel. It
 drives the browser you are already signed into, so the session stays yours and
 **no password ever reaches this workspace**.
 
-> The split is deliberate and not negotiable: a login in a headless script would
-> mean a password in a file, in a scheduled job, on disk. That is precisely what
-> the `.env`-only rule exists to prevent, and the extension already solves it. If
-> something seems to need a logged-in page headlessly, that is a reason to ask —
-> not to script a login.
+**`weblogin` — logged in, unattended.** For sites you use constantly and cannot
+sign into by hand every time (the reason it exists: a fleet you drive from a
+phone). Register the site in `config\websites.ini` with the **name** of a `.env`
+key, and `tools\playwright\weblogin.py <site>` signs the browser in and saves the
+session. A 6-digit 2FA code is asked for in your Discord channel and used once.
+
+> The rule under all three, and it is not negotiable: **a desk never sees a
+> password.** `weblogin` is a tool, not a session — it reads the secret from
+> `.env` (which desks are denied from reading), types it, and hands back a saved
+> session; the desk works from there with no secret involved. That is why the
+> extension is still the first choice where you can use it: nothing is scripted
+> at all. What no path allows is a password in a config file, in a prompt, or in
+> a session's context. See [docs/WEB.md](docs/WEB.md).
 
 Playwright's browser is a ~150MB download that install **asks** about rather
 than assuming. Missing it later is not fatal:

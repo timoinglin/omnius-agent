@@ -5,10 +5,18 @@ How to run the automated tests, and what has been validated. Keep this current a
 ## Run the tests
 
 ```
-python tools\discord\test_watchdog.py      # 1,300+ checks — watchdog, Discord helpers, bus, skills, installer, packaging
-python daybook\test_storage.py             # 136 checks — daybook storage + API
+python tools\discord\test_watchdog.py      # 1,400+ checks — watchdog, bus, delegation, skills, installer, packaging
+python daybook\test_storage.py             # 141 checks — daybook storage + API
+python tools\email\test_email.py           # 68 checks — IMAP/SMTP + Graph contract
+python tools\documents\test_documents.py   # 39 checks — PDF text, OCR fallback, schema validation
+python tools\discord\desk_audit.py         # every desk: no stalling prompts, hooks wired, self-recovery
 powershell -File install.ps1 -CheckOnly    # environment doctor (report-only)
 ```
+
+**All four suites gate every release** — `release.ps1` runs exactly this list
+before it will cut a zip, so a reader who runs only the first two gets a
+surprise at release time. Counts drift upward; the release is the enforcement,
+this table is the map.
 
 `test_watchdog.py` needs no Discord and no network: it monkeypatches the API's network calls and isolates all state into a temp sandbox.
 
@@ -101,6 +109,19 @@ nowhere else.
 Lesson worth keeping: **a green suite proves the product works on the machine
 that ran it.** These six were all green here for weeks.
 
-## Known gaps (later phases)
-- Orchestrator verbs (`/new-project`, `/spawn-session`, `/status`, `/archive-project`) — Phase 3; the manual runs here are their spec.
-- Heartbeat, Task-Scheduler autostart, security audit — Phase 4.
+## Known gaps (current, 2026-08-17)
+
+The old list here — orchestrator verbs, heartbeat, autostart, security audit —
+all shipped on 2026-08-01 and are covered by the suite; it is deleted rather
+than left to rot. What is genuinely open:
+
+- **The demolition derby** (`docs\OBSERVABILITY.md` O3): ten predicted-then-
+  verified failure drills, written down and not yet run. The most valuable
+  untested surface in the system.
+- **The update handshake's revert half.** The healthy path is live-proven
+  (a second instance updated itself unattended, 2026-08-17); the auto-revert
+  is suite-covered but has never fired on real hardware — that is derby
+  drill #11 on purpose.
+- **`weblogin` against a real site** (2026-08-17): the 2FA relay is proven end
+  to end against the live watchdog, but the browser half has only been driven
+  against the tool's own guards, not a genuine third-party login form.

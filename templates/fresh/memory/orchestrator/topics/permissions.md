@@ -2,17 +2,28 @@
 
 The security dial and everything learned about it. Design record: `docs\PERMISSIONS.md`.
 
-## Current posture (set 2026-07-31, user option "b")
+## Current posture (2026-08-06 — the model is the brake)
 
-Configured in **`fleet.json`** at the workspace root, applied by `watchdog.spawn_session()`:
+Run defaults live in **`config\fleet.json`**; every role ships
+`permissionMode: null`. **No desk runs with `bypassPermissions`** — an A/B test
+on 2026-08-01 proved it hangs an interactive spawn on a confirmation screen
+`-p` skips, which is the opposite of what it was added for.
 
-| Desk | Mode | Why |
-|---|---|---|
-| `orchestrator` | **no bypass** — keeps the profile | It can `!killall`, `git push`, pack the workspace and delete projects. Blast radius is the whole fleet. |
-| project components | `bypassPermissions` | Bounded work on one folder; must never stall on a prompt nobody is there to click. |
-| `daybook`, `tool.*` | `bypassPermissions` | Same reasoning. |
+What each desk's `.claude\settings.json` actually says:
 
-**Accepted cost, recorded rather than forgotten:** bypass disables the *deny* list too, including `Read(./.env)` and `Read(../../.env)`. Every desk is spawned with `--add-dir <root>`, so a project session **can** read the root `.env`. It has no need to — sessions talk to the file bus, never to Discord — so this is accepted risk, not a required capability.
+| | |
+|---|---|
+| **allow** | bare `Bash` and `PowerShell` (plus the tool list) — so routine work never stalls on a dialog nobody is watching |
+| **deny** | reading `.env`, and `AskUserQuestion` (it draws a menu in a terminal nobody is sitting at, and blocks the turn that would have to end for anyone to reach it) |
+
+His instruction, after a desk froze on a dialog in a window he was not looking
+at: *"Over discord make everything auto allow, no allow questions, no matter
+where … what you can do is that you as LLM ask twice."* So **the allow-list is
+no longer the safety — the model is**: routine work never asks, and anything
+irreversible or wide-blast is asked about **in words** first. The list of what
+that covers is in `shared\USER.md` and the `/omnius` skill.
+
+`python tools\discord\desk_audit.py` proves this posture holds on every desk.
 
 ## Escalation: how it is meant to work
 
@@ -50,16 +61,18 @@ Window now **600 s** (hook `timeout: 620`) — see the history of that number ab
 
 **One `ok` answers everything the desk is waiting on** (2026-08-02): the alert says `covers all N waiting on this desk`, so a burst of prompts needs one reply, not N.
 
-## The blocker on fixing it properly
+## How that blocker was resolved (2026-08-06)
 
-Under `bypassPermissions`, component desks will never prompt either — so after the 2026-07-31 change, escalation is even less reachable than before.
+There was a real deadlock here: with `bypassPermissions` set, desks never
+prompted at all, so the escalation rail could never fire. The three-step plan
+this section used to carry (curate the list → switch to manual prompting →
+raise the window) was **overtaken by a simpler decision**: bypass was dropped
+everywhere, the allow-list was widened to bare shells, and only `.env` reads
+and `AskUserQuestion` are denied. Anything genuinely unlisted still escalates
+to Discord through the hook; everything routine simply runs.
 
-**The fix is three parts, in this order:**
-1. **Curate the orchestrator's allow list** so routine work never asks.
-2. **Then** give it `--permission-mode manual` so real prompts happen and the hook can intercept.
-3. **Then** raise the window well past 120 s (and the hook `timeout` with it).
-
-Doing (2) before (1) would escalate every unlisted command and flood `#alerts`.
+So the rail works, and the brake moved from the config into the model — which
+is the posture at the top of this file.
 
 ## What agents cannot do here — and the hole in it (corrected 2026-08-03)
 

@@ -1,6 +1,6 @@
 # Reliability plan — make the system enforce what the agent currently remembers
 
-**Status:** proposed 2026-07-31, awaiting go. Nothing here is built yet.
+**Status: SUPERSEDED 2026-08-01 by the run model** ([ARCHITECTURE.md](ARCHITECTURE.md) §3.4) — kept as the incident record, not as a plan. R1–R3 proposed fixes for session-side watchers, claim heartbeats and `spawn_session()`; all three subjects were **deleted** that evening rather than fixed, which is why none of the code named below exists (there is no watcher to re-arm, the claim carries no heartbeat, and the run model's choke point is `ensure_runner`). What survives and still governs: the doctrine at the end — *documentation is not a mechanism*, *a green suite is not evidence*, verify the thing itself and never a proxy.
 **Goal (user):** *"un asistente personal para programación mucho mejor que OpenClaw o Hermes"* —
 achieved by **improving what exists**, not by adding features.
 

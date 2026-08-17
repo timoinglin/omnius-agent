@@ -1,6 +1,6 @@
 # Architecture — Claude Multi-Agent Orchestrator
 
-> Single source of truth for the system design. Status: **Phase 2 — Discord layer built** (watchdog + helper CLI + file bus + `/omnius` + whisper; live test pending). Orchestrator verbs = Phase 3, designed only. Human intro: [../README.md](../README.md) · Agent rules: [../CLAUDE.md](../CLAUDE.md)
+> Single source of truth for the system design. **Status: live.** The Discord layer, the run model, the orchestrator verbs, delegation with its gate and budgets, observability (`!trace`, the self-verifying update) and the web/2FA path are all built and proven on real machines — the roadmap in §8 and the dated notes throughout say what landed when. The one designed-not-built item is the demolition derby ([OBSERVABILITY.md](OBSERVABILITY.md) O3). **Read the dates:** paragraphs superseded by the 2026-08-01 run model are marked where they stand rather than deleted, because the reasoning is still worth having. Human intro: [../README.md](../README.md) · Agent rules: [../CLAUDE.md](../CLAUDE.md)
 
 ## 1. Vision
 

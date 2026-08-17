@@ -188,7 +188,7 @@ calls for it — you can also address the desks directly:
 
 | Ask | What happens |
 |---|---|
-| Forward an **email** task (`#email-<account>` channels) | IMAP/SMTP and Microsoft Graph behind one contract. **Outgoing mail is drafted and shown to you first — nothing sends without your word** |
+| Forward an **email** task (one channel per account, named after the address — `you@example.com` → `#you-example`) | IMAP/SMTP and Microsoft Graph behind one contract. **Mail you asked for is sent and reported back** (a standing permission covers `mail.py send`; every send is audited to `state\logs\email.log`). **Mail the desk thought of itself — a new recipient, an unrequested follow-up, anything bulk — is drafted and shown to you first** |
 | Drop a **recording** in `#transcribe` | Detached zero-token job: transcript + key frames + summary land back in the channel |
 | *"read this PDF / invoice"* | Local text extraction; OCR fallback for scans (Mistral key); invoices come back as fields, checksum-validated |
 | *"watch this video"* / `/watch <url>` | Download, frames, transcript (captions or local Whisper) — then ask it anything about the content |

@@ -7,7 +7,7 @@
     "permissionMode": null,
     "resume": "transcript",
     "window": "terminal",
-    "_why_window": "Owner's model, 2026-08-03: a Discord message OPENS that desk's bridge window and it stays open, because he must be as efficient from Discord as at the keyboard - headless costs a cold boot per message (~30-45s vs ~15s warm). Boot opens NOTHING but the watchdog and daybook; at the desk he starts `claude` himself. If mail arrives for a desk where he left a native window open, the watchdog closes it and takes over (idle only - a turn in flight is never killed)."
+    "_why_window": "Owner's model, 2026-08-03: a Discord message OPENS that desk's bridge window and it stays open, because he must be as efficient from Discord as at the keyboard - headless costs a cold boot per message (~30-45s vs ~15s warm). Boot opens NOTHING but the watchdog and daybook; at the desk he starts `claude` himself. If mail arrives for a desk where you left your own window open, the watchdog does NOT take it: it ASKS in that channel, once per message you send, and closes the window only after you reply `ok`. Silence leaves it alone and the mail keeps waiting - answering at the desk with /omnius clears it too. (Auto-closing an idle window was the 2026-08-03 policy and was retired the same day: it took a desk its owner was working in.)"
   },
   "roles": {
     "orchestrator": {

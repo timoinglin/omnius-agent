@@ -58,9 +58,14 @@ design removed, and it trains them to wave everything through.
 
 Public / scheduled / scrapeable pages → **Playwright** (`tools\playwright\`),
 headless and cookie-less. Anything behind a login → **the Claude Chrome
-extension**, which drives their real signed-in browser. **Never script a login
-to dodge the split** — that is a password in a file. Needing a logged-in page
-headlessly is a reason to ask them.
+extension**, which drives their real signed-in browser — first choice, because
+nothing is scripted at all. A site they use constantly and cannot sign into by
+hand each time → **`weblogin`**: registered in `config\websites.ini`, signed in
+by `tools\playwright\weblogin.py <site>` (a TOOL, reading `.env` — which you are
+denied — and saving a session), with any 6-digit code relayed through Discord.
+
+**You never hold a password.** Not from a config file, not typed by you, not
+asked for in a channel. That is the rule all three doors obey (`docs\WEB.md`).
 
 ## Decisions that are theirs
 

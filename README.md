@@ -155,7 +155,7 @@ The brief plants those tensions on purpose. Whether the builders handled them �
 
 - **Windows 10/11** — paths, ConPTY and Task Scheduler are load-bearing; this is Windows-only.
 - **A Claude subscription** — the CLI logs in with it. No API key.
-- **A Discord server of your own** plus a bot token (guided; the bot answers only you and needs four scoped permissions, not admin).
+- **A Discord server of your own** plus a bot token (guided; the bot answers only you and needs eight scoped permissions — `permissions=126032` — not admin).
 - Everything else the installer brings itself — via winget when you have it, **straight from the official sources when you don't** (Git, Python, Node, ffmpeg, the Claude CLI), including the repair a clean Windows usually needs (the MSVC runtime that C++ wheels want). Optional extras stay off until you add a key: OCR for scans (Mistral), email passwords, image/video/speech providers. Playwright's ~150 MB browser is asked about, not assumed.
 
 ## Security posture, in one paragraph
@@ -164,7 +164,7 @@ Desks run with a wide allow-list and **no permission prompts** — a prompt on a
 
 ## Reading order
 
-[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/WEB.md](docs/WEB.md) — driving websites: the site registry, scripted login, 2FA over Discord · [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — the next phase, spec'd before its code · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ automated checks that gate every release, **plus** the live-machine validation the suite can't substitute for (documented where it happened, including what only real machines caught)
+[GETTING-STARTED.md](GETTING-STARTED.md) — written for someone who has never seen it · **[docs/GUIDE.md](docs/GUIDE.md) — the owner's manual: everything it does and how to ask for it** · [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — why it's built this way · [docs/DISCORD.md](docs/DISCORD.md) — the server blueprint · [docs/DELEGATION.md](docs/DELEGATION.md) — the delegation/loops/slash design, built and live-proven · [docs/WEB.md](docs/WEB.md) — driving websites: the site registry, scripted login, 2FA over Discord · [docs/OBSERVABILITY.md](docs/OBSERVABILITY.md) — `!trace` and the self-verifying update, built; the demolition derby still on paper · [docs/PERMISSIONS.md](docs/PERMISSIONS.md) · [docs/RELIABILITY.md](docs/RELIABILITY.md) · [docs/TESTING.md](docs/TESTING.md) — the 1,300+ automated checks that gate every release, **plus** the live-machine validation the suite can't substitute for (documented where it happened, including what only real machines caught)
 
 There is no roadmap: this repo ships what exists, specs land in `docs\` before their code does, and the [commit log](https://github.com/timoinglin/omnius-agent/commits/main) is the honest history of both.
 

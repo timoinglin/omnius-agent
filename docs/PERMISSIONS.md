@@ -1,6 +1,27 @@
 # Permission profiles — ACTIVE
 
-> **Status: activated 2026-07-24 with the user's sign-off** (option (a): scoped autonomy for projects *and* the orchestrator, destructive gated). Live in `templates\project\.claude\settings.json` (inherited by every new project, copied to `projects\demo-app`) and root `.claude\settings.json`. The blocks below are the source of truth for what was enabled and why.
+> **Status: the curated allow-list below was REVERSED on 2026-08-06 — read this first.**
+> What ships today, in every desk's `.claude\settings.json`, is the opposite shape: **bare
+> `Bash` and `PowerShell` are allowed**, and the deny list is exactly two entries — reading
+> `.env`, and `AskUserQuestion`. None of the fine-grained denies written below (`git push`,
+> `rm -rf`, `npm publish`, `curl`, `iwr`, `taskkill`) exist in any shipped file.
+>
+> **Why it was reversed:** the narrow list did not fail safe, it failed *silent*. Every
+> unlisted command became a dialog on a screen nobody was watching, and desks froze mid-task
+> — 40 minutes each on 2026-08-02, 2.5 hours on 2026-08-04. His instruction: *"Over discord
+> make everything auto allow, no allow questions, no matter where … what you can do is that
+> you as LLM ask twice."* So the brake moved from the config into the model: routine work
+> never asks, and anything irreversible or wide-blast is asked about **in words** first
+> (the list is in `memory\shared\USER.md` and the `/omnius` skill). `AskUserQuestion` is
+> denied because it draws a menu in a terminal nobody is sitting at.
+>
+> `python tools\discord\desk_audit.py` verifies that posture on every desk.
+> The staged profiles in `docs\profiles\*.json` are a **historical variant** of the 2026-07-24
+> proposal and no longer match what ships.
+>
+> Everything below is kept because the *reasoning* still matters — especially "unlisted ≠
+> denied" and the escalation design, both of which survived the reversal intact. Read it as
+> the record of how the dial got where it is, not as configuration to copy.
 
 ## Why this exists
 
@@ -14,7 +35,9 @@ During the 2026-07-23 shakedown the demo sessions ran with `--permission-mode by
 2. **Scoped autonomy (proposed)** — pre-approve safe, in-scope work; keep destructive/global actions gated. This is the recommended remote setting.
 3. **bypassPermissions** — no checks. Only for throwaway sandboxes, never a real project or the orchestrator.
 
-## Proposed — project session (`templates\project\.claude\settings.json`, inherited by every component)
+## Proposed 2026-07-24, superseded 2026-08-06 — project session
+
+*(Historical. What ships is bare `Bash`/`PowerShell` with only `.env` and `AskUserQuestion` denied — see the banner.)*
 
 ```json
 {
@@ -35,7 +58,7 @@ During the 2026-07-23 shakedown the demo sessions ran with `--permission-mode by
 
 Rationale: a component session can freely read/edit/write **inside its own folder** (cwd scope is already enforced by role, root CLAUDE.md §4), run its own tooling and tests, and commit to its own repo — but cannot push, delete recklessly, publish, or exfiltrate over the network without asking. Tune the stack-specific lines per project.
 
-## Proposed — orchestrator (root `.claude\settings.json`, add to the existing `.env` deny)
+## Proposed 2026-07-24, superseded 2026-08-06 — orchestrator
 
 The orchestrator additionally manages the fleet. Suggested extra allows: the Discord helper CLI and the launchers — e.g. `Bash(python tools\discord\api.py:*)`, `Bash(python tools\discord\inbox_watch.py:*)`. Keep denied: `git push`, project **deletion**, `taskkill` of anything but via the watchdog's own `!kill`, and anything touching another machine. Fleet-destructive verbs (`/archive-project`, delete) stay confirmation-gated regardless (ARCHITECTURE §7).
 
