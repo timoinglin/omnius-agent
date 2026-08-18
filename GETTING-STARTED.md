@@ -352,6 +352,7 @@ Two things worth knowing:
 | **Mistral** | PDFs with real text still read fine. | Scanned documents and photographed invoices become text, with the fields pulled out. |
 | **Email** | — | Reading, searching and drafting mail from your phone. |
 | **Google / other** | — | Image generation, video generation, speech. |
+| **Telegram** | — | Invite someone who has **no Discord account** into one of your channels: they write to a bot, a desk answers, the answer reaches their phone. Two lines in `config\telegram.ini` — [tools/telegram/README.md](tools/telegram/README.md). |
 
 Check what is currently on: the **Settings** page in the web app, or type
 **`!config`** in Discord.

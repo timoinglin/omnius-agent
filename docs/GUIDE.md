@@ -202,8 +202,10 @@ calls for it — you can also address the desks directly:
 Two ways, for two different people.
 
 **They have a Discord account** → `config\guests.ini`. They join your server and
-you list them against an explicit set of channels. Mail only: control verbs,
-permission answers and takeover answers stay yours.
+you list them against an explicit set of channels — **as many as you like**,
+space-separated. Mail only: control verbs, permission answers and takeover
+answers stay yours. This is the easier option whenever they will accept a
+Discord account.
 
 **They don't, and shouldn't need one** → `config\telegram.ini`. They write to a
 Telegram bot; their message lands in **one** channel of yours as
@@ -214,7 +216,7 @@ phone. Text, photos and voice notes (transcribed on the way in).
 [chat.antonio]
 telegram_username = antonio_h        # their @handle
 discord_channel   = 141592653589793  # exactly one
-visibility        = own              # own = their messages + Omnius's replies
+visibility        = own              # own = their messages + the answers to them
                                      # all = everything in that channel
 ```
 
@@ -228,10 +230,15 @@ run**: the watchdog notices the config within a minute, starts the bridge, and
 restarts it if it dies or goes quiet.
 
 One bot covers everyone — one `[chat.…]` block per person, naming the channel
-they reach. Two people can share a channel, but then both need `all`: `own` is
-refused there, because a reply to one of them is an ordinary message to the
-other and the promise could not be kept. The same person listed twice is refused
-too, rather than silently bound to whichever block sorted first.
+they reach. **One person reaches exactly one channel**, and that is Telegram's
+doing rather than a rule: their whole side is a single chat with the bot, so a
+second channel would make every message they send ambiguous. Name someone twice
+and only the first block is kept, with the duplicate reported in `!config`.
+Somebody who needs several channels wants a Discord guest.
+
+Two people **can** share one channel, but then both need `all`: `own` is refused
+there, because a reply to one of them is an ordinary message to the other and
+the promise could not be kept.
 
 **They have to press Start first.** A Telegram bot cannot open a conversation:
 send them the bot link and they tap Start. If they are in the config already,
@@ -242,8 +249,9 @@ block to paste.
 What they can do: write, and be answered. What they cannot: reach any other
 channel, use any `!verb` or `/skill`, or answer a permission, takeover, gate or
 2FA prompt. Those are owner-only in the watchdog itself, so no setting here can
-loosen them. An id you haven't listed is ignored **in silence** — and logged, so
-adding them is a copy-paste. Full contract:
+loosen them. And under `own` they never see the fleet's own traffic in that
+channel — permission asks, 2FA prompts, delegation mirrors — only the answers to
+what they themselves said. Full contract:
 [tools/telegram/README.md](../tools/telegram/README.md).
 
 ## 13. Memory: what it knows and how to correct it

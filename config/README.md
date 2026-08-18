@@ -32,6 +32,20 @@ machines while credentials stay in one place.
 misspelled is *reported* and then ignored, and the default is used. Ask
 `!config` in Discord to see what is actually in effect and why.
 
+**4 · Never indent a setting.** In INI, a line starting with a space *continues
+the value above it* — so
+
+```ini
+visibility = own
+ media_out = 0      ← one stray space
+```
+
+is a single setting whose value is `own\nmedia_out = 0`, not two. That cost a
+real invite on 2026-08-19: the value became invalid, the entry was refused, and
+nothing in the file looked wrong. A continuation shaped like `key = value` is
+now put back where it belongs **and named in `!config`** — but keep settings
+flush left and it never arises.
+
 ## What is in here
 
 | File | What it configures |
