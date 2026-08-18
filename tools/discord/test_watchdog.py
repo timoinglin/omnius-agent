@@ -667,6 +667,13 @@ try:
           "points at a different workspace/script" in _auto)
     check("both long-running services get a task, not just the watchdog",
           "daybook\\app.py" in _auto)
+    # A third service, but conditional: registering a Telegram task on a machine
+    # where nobody is invited would report a permanently unhealthy service that
+    # is behaving exactly as designed.
+    check("the telegram bridge gets a task only once someone is invited",
+          "tools\\telegram\\bridge.py" in _auto and "config\\telegram.ini" in _auto)
+    check("...and its liveness is asked of the service, not of the scheduler",
+          "'file:*'" in _auto and "state\\telegram\\beacon.json" in _auto)
     # With a 1-minute self-heal trigger and IgnoreNew, "the operator refused the
     # request" (0x800710E0) is the HEALTHY steady state, reported every minute.
     # Left as a raw error code it makes every status check look half-broken.

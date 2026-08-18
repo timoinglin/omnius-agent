@@ -197,7 +197,40 @@ calls for it — you can also address the desks directly:
 | *"render a video of…"* | Remotion project scaffold — programmatic video |
 | `!screen`, `!desktop <verb>` | See and drive the desktop remotely — the phone-to-PC escape hatch |
 
-## 12. Memory: what it knows and how to correct it
+## 12. Letting someone in — Discord guests, or Telegram
+
+Two ways, for two different people.
+
+**They have a Discord account** → `config\guests.ini`. They join your server and
+you list them against an explicit set of channels. Mail only: control verbs,
+permission answers and takeover answers stay yours.
+
+**They don't, and shouldn't need one** → `config\telegram.ini`. They write to a
+Telegram bot; their message lands in **one** channel of yours as
+`**antonio** (telegram): …`; the desk answers; the answer arrives back on their
+phone. Text, photos and voice notes (transcribed on the way in).
+
+```ini
+[chat.antonio]
+telegram_user_id = 123456789        # theirs, from @userinfobot
+discord_channel  = 141592653589793  # exactly one
+desk             = my-project.web
+visibility       = own              # own = their messages + Omnius's replies
+                                    # all = everything in that channel
+```
+
+Then `TELEGRAM_BOT_TOKEN=` in `.env` (from **@BotFather**), and
+`powershell -File tools\discord\autostart.ps1 -Action repair` to register the
+service — it only appears once the config exists.
+
+What they can do: write, and be answered. What they cannot: reach any other
+channel, use any `!verb` or `/skill`, or answer a permission, takeover, gate or
+2FA prompt. Those are owner-only in the watchdog itself, so no setting here can
+loosen them. An id you haven't listed is ignored **in silence** — and logged, so
+adding them is a copy-paste. Full contract:
+[tools/telegram/README.md](../tools/telegram/README.md).
+
+## 13. Memory: what it knows and how to correct it
 
 - **Shared layer** (`memory\shared\`) — read by every desk: who you are, how
   you like to work. Say *"remember: I prefer X"* to any desk and it lands here
@@ -212,7 +245,7 @@ calls for it — you can also address the desks directly:
 - Your instance's memory is **yours**: it travels in backups, never in this
   repo, and a fresh install starts from a clean seed.
 
-## 13. Machine ops
+## 14. Machine ops
 
 - **Start / stop:** the desktop icon (or `start-omnius.bat`) brings everything
   up; `stop-omnius.bat` genuinely stops it (`-All` closes desks too). Services
@@ -239,7 +272,7 @@ calls for it — you can also address the desks directly:
   release from pushed green `main` — suites, leak audit and a shipped-installer
   probe gate it; it refuses rather than ships doubt.
 
-## 14. Omnius improves Omnius
+## 15. Omnius improves Omnius
 
 Friction is a work order: *"Omnius, add a `!weather` command to yourself"*,
 *"make the briefing shorter"*, *"stop asking about X"*. The orchestrator edits
@@ -247,7 +280,7 @@ its own code or skills, runs the 1,300+-check suite, and commits — every
 self-improvement is a reviewable commit that reaches every future instance.
 `!reload` puts watchdog changes live.
 
-## 15. When something looks wrong
+## 16. When something looks wrong
 
 Before blaming a desk, you can **prove the whole fleet is sane** in one command — it checks, per desk, that no permission prompt can hang it, that its hooks are wired to this machine, that escalation to Discord is live, and that the watchdog's self-recovery is in place:
 

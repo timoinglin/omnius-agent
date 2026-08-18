@@ -82,7 +82,8 @@ Write-Host "[OK] main @ $short, clean and pushed" -ForegroundColor Green
 # seconds; the others are smaller. TESTING.md calls these the release gate, and
 # a gate you can wave through is not a gate.
 $suites = @('tools\discord\test_watchdog.py', 'daybook\test_storage.py',
-            'tools\email\test_email.py', 'tools\documents\test_documents.py')
+            'tools\email\test_email.py', 'tools\documents\test_documents.py',
+            'tools\telegram\test_telegram.py')
 if ($SkipTests) {
   Write-Host '[! ] -SkipTests: suites NOT run - the release body will say so' -ForegroundColor Yellow
 } else {

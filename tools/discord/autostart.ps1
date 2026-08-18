@@ -66,6 +66,18 @@ $Services = @(
      Live   = 'port:5111' }
 )
 
+# The Telegram bridge is a service ONLY once somebody has been invited
+# (config\telegram.ini exists). Registering it unconditionally would put a task
+# on every machine for a feature nobody uses, and -Action status would report a
+# permanently unhealthy service that is behaving exactly as intended. Write the
+# config, run `-Action repair`, and it appears.
+if (Test-Path (Join-Path $Root 'config\telegram.ini')) {
+  $Services += @{ Name   = 'Omnius Telegram'
+                  Script = 'tools\telegram\bridge.py'
+                  Desc   = 'Omnius Telegram bridge: relays one invited person between Telegram and one Discord channel.'
+                  Live   = 'file:state\telegram\beacon.json:180' }
+}
+
 # The desk is NOT a service. It is a window the owner sits in - warm Claude
 # that Discord can also type into (tools\bridge\desk_bridge.py, 2026-08-02).
 # So it gets its own registration: at-logon only, no 1-minute self-heal, and
@@ -215,6 +227,21 @@ function Test-Live($svc) {
         return @{ ok = $false
                   note = "beacon ${age}s old but the service cannot find the claude CLI - NO desk can start. Install Claude Code, then restart this task (a running service keeps the PATH it was born with), or set [fleet] claude_path in config\omnius.ini" }
       }
+      return @{ ok = $true; note = "beacon ${age}s old" }
+    }
+    'file:*' {
+      # file:<relative path>:<max age in seconds> - the generic form of the
+      # beacon check, for services that stamp their own proof of life. Running
+      # is not working: the bridge can be up with a revoked token forever.
+      $parts = $svc.Live.Split(':')
+      $f = Join-Path $Root $parts[1]
+      $maxAge = if ($parts.Count -gt 2) { [int]$parts[2] } else { 180 }
+      if (-not (Test-Path $f)) { return @{ ok = $false; note = 'no beacon yet' } }
+      try {
+        $j = Get-Content $f -Raw | ConvertFrom-Json
+        $age = [int]((Get-Date).ToUniversalTime() - ([datetime]$j.at).ToUniversalTime()).TotalSeconds
+      } catch { return @{ ok = $false; note = 'beacon unreadable' } }
+      if ($age -ge $maxAge) { return @{ ok = $false; note = "beacon ${age}s old" } }
       return @{ ok = $true; note = "beacon ${age}s old" }
     }
     'port:*' {

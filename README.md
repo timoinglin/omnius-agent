@@ -110,6 +110,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 | 📄 **documents** | PDF text locally, OCR fallback for scans, structured extraction (invoices) with checksum validation |
 | 🌐 **playwright** | Headless browsing + a polite parallel crawler, and `weblogin` for sites you register: the **tool** holds the password (from `.env`, which desks may not read) and hands the desk a signed-in session — **a 6-digit 2FA code is asked for in your channel** and used once. Or skip scripting entirely: sign in yourself and let desks drive your real browser through the Chrome extension |
 | 🎬 **watch** | Watch a video (URL or file) and answer questions about it — frames + transcript, captions or local Whisper |
+| 💬 **telegram** | Invite someone who has **no Discord account** into exactly **one** channel: they write to a bot, their message appears attributed, a desk answers, the answer arrives back. Text, photos and voice notes (transcribed on arrival). They can reach no other channel and cannot use a single control verb — that is the watchdog's rule, not this bridge's |
 | 📓 **daybook** | Notes & tasks app: plain markdown files are the data, stdlib-only server, web UI at `localhost:5111`. Its Today page replays **any day** — your notes plus every commit and desk that worked that day |
 
 **Ops that don't need you**

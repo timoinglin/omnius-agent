@@ -495,6 +495,87 @@ def slash_skills():
     return out
 
 
+TELEGRAM_VISIBILITY = ("all", "own")
+
+
+def telegram_chats():
+    """-> {label: {...}} per `[chat.<label>]` in config\\telegram.ini.
+
+    Invites someone with NO Discord account into exactly ONE channel, through a
+    Telegram bot (tools\\telegram\\bridge.py, 2026-08-18). The label is what
+    everyone sees: the Discord post, the envelope's `from`, the transcript and
+    !trace. Desks need no new rule for these people - any `from` that is not a
+    fleet tag is already treated as a guest (watchdog.is_human_sender), which
+    is why this ships without touching guests.ini: THAT file gates Discord
+    accounts, and an invited Telegram user has none.
+
+    FAILS CLOSED, the same six ways guests() does, because it is the same kind
+    of list and a generous reading of a typo is how one becomes a hole:
+
+    - no `telegram_user_id`, or one that is not digits -> ignored. A half-pasted
+      id must never widen into "anyone".
+    - no `discord_channel` or no `desk` -> ignored. A person with nowhere to
+      write is not a permission.
+    - a label that collides with a fleet sender, looks like a desk id, or ends
+      in -job -> ignored, so an invited stranger can never arrive wearing one of
+      the fleet's own `from` values.
+    - an unknown `visibility` -> ignored rather than guessed: the choice decides
+      whether the owner's other messages in that channel are shown to them.
+    - anything unreadable -> {} (rule 3: config never raises).
+
+    Every rejection is reported through problems(), never swallowed.
+    """
+    out = {}
+    for label, body in sorted(group(load("telegram"), "chat").items()):
+        key = str(label).strip().lower()
+        body = body or {}
+        where = f"config\\telegram.ini [chat.{label}]"
+        if key in RESERVED_SENDERS or "." in key or key.endswith("-job") \
+                or key in ("orchestrator", "daybook"):
+            _note(f"{where} uses a name the fleet reserves for itself - ignored; "
+                  f"pick a plain name (no dot, no -job, not orchestrator/daybook)")
+            continue
+        uid = str(body.get("telegram_user_id") or "").strip()
+        if not uid.isdigit():
+            _note(f"{where} telegram_user_id '{uid or '(missing)'}' is not a number "
+                  f"- entry ignored (nobody is let in by a typo)")
+            continue
+        channel = str(body.get("discord_channel") or "").strip().lstrip("#")
+        desk = str(body.get("desk") or "").strip().lower()
+        if not channel or not desk:
+            _note(f"{where} needs both discord_channel and desk - entry ignored")
+            continue
+        vis = str(body.get("visibility") or "own").strip().lower()
+        if vis not in TELEGRAM_VISIBILITY:
+            _note(f"{where} visibility '{vis}' is not one of "
+                  f"{'/'.join(TELEGRAM_VISIBILITY)} - entry ignored rather than guessed "
+                  f"(it decides whether your other messages are shown to them)")
+            continue
+        out[key] = {"telegram_user_id": uid, "discord_channel": channel, "desk": desk,
+                    "visibility": vis,
+                    "media_out": str(body.get("media_out") or "0").strip().lower()
+                    in TRUE,
+                    "name": str(body.get("name") or label).strip()}
+    return out
+
+
+def telegram_status(env=None):
+    """-> [(label, telegram_user_id, channel, desk, visibility, token state)].
+
+    Discovered from config like guests and mail accounts, so it cannot live in
+    SPEC and needs its own reporter for !config. The token is only ever
+    described as set / NOT SET.
+    """
+    env = load_env() if env is None else env
+    cfg = load("telegram")
+    env_key = str((cfg.get("telegram") or {}).get("token_env")
+                  or "TELEGRAM_BOT_TOKEN").strip()
+    state = "set" if env_value(env_key, env) else "NOT SET"
+    return [(label, b["telegram_user_id"], b["discord_channel"], b["desk"],
+             b["visibility"], f"{env_key}: {state}")
+            for label, b in sorted(telegram_chats().items())]
+
+
 def guest_status():
     """-> list of (label, name, user_id, channels) for every USABLE guest.
 
@@ -680,6 +761,14 @@ def describe():
         for site, url, user, env_key, state in sites:
             who = f" `{user}`" if user else ""
             lines.append(f"`{site}`{who} — {url} · {env_key or 'no key'}: {state}")
+    # Only shown once someone is actually invited - an instance with no bridge
+    # should see nothing about Telegram.
+    tg = telegram_status()
+    if tg:
+        lines.append("**telegram** (invited people; the bot token lives in `.env`)")
+        for label, uid, channel, desk, vis, tok in tg:
+            lines.append(f"`{label}` — tg `{uid}` → `#{channel}` · desk `{desk}` · "
+                         f"sees `{vis}` · {tok}")
     passes = sorted(slash_skills())
     lines.append("**slash pass-through** (`config\\skills.ini`, owner mail only): "
                  + (", ".join(f"`/{s}`" for s in passes) if passes else "(none - closed)"))

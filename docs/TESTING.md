@@ -9,11 +9,12 @@ python tools\discord\test_watchdog.py      # 1,400+ checks — watchdog, bus, de
 python daybook\test_storage.py             # 141 checks — daybook storage + API
 python tools\email\test_email.py           # 68 checks — IMAP/SMTP + Graph contract
 python tools\documents\test_documents.py   # 39 checks — PDF text, OCR fallback, schema validation
+python tools\telegram\test_telegram.py     # 52 checks — the invite list, both directions, the loop guard
 python tools\discord\desk_audit.py         # every desk: no stalling prompts, hooks wired, self-recovery
 powershell -File install.ps1 -CheckOnly    # environment doctor (report-only)
 ```
 
-**All four suites gate every release** — `release.ps1` runs exactly this list
+**All five suites gate every release** — `release.ps1` runs exactly this list
 before it will cut a zip, so a reader who runs only the first two gets a
 surprise at release time. Counts drift upward; the release is the enforcement,
 this table is the map.

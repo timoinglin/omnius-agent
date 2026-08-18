@@ -43,6 +43,7 @@ misspelled is *reported* and then ignored, and the default is used. Ask
 | `skills.ini` | slash commands your Discord mail may fire on a desk (see `skills.example.ini`) — closed until you fill it |
 | `websites.ini` | sites your desks log into: url, user, and the **name** of the `.env` key holding the password (see `websites.example.ini` and `docs\WEB.md`) — never the password itself |
 | `email.ini` | mail accounts (see `email.example.ini`) — IMAP/SMTP **and** Microsoft Graph; one Discord channel per account |
+| `telegram.ini` | people with **no Discord account** invited into exactly one channel through a Telegram bot (see `telegram.example.ini` and `tools\telegram\README.md`) — no file, nobody invited |
 
 Files ending in `.example.ini` are templates that ship with Omnius. Copy one to
 the name without `.example` and edit it. Your real files stay out of git, so
