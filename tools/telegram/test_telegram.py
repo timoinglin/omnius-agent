@@ -271,7 +271,7 @@ check("it never touches the watchdog's last_ids.json",
 
 api.history["900000000000000001"] = [
     {"id": "600000000000000001", "content": "owner private note",
-     "author": {"id": "111", "username": "kneuma", "bot": False}, "attachments": []},
+     "author": {"id": "111", "username": "the-owner", "bot": False}, "attachments": []},
     {"id": "600000000000000002", "content": "here you go",
      "author": {"id": "222", "username": "omnius", "bot": True},
      "attachments": [{"filename": "report.pdf", "size": 10, "url": "http://x/y"}]},
