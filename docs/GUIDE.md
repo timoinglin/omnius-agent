@@ -212,16 +212,32 @@ phone. Text, photos and voice notes (transcribed on the way in).
 
 ```ini
 [chat.antonio]
-telegram_user_id = 123456789        # theirs, from @userinfobot
-discord_channel  = 141592653589793  # exactly one
-desk             = my-project.web
-visibility       = own              # own = their messages + Omnius's replies
-                                    # all = everything in that channel
+telegram_username = antonio_h        # their @handle
+discord_channel   = 141592653589793  # exactly one
+visibility        = own              # own = their messages + Omnius's replies
+                                     # all = everything in that channel
 ```
 
-Then `TELEGRAM_BOT_TOKEN=` in `.env` (from **@BotFather**), and
-`powershell -File tools\discord\autostart.ps1 -Action repair` to register the
-service — it only appears once the config exists.
+Two lines and a choice. **You don't name a desk** — the channel already has one
+(`#web` in `my-project` *is* the `my-project.web` session), and their message
+follows the same map yours does. Add `desk = …` only to override that, or for a
+channel the fleet maps to nothing.
+
+Then `TELEGRAM_BOT_TOKEN=` in `.env` (from **@BotFather**). **Nothing else to
+run**: the watchdog notices the config within a minute, starts the bridge, and
+restarts it if it dies or goes quiet.
+
+One bot covers everyone — one `[chat.…]` block per person, naming the channel
+they reach. Two people can share a channel, but then both need `all`: `own` is
+refused there, because a reply to one of them is an ordinary message to the
+other and the promise could not be kept. The same person listed twice is refused
+too, rather than silently bound to whichever block sorted first.
+
+**They have to press Start first.** A Telegram bot cannot open a conversation:
+send them the bot link and they tap Start. If they are in the config already,
+Omnius answers *"Connected."* and says so in their channel. If they are not,
+they get silence — and **you** get a line in `#alerts` with their id and the
+block to paste.
 
 What they can do: write, and be answered. What they cannot: reach any other
 channel, use any `!verb` or `/skill`, or answer a permission, takeover, gate or

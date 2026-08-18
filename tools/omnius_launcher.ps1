@@ -37,12 +37,9 @@ $services = @(
     @{ Task = 'Omnius Watchdog'; Script = 'tools\discord\watchdog.py'; Match = 'watchdog.py' },
     @{ Task = 'Omnius Daybook';  Script = 'daybook\app.py';            Match = 'app.py' }
 )
-# Only once someone is actually invited (config\telegram.ini) - same rule as
-# autostart.ps1, and for the same reason: no process for a feature nobody uses.
-if (Test-Path (Join-Path $root 'config\telegram.ini')) {
-    # Match carries the folder: 'bridge.py' alone also matches desk_bridge.py.
-    $services += @{ Task = 'Omnius Telegram'; Script = 'tools\telegram\bridge.py'; Match = 'telegram\bridge.py' }
-}
+# The telegram bridge is NOT here on purpose: the watchdog starts it (and
+# restarts it) whenever config\telegram.ini names somebody, so starting the
+# watchdog above is already enough. See ensure_telegram_bridge.
 foreach ($svc in $services) {
     $t = Get-ScheduledTask -TaskName $svc.Task -ErrorAction SilentlyContinue
     if ($null -ne $t) {

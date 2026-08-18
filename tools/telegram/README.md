@@ -1,14 +1,14 @@
-# tools\telegram — invite one person into one channel
+# tools\telegram — invite people who have no Discord account
 
 Someone who has no Discord account — a client, a colleague — writes to a Telegram bot.
 Their message appears in **one** of your channels, attributed to them. The desk answers as
 it answers anyone. The answer arrives back in Telegram.
 
-That is the whole feature. They get no Discord account, no desk, no control verbs, and no
-second channel.
+That is the whole feature. One bot serves everyone you invite; each of them reaches exactly
+one channel, and gets no Discord account, no desk and no control verbs.
 
 ```powershell
-python tools\telegram\bridge.py            # run it (this is what the service runs)
+python tools\telegram\bridge.py            # run it (the watchdog does this for you)
 python tools\telegram\bridge.py --check    # who is invited, is the token set
 python tools\telegram\bridge.py --once     # one pass, then exit
 ```
@@ -50,21 +50,42 @@ nobody is invited.
 
 ```ini
 [telegram]
-token_env = TELEGRAM_BOT_TOKEN     # the .env KEY. The token is never in config.
+token_env = TELEGRAM_BOT_TOKEN      # the .env KEY. The token is never in config.
 
 [chat.antonio]
-telegram_user_id = 123456789       # theirs, from @userinfobot
-discord_channel  = 141592653589793 # id is safest; #name works too
-desk             = my-project.web  # who answers them
-visibility       = own             # own | all  (default: own)
-media_out        = 0               # 1 to send real files back, not just names
+telegram_username = antonio_h       # their @handle - or telegram_user_id = 123456789
+discord_channel   = 141592653589793 # id is safest; #name works too
+visibility        = own             # own | all  (default: own)
+media_out         = 0               # 1 to send real files back, not just names
+# desk = my-project.web             # only to OVERRIDE the channel's own desk
 ```
+
+**Invite by handle, not by id.** Nobody knows their own Telegram user id, and a bot cannot look
+one up: the Bot API resolves `@name` for public channels and supergroups only, never for a
+private user — an id reaches a bot in a message or not at all. So the bridge takes the handle,
+and **pins the numeric id behind it** the first time that person writes. After that the handle
+is irrelevant: if they change it, or somebody else registers the one they dropped, the invite
+stays with the person who was meant.
+
+If they have no handle, invite nobody and let them write once: an unlisted sender is answered
+with silence, but the **owner** is told in `#alerts` — id, handle, and the config block to
+paste. Reading `state\logs\` to set up an invite was the least friendly step in the system.
+
+**There is no desk to name.** Every channel already belongs to one — `#web` inside the
+`my-project` category *is* the `my-project.web` session — and the bridge resolves it through
+`watchdog.build_map`, the same map every message the owner types goes through (imported, not
+reimplemented: two copies of a mapping is how they drift). `desk =` exists only to override
+that pairing, or for a channel the fleet maps to nothing. A channel that answers to no desk
+relays **nothing** and says so in the log, rather than posting a message that looks handled
+while nothing was ever going to answer it.
 
 `visibility` is the one that deserves a thought:
 
-- **`own`** — they see their own messages and Omnius's replies. Your other traffic in that
-  channel stays yours. This is the default because the safe reading of "invite someone to a
-  channel" is not "give them your history".
+- **`own`** — their own messages, and the desk's answers **to them**: the replies that follow
+  their message until somebody else speaks. Not everything the bot posts — a desk channel also
+  carries permission asks, 2FA prompts and delegation mirrors, and those are fleet business.
+  This is the default, because the safe reading of "invite someone to a channel" is not "give
+  them your history".
 - **`all`** — everything posted there, yours included. A shared room.
 
 Get the token from [@BotFather](https://t.me/botfather), put it in `.env` as
@@ -73,12 +94,14 @@ chats (v1 is one-to-one).
 
 ## Safety, none of it optional
 
-- **The invite list fails closed.** No file, no block, a non-numeric id, a missing channel or
-  desk, an unknown `visibility`, or a label that collides with a fleet sender → that entry is
-  ignored and reported by `!config`. Nobody is ever admitted by a typo.
-- **An unlisted Telegram id is ignored in silence.** No refusal is sent back. Telling a stranger
-  "you may not write here" confirms something is here and draws them a map. The id *is* written
-  to the log, which is how you add someone: have them message the bot, read the id, paste it.
+- **The invite list fails closed.** No file, no block, a malformed id or handle, a missing
+  channel, an unknown `visibility`, a duplicate person, `own` in a shared room, or a label that
+  collides with a fleet sender → that entry is ignored and reported by `!config`. Nobody is
+  ever admitted by a typo.
+- **An unlisted sender is ignored in silence.** No refusal reaches them: telling a stranger
+  "you may not write here" confirms something is here and draws them a map. The *owner* is told
+  in `#alerts` instead — once per id, capped, without quoting their message, and with the
+  handle stripped to `[a-z0-9_]` so nothing in it can mention anyone.
 - **They cannot use control verbs, slash commands, or answer any prompt.** `!status`, `!kill`,
   `/goal`, permission asks, takeover asks, gate answers, 2FA codes — every one of those lives
   inside `if sender == "owner":` in the watchdog. This bridge could not grant them if it tried.
@@ -93,21 +116,39 @@ chats (v1 is one-to-one).
 
 ## What this is NOT (v1)
 
-Not a general multi-messenger abstraction. No Telegram-side commands. No group chats. No more
-than one person per channel, or one channel per person. `media_out` is off, so Discord →
+Not a general multi-messenger abstraction. No Telegram-side commands (beyond `/start`). No
+Telegram group chats. No second channel for one person. `media_out` is off, so Discord →
 Telegram carries text and the *names* of attachments; flip it to `1` for the full round trip.
 
 If a second platform is ever wanted the same file shape works — and only then is a `via:` field
 on outbox replies worth adding.
 
-## Running it
+## How many people, how many bots
 
-`tools\discord\autostart.ps1 -Action repair` registers the bridge as a scheduled task, next to
-the watchdog and the daybook — but **only if `config\telegram.ini` exists**. Nothing is
-registered for a feature nobody has configured.
+**One bot serves everybody.** Add a `[chat.<label>]` block per person, each naming its own
+channel. Nothing else is required — the channel supplies the desk.
+
+**One person reaches one channel.** Named in two blocks, only the first (alphabetically, by
+label) is kept; the other is ignored and reported by `!config`, so a person cannot quietly
+end up in a room you did not mean.
+
+**Two people can share one channel**, but only with `visibility = all` for both. `own` is
+refused there and said out loud, because it cannot be kept: the desk's reply to one of them is
+an ordinary bot message to the other, indistinguishable from a reply to anyone. A privacy
+promise that the code cannot honour is refused rather than quietly broken.
+
+## Running it — nothing to run
+
+The **watchdog starts it**. Write `config\telegram.ini` and within a minute the bridge is up;
+it is restarted if it dies, and restarted if it stops stamping its beacon (alive is not the same
+as working — a revoked token leaves a happy-looking process that relays nothing). There is no
+scheduled task to register: inviting someone would then mean running a command on the machine,
+and this fleet is driven from a phone.
 
 ```powershell
-python tools\discord\autostart.ps1 -Action status   # is it alive
+powershell -File tools\discord\autostart.ps1 -Action status   # reports the bridge too
 ```
 
-The bridge stamps `state\telegram\beacon.json` every pass, which is what the health probe reads.
+It also refuses to run twice. Telegram allows a single `getUpdates` consumer per bot, so a
+second poller would split the mail between them; the bridge takes a pid-validated lock and a
+second one exits quietly rather than fighting.

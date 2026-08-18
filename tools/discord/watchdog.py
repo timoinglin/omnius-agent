@@ -2563,6 +2563,126 @@ def ensure_runners():
             deaf_desk_alarm(box.name)
 
 
+TELEGRAM_BRIDGE = ROOT / "tools" / "telegram" / "bridge.py"
+TELEGRAM_LEASE = WD_STATE / "telegram.json"
+TELEGRAM_BEACON = STATE / "telegram" / "beacon.json"
+TELEGRAM_LOCK = STATE / "telegram" / "lock.json"
+WATCHDOG_STARTED = time.time()   # this boot's anchor; see ensure_telegram_bridge
+TELEGRAM_CHECK_SECONDS = 60      # config written -> live within a minute
+# Longer than the longest thing one pass may legitimately do. A voice note gives
+# whisper up to 600s (bridge.transcribe), and at 300s this killed the bridge
+# mid-transcription - then the same voice note came back on restart, because the
+# Telegram offset had not advanced. A poison pill built from three sane numbers.
+TELEGRAM_STALE_SECONDS = 900
+_telegram_checked = 0.0
+_telegram_spawned = set()        # pids WE started, this watchdog process only
+_telegram_quiet = set()          # foreign bridges already reported once
+
+
+def _read_json(path):
+    """-> parsed json, or None. A torn or missing file is a normal state here."""
+    try:
+        return json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def ensure_telegram_bridge():
+    """Keep tools\\telegram\\bridge.py running while somebody is invited.
+
+    The promise config\\guests.ini already makes - write the file, it is live
+    within a minute - had no equivalent for Telegram: the bridge is a separate
+    PROCESS (a blocking long poll cannot live in this loop), and a separate
+    process meant a scheduled task, and a scheduled task meant running a
+    PowerShell command on the machine. He runs this fleet from his phone. A
+    feature you can only switch on by sitting at the PC is a feature he cannot
+    use, and one more thing every other owner has to be told about.
+
+    So the lifecycle lives here, in the piece that is already always-on and
+    already restarts itself. Start-only by design: if the config disappears the
+    bridge idles by itself (its own rule) and stop-omnius.bat still stops
+    everything under this root - killing a process because a file was deleted is
+    a surprise nobody asked for.
+
+    Duplicates are impossible regardless of who starts it: the bridge takes its
+    own pid-validated lock and exits quietly when another live one holds it.
+    """
+    global _telegram_checked
+    now = time.time()
+    if now - _telegram_checked < TELEGRAM_CHECK_SECONDS:
+        return
+    _telegram_checked = now
+    if not (ocfg.ini_path("telegram").is_file() and TELEGRAM_BRIDGE.is_file()):
+        return                                  # nobody invited: nothing to run
+
+    # THE BRIDGE'S OWN LOCK, not just our lease. A bridge started by hand, or by
+    # a leftover scheduled task from an older install, holds that lock and makes
+    # any child we spawn exit immediately - so supervising by our lease alone
+    # meant spawning a doomed process every 60 seconds, forever, while a
+    # perfectly healthy bridge ran beside it.
+    lock = _read_json(TELEGRAM_LOCK) or {}
+    lease = _read_json(TELEGRAM_LEASE) or {}
+    # The LIVE one wins, not the lock unconditionally: a bridge idling for want
+    # of a token never refreshes the lock, so a stale dead pid there outranked a
+    # perfectly good lease and got a fresh copy spawned every minute.
+    pid, started = None, 0.0
+    for rec in (lock, lease):
+        if pid_alive(rec.get("pid"), expect="python"):
+            pid = rec.get("pid")
+            started = float(rec.get("startedTs") or 0)
+            break
+    if pid:
+        try:
+            beacon_at = TELEGRAM_BEACON.stat().st_mtime
+        except OSError:
+            beacon_at = 0
+        # PROOF, not assumption: only the bridge writes that beacon, so a stamp
+        # newer than the lock proves the process at this pid really is our bridge
+        # and not some other python that inherited a recycled pid. Without it a
+        # reboot could hand pid 8412 to the daybook service and we would taskkill
+        # its whole tree.
+        # Both timestamps survive a reboot, so "beacon newer than lock" is true
+        # of any leftover pair from last night - and the pid it names now
+        # belongs to something else. Proof has to be anchored in THIS boot, and
+        # the watchdog's own start is: a live bridge re-stamps within 30s.
+        proven = beacon_at > max(started, WATCHDOG_STARTED) > 0
+        # Measured from the START when the beacon predates it. Reading the stale
+        # mtime as this process's age killed every freshly started bridge one
+        # minute in - after a cold boot the beacon file is always last night's.
+        age = (now - beacon_at) if proven else (now - started)
+        if age < TELEGRAM_STALE_SECONDS:
+            return                              # working, or still starting up
+        if not (proven or pid in _telegram_spawned):
+            # Old, unproven, and not ours: leave it alone and say so once.
+            if pid not in _telegram_quiet:
+                _telegram_quiet.add(pid)
+                log(f"a telegram bridge (pid {pid}) holds the lock but has never "
+                    f"stamped a beacon - leaving it alone (not started by this "
+                    f"watchdog); check state\\logs\\telegram.log")
+            return
+        log(f"telegram bridge (pid {pid}) has been silent for {int(age)}s - restarting it")
+        _kill_tree(pid, why="telegram bridge wedged")
+        _telegram_spawned.discard(pid)
+    try:
+        LOGS.mkdir(parents=True, exist_ok=True)
+        out = LOGS / "telegram.out.log"
+        if out.exists() and out.stat().st_size > 2_000_000:
+            out.replace(out.with_suffix(".log.1"))
+        with open(out, "ab") as fh:
+            proc = subprocess.Popen([sys.executable, str(TELEGRAM_BRIDGE)],
+                                    cwd=str(ROOT), stdout=fh,
+                                    stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL,
+                                    creationflags=NO_WINDOW)
+    except OSError as e:
+        log(f"telegram bridge failed to start: {e}")
+        return
+    write_json_atomic(TELEGRAM_LEASE, {"pid": proc.pid, "startedAt": now_iso(),
+                                       "startedTs": now})
+    _telegram_spawned.add(proc.pid)
+    log(f"telegram bridge started (pid {proc.pid})")
+
+
 def stop_session(session):
     """CANCEL a desk: drop its queued mail, clear its state, kill its processes.
 
@@ -5517,6 +5637,7 @@ def main():
             check_backlogs()
             reap_runs()
             ensure_runners()
+            ensure_telegram_bridge()
             show_working(mapping)
             fleet_board(mapping)
             fire_due_schedules(mapping)

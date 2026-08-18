@@ -7,10 +7,11 @@ and the measurements behind it: `tools\discord\README.md`, "Autostart".
 
 The **watchdog** and the **daybook server** each run from a Windows scheduled
 task (`Omnius Watchdog`, `Omnius Daybook`), **hidden** — no console window, logs
-in `state\logs\<name>.out.log`. A third, `Omnius Telegram`, is registered only
-once `config\telegram.ini` exists (nobody invited, no service). Each task fires
-at logon *and* every minute, so a service comes back on its own within ~a minute
-of dying, however it died.
+in `state\logs\<name>.out.log`. Each task fires at logon *and* every minute, so
+either service comes back on its own within ~a minute of dying, however it died.
+The **Telegram bridge** has no task: the watchdog starts it (and restarts it if
+it dies or stops stamping its beacon) whenever `config\telegram.ini` names
+somebody — so inviting a person never requires running anything on the machine.
 Verified live: watchdog killed → back, unattended, in **21 s**.
 
 ## What this changes for you

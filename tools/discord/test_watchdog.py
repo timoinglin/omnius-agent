@@ -667,13 +667,20 @@ try:
           "points at a different workspace/script" in _auto)
     check("both long-running services get a task, not just the watchdog",
           "daybook\\app.py" in _auto)
-    # A third service, but conditional: registering a Telegram task on a machine
-    # where nobody is invited would report a permanently unhealthy service that
-    # is behaving exactly as designed.
-    check("the telegram bridge gets a task only once someone is invited",
-          "tools\\telegram\\bridge.py" in _auto and "config\\telegram.ini" in _auto)
-    check("...and its liveness is asked of the service, not of the scheduler",
-          "'file:*'" in _auto and "state\\telegram\\beacon.json" in _auto)
+    # The telegram bridge is NOT a third task: inviting someone would then mean
+    # running a command on the machine, and this fleet is driven from a phone.
+    # The watchdog owns it; autostart only reports it.
+    check("the telegram bridge gets no scheduled task of its own",
+          "Name   = 'Omnius Telegram'" not in _auto)
+    check("...but status still reports it, since supervised is not the same as up",
+          "state\\telegram\\beacon.json" in _auto and "'file:*'" in _auto)
+    check("...and reports RUNNING BUT FAILING apart from healthy - a fresh "
+          "timestamp is not a working service",
+          "RUNNING BUT FAILING" in _auto and "is idle" in _auto)
+    check("a leftover 'Omnius Telegram' task from the previous release is removed",
+          "Unregister-ScheduledTask -TaskName 'Omnius Telegram'" in _auto,
+          "it shipped for one release; two supervisors for one process is a "
+          "thing nobody should have to reason about at 2am")
     # With a 1-minute self-heal trigger and IgnoreNew, "the operator refused the
     # request" (0x800710E0) is the HEALTHY steady state, reported every minute.
     # Left as a raw error code it makes every status check look half-broken.
@@ -2743,6 +2750,130 @@ try:
         wd.RUNNING.clear()
         for f in wd.RUNS.glob("*.json"):
             f.unlink()
+
+    # == the telegram bridge is a CHILD, not a task (2026-08-18) ===============
+    # It has to be supervised by something, and the only two candidates were a
+    # third scheduled task (which means running a PowerShell command on the
+    # machine to invite anyone - impossible from a phone) or this loop. The
+    # promise being tested is the one guests.ini already makes: write the config
+    # and it is live within a minute, no restart, nothing to run.
+    print("== telegram bridge supervision ==")
+    _tg_hold = (wd.TELEGRAM_BRIDGE, wd.TELEGRAM_LEASE, wd.TELEGRAM_BEACON,
+                wd.pid_alive, _sp.Popen)
+    _tg_cfg = _oc.CONFIG_DIR
+    # Proof of "this really is our bridge" is anchored to when the watchdog
+    # started, so a leftover beacon from before a reboot can never pass for one.
+    # Pretend it has been up a day, so the fixtures' mtimes mean what they say.
+    _tg_boot = wd.WATCHDOG_STARTED
+    wd.WATCHDOG_STARTED = time.time() - 86400
+    try:
+        _tgdir = SAND / "tgcfg"; _tgdir.mkdir(exist_ok=True)
+        _oc.CONFIG_DIR = _tgdir
+        wd.TELEGRAM_BRIDGE = SAND / "bridge.py"; wd.TELEGRAM_BRIDGE.write_text("#", encoding="utf-8")
+        wd.TELEGRAM_LEASE = SAND / "tg-lease.json"
+        wd.TELEGRAM_BEACON = SAND / "tg-beacon.json"
+        wd.TELEGRAM_LOCK = SAND / "tg-lock.json"
+        _spawned = []
+        _sp.Popen = lambda args, **kw: (_spawned.append(args), FakeProc())[1]
+        _alive = {"v": False}
+        # bool(pid) matters: the real one answers False for a missing pid, and
+        # a stub that says True made "no lock file" look like a live process.
+        wd.pid_alive = lambda pid, expect=None: bool(pid) and _alive["v"]
+
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("nobody invited: no bridge process is started", not _spawned,
+              "a feature nobody configured must cost nothing")
+
+        (_tgdir / "telegram.ini").write_text("[telegram]\n", encoding="utf-8")
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("writing config\\telegram.ini starts the bridge - no task, no restart",
+              len(_spawned) == 1 and str(wd.TELEGRAM_BRIDGE) in _spawned[-1])
+        check("...and the lease records the child pid, so a restart adopts it",
+              json.loads(wd.TELEGRAM_LEASE.read_text(encoding="utf-8"))["pid"] == 1)
+
+        wd.ensure_telegram_bridge()             # deliberately NO reset
+        check("the check is throttled - one look a minute, not one every 3s",
+              len(_spawned) == 1,
+              "the loop runs every 3s; a spawn attempt per tick would be a fork bomb")
+
+        _alive["v"] = True
+        wd.TELEGRAM_BEACON.write_text("{}", encoding="utf-8")
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("a live bridge with a fresh beacon is left alone", len(_spawned) == 1)
+
+        # A FRESH bridge next to an OLD beacon file. This is every cold boot:
+        # the beacon on disk is last night's. Judging the new process by that
+        # mtime killed it 60 seconds after starting it, forever.
+        os.utime(wd.TELEGRAM_BEACON, (time.time() - 36000, time.time() - 36000))
+        _killed_tg = []
+        _kt_hold = wd._kill_tree
+        wd._kill_tree = lambda pid, why="": (_killed_tg.append(pid), (1, []))[1]
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("a just-started bridge is NOT judged by the previous one's beacon",
+              not _killed_tg and len(_spawned) == 1,
+              "after a cold boot that beacon is always hours old")
+
+        # The real wedge: it started long ago, stamped beacons for a while, and
+        # then stopped. Proven to be our bridge, and demonstrably stuck.
+        wd.TELEGRAM_LEASE.write_text(json.dumps(
+            {"pid": 1, "startedAt": "x", "startedTs": time.time() - 40000}),
+            encoding="utf-8")
+        os.utime(wd.TELEGRAM_BEACON, (time.time() - 3600, time.time() - 3600))
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("a bridge that stopped stamping its beacon is restarted, not trusted",
+              len(_spawned) == 2 and _killed_tg == [1],
+              "alive is not working - the same lesson the watchdog beacon exists for")
+
+        # A bridge this watchdog did not start - a leftover scheduled task from
+        # an older install, or the owner running it by hand - holds the lock.
+        # Spawning against it produced a doomed child every 60s, forever, while
+        # a healthy bridge ran beside it.
+        wd.TELEGRAM_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        wd.TELEGRAM_LOCK.write_text(json.dumps(
+            {"pid": 4242, "startedAt": "x", "startedTs": time.time() - 40000}),
+            encoding="utf-8")
+        os.utime(wd.TELEGRAM_BEACON, (time.time(), time.time()))   # it is working
+        _killed_tg.clear()
+        _spawned.clear()
+        for _ in range(3):
+            wd._telegram_checked = 0
+            wd.ensure_telegram_bridge()
+        check("a healthy bridge we did not start is left alone, not fought with",
+              not _spawned and not _killed_tg,
+              "supervising by our own lease alone meant one doomed spawn a minute")
+
+        # Same foreign pid, but it has NEVER stamped a beacon: we cannot prove
+        # the pid is a bridge at all (Windows recycles pids across a reboot, and
+        # the fleet is full of pythons). Leave it; do not taskkill a stranger.
+        os.utime(wd.TELEGRAM_BEACON, (time.time() - 50000, time.time() - 50000))
+        _spawned.clear()
+        for _ in range(3):
+            wd._telegram_checked = 0
+            wd.ensure_telegram_bridge()
+        check("an unproven pid is never killed - it may be another python entirely",
+              not _killed_tg and not _spawned,
+              "a recycled pid would otherwise get its whole tree taskkill'd")
+        wd.TELEGRAM_LOCK.unlink()
+        wd._kill_tree = _kt_hold
+
+        _alive["v"] = False
+        (_tgdir / "telegram.ini").unlink()
+        _spawned.clear()
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("config removed: nothing new is started (the bridge idles itself out)",
+              not _spawned)
+    finally:
+        (wd.TELEGRAM_BRIDGE, wd.TELEGRAM_LEASE, wd.TELEGRAM_BEACON,
+         wd.pid_alive, _sp.Popen) = _tg_hold
+        _oc.CONFIG_DIR = _tg_cfg
+        wd.WATCHDOG_STARTED = _tg_boot
+        wd._telegram_checked = 0
 
     # == the !reload loop (2026-07-31) =========================================
     # The cursor advanced in memory, handle_message re-execed the process, and the

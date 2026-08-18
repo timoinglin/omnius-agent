@@ -498,6 +498,24 @@ def slash_skills():
 TELEGRAM_VISIBILITY = ("all", "own")
 
 
+def _desk_folder(desk):
+    """desk id -> the folder that desk sits in. Mirrors watchdog.cwd_for.
+
+    Duplicated rather than imported: watchdog.py is the always-on brain and
+    importing it to read a config file would be the wrong dependency. Keep the
+    two in step - they answer the same question.
+    """
+    desk = str(desk or "").strip().lower()
+    if desk == "orchestrator":
+        return ROOT
+    if desk == "daybook":
+        return ROOT / "daybook"
+    if desk.startswith("tool."):
+        return ROOT / "tools" / desk.split(".", 1)[1]
+    project, _, component = desk.partition(".")
+    return ROOT / "projects" / project / component
+
+
 def telegram_chats():
     """-> {label: {...}} per `[chat.<label>]` in config\\telegram.ini.
 
@@ -509,13 +527,16 @@ def telegram_chats():
     is why this ships without touching guests.ini: THAT file gates Discord
     accounts, and an invited Telegram user has none.
 
-    FAILS CLOSED, the same six ways guests() does, because it is the same kind
+    FAILS CLOSED, like guests() and for the same reason: it is the same kind
     of list and a generous reading of a typo is how one becomes a hole:
 
-    - no `telegram_user_id`, or one that is not digits -> ignored. A half-pasted
-      id must never widen into "anyone".
-    - no `discord_channel` or no `desk` -> ignored. A person with nowhere to
-      write is not a permission.
+    - a `telegram_user_id` that is not digits, or a `telegram_username` that is
+      not a handle -> ignored. A half-pasted id must never widen into "anyone".
+    - neither of those, or no `discord_channel` -> ignored. A person with no
+      name and nowhere to write is not a permission. (`desk` IS optional: the
+      channel already knows which desk answers it.)
+    - the same person named twice, or `visibility = own` in a channel somebody
+      else also reaches -> ignored, because neither can be honoured as written.
     - a label that collides with a fleet sender, looks like a desk id, or ends
       in -job -> ignored, so an invited stranger can never arrive wearing one of
       the fleet's own `from` values.
@@ -535,27 +556,103 @@ def telegram_chats():
             _note(f"{where} uses a name the fleet reserves for itself - ignored; "
                   f"pick a plain name (no dot, no -job, not orchestrator/daybook)")
             continue
+        # EITHER a numeric id OR an @username. The username exists because the
+        # id does not: nobody knows their own Telegram user id, and asking the
+        # owner to fish one out of a log file before he can invite anyone was
+        # the least friendly step in the whole system. The bridge pins the id
+        # the first time that username writes, so a username released and
+        # re-registered by someone else cannot inherit the invite.
         uid = str(body.get("telegram_user_id") or "").strip()
-        if not uid.isdigit():
-            _note(f"{where} telegram_user_id '{uid or '(missing)'}' is not a number "
-                  f"- entry ignored (nobody is let in by a typo)")
+        uname = str(body.get("telegram_username") or "").strip().lstrip("@").lower()
+        if uid and not uid.isdigit():
+            _note(f"{where} telegram_user_id '{uid}' is not a number - entry "
+                  f"ignored (nobody is let in by a typo)")
+            continue
+        if uname and not re.fullmatch(r"[a-z0-9_]{4,32}", uname):
+            _note(f"{where} telegram_username '{uname}' is not a Telegram handle "
+                  f"(letters, digits and _ only) - entry ignored")
+            continue
+        if not uid and not uname:
+            _note(f"{where} needs telegram_username (their @handle) or "
+                  f"telegram_user_id - entry ignored")
             continue
         channel = str(body.get("discord_channel") or "").strip().lstrip("#")
-        desk = str(body.get("desk") or "").strip().lower()
-        if not channel or not desk:
-            _note(f"{where} needs both discord_channel and desk - entry ignored")
+        if not channel:
+            _note(f"{where} needs a discord_channel - entry ignored")
             continue
+        # `desk` is OPTIONAL, and that is the point: the channel already knows
+        # its desk (#web in my-project IS my-project.web - the map every message
+        # the owner types goes through). Asking for it twice only created a way
+        # to disagree with the fleet. Set it only to override that pairing, or
+        # for a channel the fleet maps to nothing.
+        desk = str(body.get("desk") or "").strip().lower()
         vis = str(body.get("visibility") or "own").strip().lower()
         if vis not in TELEGRAM_VISIBILITY:
             _note(f"{where} visibility '{vis}' is not one of "
                   f"{'/'.join(TELEGRAM_VISIBILITY)} - entry ignored rather than guessed "
                   f"(it decides whether your other messages are shown to them)")
             continue
-        out[key] = {"telegram_user_id": uid, "discord_channel": channel, "desk": desk,
+        twin = next((l for l, b in out.items()
+                     if (uid and b["telegram_user_id"] == uid)
+                     or (uname and b["telegram_username"] == uname)), None)
+        if twin:
+            # ONE person reaches ONE channel. Listed twice, the bridge would have
+            # matched whichever block sorted first and dropped the other in
+            # silence - the person would write into a channel nobody told them
+            # about. Refusing both halves of the ambiguity is the honest answer;
+            # inviting the same person to a second channel needs a second
+            # Telegram account, or a decision about which channel they belong to.
+            _note(f"{where} names the same person as [chat.{twin}] - one person "
+                  f"reaches ONE channel, so this entry is ignored (give them one "
+                  f"block, not two)")
+            continue
+        if desk and not _desk_folder(desk).is_dir():
+            # REPORTED, not rejected, and the difference is deliberate. The other
+            # rejections above are ambiguity or impersonation - things that must
+            # never be guessed. A desk folder that is not there is a typo (or a
+            # project not created YET, which is a legitimate order of operations),
+            # and it announces itself the moment they write: the run fails and
+            # the watchdog alerts. Silently admitting nobody would be the quieter
+            # and worse answer.
+            _note(f"{where} desk '{desk}' has no folder at {_desk_folder(desk)} - "
+                  f"they will be let in, but nothing will answer until that desk "
+                  f"exists (orchestrator / daybook / tool.<name> / <project>.<component>)")
+        out[key] = {"telegram_user_id": uid, "telegram_username": uname,
+                    "discord_channel": channel, "desk": desk,
                     "visibility": vis,
                     "media_out": str(body.get("media_out") or "0").strip().lower()
                     in TRUE,
                     "name": str(body.get("name") or label).strip()}
+
+    # A PROMISE THAT CANNOT BE KEPT IS REFUSED, not quietly broken.
+    #
+    # `own` means "your messages and Omnius's replies". In a room with one guest
+    # that is exact. With two, the desk's answer to the OTHER person is just an
+    # ordinary bot message in the same channel - nothing distinguishes it - so
+    # `own` would hand each of them the other's answers while promising privacy.
+    # Found by review before anyone was invited into such a room.
+    #
+    # Refusing the entry rather than silently widening it to `all`: the owner
+    # chose `own` for a reason, and the fix is his to make (separate channels, or
+    # `all` for everyone in that room).
+    # Grouped case-insensitively. It still cannot see that an id and a #name are
+    # the same room - config has no Discord connection - so the bridge repeats
+    # this check once the channels are resolved, where it can.
+    rooms = {}
+    for label, b in out.items():
+        rooms.setdefault(b["discord_channel"].lower(), []).append(label)
+    for channel, labels in rooms.items():
+        if len(labels) < 2:
+            continue
+        for label in list(labels):
+            if out[label]["visibility"] == "own":
+                _note(f"config\\telegram.ini [chat.{label}] asks for visibility=own "
+                      f"in #{channel}, which {len(labels)} people share - a reply "
+                      f"to one of them is an ordinary message to the others, so "
+                      f"'own' cannot be honoured there. Entry ignored: give them "
+                      f"separate channels, or set visibility=all for everyone in "
+                      f"that one.")
+                del out[label]
     return out
 
 
@@ -571,7 +668,10 @@ def telegram_status(env=None):
     env_key = str((cfg.get("telegram") or {}).get("token_env")
                   or "TELEGRAM_BOT_TOKEN").strip()
     state = "set" if env_value(env_key, env) else "NOT SET"
-    return [(label, b["telegram_user_id"], b["discord_channel"], b["desk"],
+    # An empty desk is the normal case, not a gap: the channel's own desk
+    # answers. Saying so beats printing a blank column.
+    return [(label, b["telegram_user_id"], b["discord_channel"],
+             b["desk"] or "(the channel's own desk)",
              b["visibility"], f"{env_key}: {state}")
             for label, b in sorted(telegram_chats().items())]
 

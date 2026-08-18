@@ -66,17 +66,12 @@ $Services = @(
      Live   = 'port:5111' }
 )
 
-# The Telegram bridge is a service ONLY once somebody has been invited
-# (config\telegram.ini exists). Registering it unconditionally would put a task
-# on every machine for a feature nobody uses, and -Action status would report a
-# permanently unhealthy service that is behaving exactly as intended. Write the
-# config, run `-Action repair`, and it appears.
-if (Test-Path (Join-Path $Root 'config\telegram.ini')) {
-  $Services += @{ Name   = 'Omnius Telegram'
-                  Script = 'tools\telegram\bridge.py'
-                  Desc   = 'Omnius Telegram bridge: relays one invited person between Telegram and one Discord channel.'
-                  Live   = 'file:state\telegram\beacon.json:180' }
-}
+# The Telegram bridge is deliberately NOT in this list. It is a child of the
+# watchdog (ensure_telegram_bridge), which starts it within a minute of
+# config\telegram.ini appearing and restarts it if it dies or goes silent.
+# A third scheduled task would mean inviting someone required running a command
+# on the machine - and this fleet is driven from a phone. It is still REPORTED
+# below, because "supervised by something else" is not the same as "healthy".
 
 # The desk is NOT a service. It is a window the owner sits in - warm Claude
 # that Discord can also type into (tools\bridge\desk_bridge.py, 2026-08-02).
@@ -282,6 +277,13 @@ if ($Action -eq 'uninstall') {
     Unregister-ScheduledTask -TaskName $DeskTaskName -Confirm:$false
     Say 'OK' "removed '$DeskTaskName'"
   }
+  # 'Omnius Telegram' left $Services when the watchdog took the bridge over, so
+  # the loop below can no longer see it - and uninstall exits before the
+  # legacy-cleanup block further down. Named here or it survives an uninstall.
+  if (Get-ScheduledTask -TaskName 'Omnius Telegram' -ErrorAction SilentlyContinue) {
+    Unregister-ScheduledTask -TaskName 'Omnius Telegram' -Confirm:$false
+    Say 'OK' "removed 'Omnius Telegram' (a task from an earlier release)"
+  }
   foreach ($svc in $Services) {
     if (Get-ScheduledTask -TaskName $svc.Name -ErrorAction SilentlyContinue) {
       Unregister-ScheduledTask -TaskName $svc.Name -Confirm:$false
@@ -439,6 +441,47 @@ if ($deskTask) {
   }
 } else {
   Say 'OK' 'no desk opens at boot (watchdog + daybook only, by design)'
+}
+
+# The telegram bridge has no task of its own (see $Services): the watchdog
+# starts and restarts it. Report it anyway - a supervised process that is not
+# actually running looks identical to one nobody ever configured.
+$legacyTg = Get-ScheduledTask -TaskName 'Omnius Telegram' -ErrorAction SilentlyContinue
+if ($legacyTg) {
+  # Shipped for one release (2026-08-18) before the bridge became a child of the
+  # watchdog. Harmless - the bridge's own lock keeps a second one from starting -
+  # but two supervisors for one process is a thing nobody should have to reason
+  # about at 2am, so repair removes it.
+  if ($Action -eq 'status') {
+    Say '!' "'Omnius Telegram' is registered but the watchdog owns the bridge now - run -Action repair to remove it"
+    $problems++
+  } else {
+    Unregister-ScheduledTask -TaskName 'Omnius Telegram' -Confirm:$false
+    Say 'OK' "removed 'Omnius Telegram' - the watchdog starts the bridge itself"
+  }
+}
+
+if (Test-Path (Join-Path $Root 'config\telegram.ini')) {
+  $tg = Test-Live @{ Live = 'file:state\telegram\beacon.json:900' }
+  $bf = Join-Path $Root 'state\telegram\beacon.json'
+  $tgState = 'unknown'
+  if (Test-Path $bf) {
+    try { $tgState = (Get-Content $bf -Raw | ConvertFrom-Json).state } catch { }
+  }
+  if (-not $tg.ok) {
+    Say '!' "telegram bridge: $($tg.note). The watchdog starts it within a minute of config\telegram.ini appearing - if this persists, see state\logs\telegram.out.log"
+    $problems++
+  } elseif ($tgState -eq 'failing') {
+    # Fresh timestamp, useless service. A bridge whose every call fails keeps
+    # stamping - so freshness alone reported a revoked token as healthy.
+    Say 'X' 'telegram bridge is RUNNING BUT FAILING - every pass is erroring (revoked token? no network?). See state\logs\telegram.log'
+    $problems++
+  } elseif ($tgState -eq 'idle') {
+    Say '!' 'telegram bridge is idle: config\telegram.ini exists but there is no TELEGRAM_BOT_TOKEN in .env, or no usable [chat.*] block. Run: python tools\telegram\bridge.py --check'
+    $problems++
+  } else {
+    Say 'OK' "telegram bridge is alive ($($tg.note)) - started by the watchdog, no task of its own"
+  }
 }
 
 Write-Host ''

@@ -1164,7 +1164,7 @@ $startupLnk = Join-Path ([Environment]::GetFolderPath('Startup')) 'Omnius Servic
 # If we changed PATH in this run, the services must be restarted, not merely
 # checked.
 if ($script:PathChanged -and -not $CheckOnly) {
-  foreach ($t in @('Omnius Watchdog','Omnius Daybook','Omnius Telegram')) {
+  foreach ($t in @('Omnius Watchdog','Omnius Daybook')) {
     if (Get-ScheduledTask -TaskName $t -ErrorAction SilentlyContinue) {
       try {
         Stop-ScheduledTask -TaskName $t -ErrorAction Stop
