@@ -3710,6 +3710,14 @@ try:
     check("...offered when winget is absent OR when winget ran and failed anyway",
           "if (-not $present -and $t['Direct'])" in _inst0,
           "winget called node and ffmpeg ambiguous and installed neither")
+    # 2026-08-18: `npm install <names>` resolved the newest versions and
+    # rewrote the TRACKED package.json + lockfile, so every fresh install woke
+    # up with a dirty tree - and the dirty-tree guard then blocked that user's
+    # first !update go. Install from the lockfile; write nothing.
+    check("remotion installs from the LOCKFILE (npm ci), never by resolving names",
+          "npm ci --no-fund --no-audit" in _inst0
+          and "Test-Path package-lock.json" in _inst0,
+          "npm install by name dirties tracked files on every new machine")
     for _src in ("https://www.python.org/ftp/python/",
                  "api.github.com/repos/git-for-windows/git/releases/latest",
                  "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"):

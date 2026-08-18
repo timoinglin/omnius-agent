@@ -1040,8 +1040,20 @@ if (-not (Test-Cmd 'node')) {
 } else {
   Write-Status '..' 'npm install remotion into tools\remotion - this can take a while'
   Push-Location tools\remotion
-  if (-not (Test-Path package.json)) { cmd /c "npm init -y" | Out-Null }
-  cmd /c "npm install --no-fund --no-audit remotion @remotion/cli react react-dom"
+  # npm ci, never `npm install <names>`: install-by-name resolves the NEWEST
+  # matching versions and rewrites the tracked package.json + package-lock.json,
+  # which leaves every fresh install with a dirty tree - and the dirty-tree
+  # guard then blocks that user's first `!update go` (seen live 2026-08-18 on a
+  # colleague's instance: remotion had drifted 4.0.508 -> 4.0.512 all by
+  # itself). `npm ci` installs exactly what the shipped lockfile says and
+  # writes nothing. The name-list fallback stays only for a tree that somehow
+  # has no lockfile to obey.
+  if (Test-Path package-lock.json) {
+    cmd /c "npm ci --no-fund --no-audit"
+  } else {
+    if (-not (Test-Path package.json)) { cmd /c "npm init -y" | Out-Null }
+    cmd /c "npm install --no-fund --no-audit remotion @remotion/cli react react-dom"
+  }
   Pop-Location
   if (Test-Path tools\remotion\node_modules) {
     # node_modules existing is not the same as remotion WORKING. Newer npm
