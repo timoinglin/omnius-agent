@@ -4,7 +4,8 @@ Contract (stable regardless of engine):
 
 - `python tools\whisper\transcribe.py <audio-file>` → prints the transcript (UTF-8, stdout); non-zero exit + stderr on failure. Language auto-detected.
 - Accepts anything ffmpeg can read: `.ogg` (Discord voice notes), `.mp3`, `.wav`, `.m4a`, …
-- Model size via `WHISPER_MODEL` env (default `base`; `tiny`/`small`/`medium`/`large-v3` trade speed for accuracy).
+- Model size via `WHISPER_MODEL` env or `config\transcribe.ini` `[whisper] model` — **default `small` since 2026-08-18**, when `base` returned gibberish for an ordinary spoken sentence that `small` transcribed correctly (measured on the same clip: the model was the fix, not the language hint). `tiny`/`medium`/`large-v3` trade speed for accuracy.
+- Spoken language via `[whisper] language` (ISO code, e.g. `es`); empty auto-detects. A belt, not the fix — it removes a guess for free.
 - `python tools\whisper\prewarm.py` downloads the model up front — run by `install.bat`, idempotent.
 
 Used by: sessions handling Discord voice notes/audio (ARCHITECTURE §3.4 media pipeline), `#daybook` voice capture.

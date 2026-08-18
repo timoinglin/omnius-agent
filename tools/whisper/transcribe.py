@@ -47,20 +47,42 @@ def main():
               f"whichever `python` resolved to at the time)", file=sys.stderr)
         return 3
     import os
-    size = os.environ.get("WHISPER_MODEL", "base")  # tiny/base/small/medium/large-v3
+    cfg = {}
+    try:                                   # config is a convenience, never a gate
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+        import omnius_config as ocfg
+        cfg = ocfg.load("transcribe").get("whisper") or {}
+    except Exception:                                            # noqa: BLE001
+        pass
+    # DEFAULT `small`, not `base` - corrected 2026-08-18 by a live voice note.
+    # The 2026-07-31 note below is still true about DOMAIN NOUNS: the glossary
+    # fixes "a sonmio" -> "Omnius" for half a second. It cannot fix ordinary
+    # speech, and that is what broke: a plain Spanish note containing no
+    # glossary word at all came out of `base` as "Proderas, cuento 7, mas 7".
+    # The same clip through `small` was correct. A wrong transcription is worse
+    # than ten extra seconds - a desk acts on it.
+    size = os.environ.get("WHISPER_MODEL") or str(cfg.get("model") or "small").strip()
     model = WhisperModel(size, device="cpu", compute_type="int8")
+    # LANGUAGE is a cheap belt, NOT the fix - measured on the same clip rather
+    # than assumed: `base`+`language=es` still produced the gibberish, and
+    # `small` with auto-detect was already correct. So the model did the work.
+    # It stays because it removes a guess on a few noisy seconds for free, and
+    # because tools\transcribe\transcribe_long.py has passed `--language` since
+    # it was written while this path - the one desks use - never did. Empty
+    # means auto-detect, which is right until an owner states their language.
+    lang = (os.environ.get("WHISPER_LANGUAGE")
+            or str(cfg.get("language") or "").strip()) or None
     # initial_prompt biases decoding toward our vocabulary. Measured 2026-07-31 on
     # real voice notes that `base` had mangled: "a sonmio" -> "Omnius" and
-    # "task steering" -> "Task Scheduler", for +0.5s. The SAME notes through
-    # `small` cost 5-11s each plus a 14s model load and were no better - so the
-    # glossary, not a bigger model, is the win. Keep this list TIGHT: a prompt is
-    # a bias, and stuffing it makes Whisper insert words that were never said.
+    # "task steering" -> "Task Scheduler", for +0.5s. Keep this list TIGHT: a
+    # prompt is a bias, and stuffing it makes Whisper insert words never said.
     prompt = os.environ.get("WHISPER_PROMPT") or (
         "Omnius, Discord, watchdog, daybook, fleet-status, orchestrator, Claude, "
         "Task Scheduler, Windows, GitHub, commit, push, backup, skills, Whisper, "
         "Remotion, Pexip, Firebase, The Campus, Colegia, <your-org>, PWA, WebRTC."
     )
     segments, _info = model.transcribe(str(audio), vad_filter=True,
+                                       language=lang,
                                        initial_prompt=prompt or None)
     print(" ".join(s.text.strip() for s in segments).strip())
     return 0

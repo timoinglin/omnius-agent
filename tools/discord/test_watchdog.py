@@ -3867,6 +3867,26 @@ try:
     # together they are twelve alarming lines meaning "it worked".
     check("the whisper pre-warm does not print warnings nobody can act on",
           "HF_HUB_DISABLE_SYMLINKS_WARNING" in _inst0)
+    # Voice notes are his PRIMARY remote input, and on 2026-08-18 a live one
+    # came back as "Proderas, cuento 7, mas 7" - the default `base` mangling an
+    # ordinary sentence that `small` transcribed exactly ("Prueba, cuanto es 7
+    # mas 7?"). Measured on the same clip: `base`+language=es was still wrong
+    # and `small`+auto-detect was already right, so the MODEL was the fix. A
+    # desk ACTS on what it heard, which is why this default is pinned here.
+    _wsrc = (real_root / "tools" / "whisper" / "transcribe.py").read_text(encoding="utf-8")
+    check("whisper defaults to `small`, never back to `base`",
+          'cfg.get("model") or "small"' in _wsrc and '"WHISPER_MODEL", "base"' not in _wsrc)
+    check("whisper takes model + language from config, env still overrides",
+          'ocfg.load("transcribe")' in _wsrc
+          and 'os.environ.get("WHISPER_MODEL")' in _wsrc
+          and 'os.environ.get("WHISPER_LANGUAGE")' in _wsrc)
+    check("whisper passes the language through instead of always guessing",
+          "language=lang" in _wsrc)
+    check("...and a missing config never blocks a transcription",
+          "config is a convenience, never a gate" in _wsrc)
+    _wex = (real_root / "config" / "transcribe.example.ini").read_text(encoding="utf-8")
+    check("the shipped example documents both keys",
+          "# model = small" in _wex and "# language = es" in _wex)
     # A first install creates .env from the example, so all three Discord values
     # are blank by definition. Printing one "[X] ... is empty" per key, then a
     # verdict, then the setup offer repeating it, made a normal install read as
