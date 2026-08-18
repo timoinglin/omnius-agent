@@ -272,10 +272,13 @@ check("an unterminated shift is kept literal rather than crashing",
       mail._utf7_decode(b"broken&AOk") == "broken&AOk")
 check("a LIST reply yields the folder path",
       mail._imap_folder_name(b'(\HasNoChildren) "/" "INBOX"') == "INBOX")
+# Hoisted, not inlined: a backslash inside an f-string expression is 3.12+
+# syntax, and the suite promises 3.10 (caught by the py-compat gate 2026-08-18
+# when this very file broke an !update on a 3.11 machine).
+_delim_line = mail._imap_folder_name(b'(\HasChildren) "." "INBOX.Trabajo"')
 check("the server's delimiter is normalised to '/'",
-      mail._imap_folder_name(b'(\HasChildren) "." "INBOX.Trabajo"')
-      == "INBOX/Trabajo",
-      f"got {mail._imap_folder_name(b'(\HasChildren) \".\" \"INBOX.Trabajo\"')!r}")
+      _delim_line == "INBOX/Trabajo",
+      f"got {_delim_line!r}")
 check("a LIST line that is not a folder is skipped, not half-parsed",
       mail._imap_folder_name(b"") == "" and mail._imap_folder_name(None) == "")
 check("`folders` is a verb, so `--folder` is never a guessing game",

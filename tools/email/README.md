@@ -93,9 +93,9 @@ Not configured is not an error: with no `config\email.ini`, `accounts` returns a
 name you should type.
 
 ```
-python tools\email\mail.py folders --account laiatech
-python tools\email\mail.py list --account laiatech --folder "Elementos enviados"
-python tools\email\mail.py list --account laiatech --folder "Bandeja de entrada/keep/Nominas"
+python tools\email\mail.py folders --account work
+python tools\email\mail.py list --account work --folder "Elementos enviados"
+python tools\email\mail.py list --account work --folder "Bandeja de entrada/proyectos"
 ```
 
 **Why a resolver exists at all** (built 2026-08-18, when the owner asked whether
