@@ -1082,6 +1082,50 @@ _run_failures = {}    # session -> consecutive failed runs
 _run_backoff = {}     # session -> unix ts before which we will not retry
 _run_oldest = {}      # session -> oldest envelope name the run was started for
 _run_alerted = set()  # sessions whose crash-loop the owner has already heard about
+
+
+def _ledger_path():
+    return WD_STATE / "failures.json"
+
+
+def save_failure_ledger():
+    """Persist strikes/backoff/alerted across restarts.
+
+    These lived only in module dicts until 2026-08-18, which meant three
+    strikes required 15 minutes of UNINTERRUPTED watchdog uptime: a desk that
+    crash-looped through a restart (or through !reload, or the 60s self-heal)
+    handed every desk a clean slate and the owner was never paged. The whole
+    crash-loop defence quietly reset itself.
+
+    Cheap and best-effort: a lost ledger costs a delayed alert, never a
+    delivery, so this never raises."""
+    try:
+        WD_STATE.mkdir(parents=True, exist_ok=True)
+        write_json_atomic(_ledger_path(), {
+            "failures": _run_failures,
+            "backoff": {k: v for k, v in _run_backoff.items() if v > time.time()},
+            "alerted": sorted(_run_alerted),
+            "at": now_iso()})
+    except Exception:                                            # noqa: BLE001
+        pass
+
+
+def load_failure_ledger():
+    """Restore the ledger at boot. Backoffs already expired are dropped."""
+    try:
+        d = json.loads(_ledger_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    try:
+        _run_failures.update({k: int(v) for k, v in (d.get("failures") or {}).items()})
+        now = time.time()
+        _run_backoff.update({k: float(v) for k, v in (d.get("backoff") or {}).items()
+                             if float(v) > now})
+        _run_alerted.update(d.get("alerted") or [])
+        if _run_failures:
+            log(f"failure ledger restored: {dict(_run_failures)}")
+    except Exception:                                            # noqa: BLE001
+        pass
 _tab_booted = {}      # session -> when its terminal CLAIMED (fast-death watch, run_active)
 TAB_FAST_DEATH_SECONDS = 30  # a claim dying this soon after boot is a FAILED start
 
@@ -1823,11 +1867,31 @@ _native_notified = {}
 TAKEOVER = STATE / "takeover"          # <session>.json = "asked, waiting for ok/no"
 
 
+TAKEOVER_ASK_TTL = 6 * 3600      # an unanswered ask stops muting the deadman
+
+
 def takeover_pending(session):
+    """The open takeover question for this desk, or None.
+
+    EXPIRES. An ask used to live forever, and deaf_desk_alarm treats a pending
+    one as "we asked, silence is his answer" - so one ignored question muted
+    that desk's deadman permanently. Drilled 2026-08-18: a 30-day-old ask with
+    an hour-old owner message and nothing alive still paged nobody. Silence is
+    a valid answer to THAT message, not to every message forever; after the TTL
+    the desk is deaf like any other and the pager may speak."""
+    p = TAKEOVER / f"{session}.json"
     try:
-        return json.loads((TAKEOVER / f"{session}.json").read_text(encoding="utf-8"))
+        d = json.loads(p.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, ValueError):
         return None
+    try:
+        if time.time() - float(d.get("askedAt") or 0) > TAKEOVER_ASK_TTL:
+            p.unlink(missing_ok=True)
+            log(f"{session}: takeover ask expired unanswered - the deadman speaks again")
+            return None
+    except (TypeError, ValueError):
+        pass
+    return d
 
 
 def report_native_in_use(session):
@@ -2271,19 +2335,31 @@ def _reap(session):
     rc = p.returncode
     del RUNNING[session]
     (RUNS / f"{session}.json").unlink(missing_ok=True)
-    # An rc-0 run that left its oldest envelope untouched did NOT do its job -
-    # count it as a failure or it respawns against the same envelope forever.
-    undrained = (_run_oldest.get(session) is not None
-                 and oldest_envelope(session) == _run_oldest.get(session))
+    # An rc-0 run that left the envelope it was STARTED FOR untouched did NOT
+    # do its job - count it as a failure or it respawns against the same
+    # envelope forever.
+    #
+    # Ask whether THAT envelope is still queued, never "is it still the
+    # minimum". Inbox names come from four writers - <snowflake>, dm-*,
+    # heartbeat-*, sched-* - which ASCII-order digits < dm < heartbeat < sched,
+    # so ordinary mail landing DURING a run could take over the minimum and
+    # score an unhandled run as a success: strikes wiped, no backoff, instant
+    # relaunch against the same stuck envelope. Drilled 2026-08-18: a heartbeat
+    # or one desk-mail arrival was enough to defer the crash-loop alert
+    # indefinitely, and for system senders that alert is the ONLY guard.
+    _started_for = _run_oldest.get(session)
+    undrained = bool(_started_for) and (INBOX / session / _started_for).exists()
     _run_oldest.pop(session, None)
     if rc == 0 and not undrained:
         _run_failures.pop(session, None)
         _run_alerted.discard(session)
+        save_failure_ledger()
         log(f"run finished for {session}")
         return
     fails = _run_failures.get(session, 0) + 1
     _run_failures[session] = fails
     _run_backoff[session] = time.time() + RUN_BACKOFF_SECONDS
+    save_failure_ledger()
     why = f"rc {rc}" if rc != 0 else "exited clean but left its oldest envelope unhandled"
     log(f"run FAILED for {session} ({why}, failure #{fails}) - "
         f"backing off {RUN_BACKOFF_SECONDS}s")
@@ -4167,6 +4243,32 @@ def flush_outboxes(mapping):
                 log(f"posted outbox {session}/{f.name}")
             except api.ApiError as e:
                 log(f"outbox post failed ({session}/{f.name}): {e}")
+            except Exception as e:                               # noqa: BLE001
+                # A MALFORMED REPLY MUST NOT STOP THE BUS. Every outbox file is
+                # JSON a language model wrote against a schema nothing
+                # validates, and only ApiError was caught here: `"files"` as a
+                # bare string (one missing bracket) reaches Path().read_bytes()
+                # and raises FileNotFoundError, which escaped this loop and
+                # took the whole tick with it - flush, backlogs, reap and
+                # ensure_runners all skipped, every 3 seconds, forever, while
+                # the file was retried unchanged. Drilled 2026-08-18.
+                #
+                # Quarantine it like unreadable JSON: the desk keeps working,
+                # the evidence survives as .bad, and the owner is told once.
+                log(f"outbox {session}/{f.name}: BAD REPLY ({type(e).__name__}: {e}) "
+                    f"- renamed .bad, the desk keeps running")
+                try:
+                    f.rename(f.with_suffix(".bad"))
+                except OSError:
+                    f.unlink(missing_ok=True)
+                try:
+                    cid2 = primary_channel_id(mapping, session)
+                    if cid2:
+                        api.send_message(cid2, f"⚠️ `{session}` wrote a reply I could not "
+                                               f"post (`{type(e).__name__}`) — kept as "
+                                               f"`{f.name}.bad`. Its next reply is unaffected.")
+                except Exception:                                # noqa: BLE001
+                    pass
 
 
 # --- desk mail (delegation) -----------------------------------------------------
@@ -4179,6 +4281,12 @@ def flush_outboxes(mapping):
 # channel - this one.
 
 THREAD_IDLE_SECONDS = 48 * 3600   # open chains idle this long are swept (breadcrumb logged)
+# A CLOSED chain is the post-mortem, so it outlives the incident. This was 600s
+# until 2026-08-18: a chain that hit its hop limit or was gate-denied at 03:00
+# had already deleted itself by the time he read the alert at 08:00, and
+# `!trace <id>` - the verb whose whole job is explaining that - answered
+# "nothing called that". Evidence for a failure must outlive a night's sleep.
+CLOSED_THREAD_KEEP_SECONDS = 72 * 3600
 GATE_WAIT_SECONDS = 3600          # an unanswered cross-project ask fails CLOSED after this
 _BOOT_TS = time.time()            # gate asks re-post once per watchdog boot, never per tick
 _desk_id_cache = {}               # id -> (verdict, checked_at); envelope scans run per tick
@@ -4659,7 +4767,7 @@ def sweep_threads():
             idle = time.time() - f.stat().st_mtime
         except OSError:
             continue
-        if led.get("closed") and idle > 600:
+        if led.get("closed") and idle > CLOSED_THREAD_KEEP_SECONDS:
             f.unlink(missing_ok=True)
         elif idle > THREAD_IDLE_SECONDS:
             if not led.get("closed"):
@@ -5236,6 +5344,7 @@ def main():
     # can do anything else - after the lock, so a stray manual start next to a
     # healthy watchdog can never bump the counter.
     update_pending_boot()
+    load_failure_ledger()   # strikes survive a restart (drilled 2026-08-18)
     # Runs started by a previous watchdog: adopt them via their lease pid rather
     # than spawning a second brain onto a busy desk. Dead leases clean up lazily
     # in run_active().

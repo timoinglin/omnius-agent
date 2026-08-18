@@ -4,7 +4,7 @@ Contract (stable regardless of engine):
 
 - `python tools\whisper\transcribe.py <audio-file>` → prints the transcript (UTF-8, stdout); non-zero exit + stderr on failure. Language auto-detected.
 - Accepts anything ffmpeg can read: `.ogg` (Discord voice notes), `.mp3`, `.wav`, `.m4a`, …
-- Model size via `WHISPER_MODEL` env or `config\transcribe.ini` `[whisper] model` — **default `small` since 2026-08-18**, when `base` returned gibberish for an ordinary spoken sentence that `small` transcribed correctly (measured on the same clip: the model was the fix, not the language hint). `tiny`/`medium`/`large-v3` trade speed for accuracy.
+- Model size via `WHISPER_MODEL` env or `config\transcribe.ini` `[whisper] model` — default `base` — fast, and usually enough. Measured 2026-08-18 on a real four-second note: `base` heard *"Proderas, cuento 7, mas 7"* where `small` heard *"Prueba, cuanto es 7 mas 7?"*, correct for ~3x the time; this instance's owner chose speed knowingly. **Set `model = small` if a mishearing costs more than ten seconds** — a desk acts on what it heard.
 - Spoken language via `[whisper] language` (ISO code, e.g. `es`); empty auto-detects. A belt, not the fix — it removes a guess for free.
 - `python tools\whisper\prewarm.py` downloads the model up front — run by `install.bat`, idempotent.
 

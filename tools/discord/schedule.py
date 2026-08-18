@@ -160,8 +160,29 @@ def load_jobs():
     """
     for path in (JOBS, LEGACY_JOBS):
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, ValueError):
+            raw = path.read_text(encoding="utf-8")
+        except OSError:
+            continue                       # absent: genuinely nothing here
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError):
+            # PRESENT BUT UNREADABLE IS NOT EMPTY. Treating it as empty was a
+            # silent data-loss bug found by drill 2026-08-18: a torn write -
+            # exactly what a power cut produces - was read as [] and then
+            # OVERWRITTEN with [] by the next 20s tick, destroying every
+            # routine the owner had, with no log and no alert.
+            #
+            # So: quarantine the bytes beside the file (recoverable by hand),
+            # say so loudly, and only then continue as empty. The rename also
+            # stops the next save from writing over the evidence.
+            try:
+                keep = path.with_name(path.name + f".corrupt-{int(datetime.now().timestamp())}")
+                path.replace(keep)
+                print(f"[!] {path.name} was unreadable and has been kept as {keep.name} "
+                      f"- routines start empty until it is repaired", file=sys.stderr)
+            except OSError as e:
+                print(f"[!] {path.name} is unreadable and could not be quarantined: {e}",
+                      file=sys.stderr)
             continue
         return data if isinstance(data, list) else []
     return []

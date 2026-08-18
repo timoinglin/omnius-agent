@@ -2165,11 +2165,22 @@ try:
               _dd_fires() is False)
         wd._run_alerted.clear()
         wd.TAKEOVER.mkdir(parents=True, exist_ok=True)
+        # A FRESH ask - `askedAt: 1` (1970) used to stand in for "any ask", and
+        # since 2026-08-18 that is exactly what expires: silence answers THAT
+        # message, not every message forever (see the stale case below).
         (wd.TAKEOVER / "deadman.desk.json").write_text(
-            json.dumps({"askedAt": 1}), encoding="utf-8")
+            json.dumps({"askedAt": _bt.time()}), encoding="utf-8")
         check("a standing takeover question suppresses it (silence is his answer)",
               _dd_fires() is False)
-        (wd.TAKEOVER / "deadman.desk.json").unlink()
+        # ...but not forever. An ask nobody answered used to mute that desk's
+        # deadman permanently: drilled 2026-08-18 with a 30-day-old question,
+        # hour-old owner mail and nothing alive - the pager stayed silent.
+        (wd.TAKEOVER / "deadman.desk.json").write_text(
+            json.dumps({"askedAt": _bt.time() - wd.TAKEOVER_ASK_TTL - 60}), encoding="utf-8")
+        check("...but a stale one expires, and the deadman speaks again",
+              _dd_fires() is True
+              and not (wd.TAKEOVER / "deadman.desk.json").exists())
+        (wd.TAKEOVER / "deadman.desk.json").unlink(missing_ok=True)
         wd._native_notified["deadman.desk"] = "100.json"
         check("an ask or decline he already got suppresses it (his court)",
               _dd_fires() is False)
@@ -3874,8 +3885,8 @@ try:
     # and `small`+auto-detect was already right, so the MODEL was the fix. A
     # desk ACTS on what it heard, which is why this default is pinned here.
     _wsrc = (real_root / "tools" / "whisper" / "transcribe.py").read_text(encoding="utf-8")
-    check("whisper defaults to `small`, never back to `base`",
-          'cfg.get("model") or "small"' in _wsrc and '"WHISPER_MODEL", "base"' not in _wsrc)
+    check("whisper's model is a CONFIG knob, not a hardcoded default",
+          'cfg.get("model") or "base"' in _wsrc and '"WHISPER_MODEL", "base"' not in _wsrc)
     check("whisper takes model + language from config, env still overrides",
           'ocfg.load("transcribe")' in _wsrc
           and 'os.environ.get("WHISPER_MODEL")' in _wsrc
@@ -3885,8 +3896,9 @@ try:
     check("...and a missing config never blocks a transcription",
           "config is a convenience, never a gate" in _wsrc)
     _wex = (real_root / "config" / "transcribe.example.ini").read_text(encoding="utf-8")
-    check("the shipped example documents both keys",
-          "# model = small" in _wex and "# language = es" in _wex)
+    check("the shipped example documents both keys, and what base costs",
+          "# model = small" in _wex and "# language = es" in _wex
+          and "Proderas" in _wex)
     # A first install creates .env from the example, so all three Discord values
     # are blank by definition. Printing one "[X] ... is empty" per key, then a
     # verdict, then the setup offer repeating it, made a normal install read as
@@ -6824,6 +6836,72 @@ try:
     for _inv in ("AskUserQuestion", "PermissionRequest", "_kill_tree",
                  "interactive_busy", "RUN_BACKOFF_SECONDS"):
         check(f"desk audit: it checks the {_inv} invariant", _inv in _da_src)
+
+    # == the derby: six bugs a live-fleet drill campaign found (2026-08-18) ====
+    # Every one of these was CONFIRMED by fault injection against real code
+    # before it was fixed. They share a shape: silent, unattended, and only
+    # reachable when something else had already gone wrong.
+    print("== derby fixes ==")
+    import schedule as _dsch
+    _djobs, _dlegacy = _dsch.JOBS, _dsch.LEGACY_JOBS
+    try:
+        _dsch.JOBS = SAND / "derby-routines.json"
+        _dsch.LEGACY_JOBS = SAND / "derby-legacy.json"
+        _dsch.save_jobs([{"id": "daily-1", "kind": "daily", "daily": "07:00",
+                          "to": "orchestrator", "text": "briefing", "weekdays": False,
+                          "between": None, "machine": "m", "paused": False,
+                          "createdAt": "x", "nextRun": "2099-01-01T07:00:00",
+                          "lastRun": None}])
+        _whole = _dsch.JOBS.read_text(encoding="utf-8")
+        _dsch.JOBS.write_text(_whole[:len(_whole) // 2], encoding="utf-8")   # power-cut tear
+        _read = _dsch.load_jobs()
+        _kept = list(_dsch.JOBS.parent.glob(_dsch.JOBS.name + ".corrupt-*"))
+        check("routines: a torn routines.json is QUARANTINED, never silently emptied",
+              _read == [] and len(_kept) == 1 and "daily-1" in _kept[0].read_text(encoding="utf-8"),
+              "a power-cut tear used to be read as [] and then overwritten with [] within 20s")
+        _dsch.JOBS.write_text("[]", encoding="utf-8")
+        check("routines: an ABSENT file is still simply empty (no false alarm)",
+              _dsch.load_jobs() == [])
+    finally:
+        _dsch.JOBS, _dsch.LEGACY_JOBS = _djobs, _dlegacy
+
+    wd._run_failures["derby.desk"] = 2
+    wd._run_backoff["derby.desk"] = _time.time() + 300
+    wd._run_alerted.add("derby.desk")
+    wd.save_failure_ledger()
+    wd._run_failures.clear(); wd._run_backoff.clear(); wd._run_alerted.clear()
+    wd.load_failure_ledger()
+    check("crash-loop strikes SURVIVE a watchdog restart",
+          wd._run_failures.get("derby.desk") == 2 and "derby.desk" in wd._run_backoff
+          and "derby.desk" in wd._run_alerted,
+          "3 strikes needed 15 min of uninterrupted uptime; every restart reset them")
+    wd._run_failures.clear(); wd._run_backoff.clear(); wd._run_alerted.clear()
+    (wd.WD_STATE / "failures.json").unlink(missing_ok=True)
+
+    _dbox = wd.INBOX / "derby.desk"
+    _dbox.mkdir(parents=True, exist_ok=True)
+    for _f in _dbox.glob("*.json"):
+        _f.unlink()
+    (_dbox / "sched-nightly-1787116200.json").write_text("{}", encoding="utf-8")
+    wd._run_oldest["derby.desk"] = wd.oldest_envelope("derby.desk")
+    (_dbox / "heartbeat-1787116260.json").write_text("{}", encoding="utf-8")  # arrives mid-run
+    wd.RUNNING["derby.desk"] = FakeProc(rc=0)
+    wd._reap("derby.desk")
+    check("a run that handled NOTHING is a failure even when new mail sorts ahead of it",
+          wd._run_failures.get("derby.desk") == 1 and "derby.desk" in wd._run_backoff,
+          "inbox names come from four writers; the minimum is not the envelope the run was for")
+    wd._run_failures.clear(); wd._run_backoff.clear(); wd._run_alerted.clear()
+    for _f in _dbox.glob("*.json"):
+        _f.unlink()
+
+    _wsrc2 = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
+    check("a malformed reply is quarantined instead of killing the tick",
+          "BAD REPLY" in _wsrc2 and 'f.rename(f.with_suffix(".bad"))' in _wsrc2,
+          "only ApiError was caught; a bad `files` value stopped flush/reap/ensure_runners")
+    check("an unanswered takeover ask expires instead of muting the deadman forever",
+          "TAKEOVER_ASK_TTL" in _wsrc2)
+    check("a CLOSED chain outlives the night, so !trace can still explain it",
+          "CLOSED_THREAD_KEEP_SECONDS = 72 * 3600" in _wsrc2)
 
     # == permission escalation =================================================
     # Relaying a prompt to Discord is what lets the profile be TIGHTENED instead

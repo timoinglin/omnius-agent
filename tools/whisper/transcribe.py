@@ -54,14 +54,20 @@ def main():
         cfg = ocfg.load("transcribe").get("whisper") or {}
     except Exception:                                            # noqa: BLE001
         pass
-    # DEFAULT `small`, not `base` - corrected 2026-08-18 by a live voice note.
-    # The 2026-07-31 note below is still true about DOMAIN NOUNS: the glossary
-    # fixes "a sonmio" -> "Omnius" for half a second. It cannot fix ordinary
-    # speech, and that is what broke: a plain Spanish note containing no
-    # glossary word at all came out of `base` as "Proderas, cuento 7, mas 7".
-    # The same clip through `small` was correct. A wrong transcription is worse
-    # than ten extra seconds - a desk acts on it.
-    size = os.environ.get("WHISPER_MODEL") or str(cfg.get("model") or "small").strip()
+    # DEFAULT `base` - HIS CALL, 2026-08-18, made with the measurement in hand.
+    # That day a real note came back from `base` as "Proderas, cuento 7, mas 7"
+    # where `small` gave "Prueba, cuanto es 7 mas 7?", and he chose latency
+    # anyway: "quality is not best, but enough" against ~3x the processing
+    # time. Fair reading of a worst case - the clip was four seconds, with no
+    # context and no glossary word; longer notes give Whisper far more to work
+    # with.
+    #
+    # What the measurement really bought is the KNOB, not the default: one line
+    # in config\transcribe.ini (`model = small`) upgrades every note on a
+    # machine where a mishearing costs more than ten seconds, and the env var
+    # still beats both, so a single tricky recording can be re-run without
+    # editing anything.
+    size = os.environ.get("WHISPER_MODEL") or str(cfg.get("model") or "base").strip()
     model = WhisperModel(size, device="cpu", compute_type="int8")
     # LANGUAGE is a cheap belt, NOT the fix - measured on the same clip rather
     # than assumed: `base`+`language=es` still produced the gibberish, and
