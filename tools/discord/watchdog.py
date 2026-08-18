@@ -2605,7 +2605,10 @@ def ensure_telegram_bridge():
     a surprise nobody asked for.
 
     Duplicates are impossible regardless of who starts it: the bridge takes its
-    own pid-validated lock and exits quietly when another live one holds it.
+    own pid-validated lock, and a second copy stands by (beacon `state:
+    "standby"`, polling nothing) rather than exiting - an exit reads as a crash
+    here and would earn a fresh doomed copy every minute, so it stays alive and
+    takes over the moment the first one stops.
     """
     global _telegram_checked
     now = time.time()

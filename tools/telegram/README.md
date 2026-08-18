@@ -20,18 +20,19 @@ python tools\telegram\bridge.py --once     # one pass, then exit
 | **Reads** | `config\telegram.ini` (the invite list), `TELEGRAM_BOT_TOKEN` in `.env` |
 | **Telegram → Discord** | posts `**<label>** (telegram): <text>` with attachments, then writes `state\inbox\<desk>\<discord-message-id>.json` |
 | **Discord → Telegram** | mirrors new messages in that channel, prefixed with the author's name |
-| **Writes** | `state\telegram\` (its own cursors + beacon), `media\inbox\YYYY-MM\`, `state\transcripts\<desk>\`, `state\logs\telegram.log` |
+| **Writes** | `state\telegram\` (cursors, beacon, and the watchdog-facing copy of the lock), `media\inbox\YYYY-MM\`, `media\sent\YYYY-MM\` (only with `media_out = 1`), `state\transcripts\<desk>\`, `state\logs\telegram.log`, and `%LOCALAPPDATA%\omnius\telegram-<hash>.lock` — the one-bridge-per-token lock, machine-wide by design |
 | **Never writes** | `state\outbox\` — the watchdog owns replies; the bridge mirrors the *channel*, which already contains them |
-| **Exit codes** | `0` fine (including "nothing configured"), `1` a Telegram or Discord failure worth reading |
+| **Exit codes** | Only `--once` and `--check` exit at all; the service form runs until stopped. `0` covers everything ordinary — nothing configured, a second bridge on standby, even a pass whose Telegram calls all failed (that shows in the log and in the beacon's `state`, never in an exit code). `1` is a `--once` run that could not reach Discord, or a fatal Telegram error |
 
 **The envelope id is the Discord message id.** Not a `tg-…` stem: `oldest_envelope` sorts the
 inbox lexicographically, so a prefixed name would queue behind every Discord snowflake forever.
 Sharing the id also means the Discord message, the envelope, the transcript and `!trace` are one
 story.
 
-## Why this needed no change to the watchdog
+## Why message delivery needed no change to the watchdog
 
-Three properties that were already true, and are worth not breaking:
+The watchdog does own the bridge's *lifecycle* (see "Running it"). What needed no change is the
+**delivery path**, thanks to three properties that were already true and are worth not breaking:
 
 - **A message posted with the bot token is skipped at the watchdog's first branch**
   (`author.bot` → `skip-bot`), before any envelope or run. So the bridge can post into Discord
@@ -140,8 +141,10 @@ promise that the code cannot honour is refused rather than quietly broken.
 ## Running it — nothing to run
 
 The **watchdog starts it**. Write `config\telegram.ini` and within a minute the bridge is up;
-it is restarted if it dies, and restarted if it stops stamping its beacon (alive is not the same
-as working — a revoked token leaves a happy-looking process that relays nothing). There is no
+it is restarted if it dies, and restarted if it stops stamping its beacon for 15 minutes. A
+revoked token is a *different* failure, handled differently: the process keeps stamping, with
+`state: failing`, so nothing restarts it — `autostart.ps1 -Action status` reports it as RUNNING
+BUT FAILING, because a restart would not fix a token. There is no
 scheduled task to register: inviting someone would then mean running a command on the machine,
 and this fleet is driven from a phone.
 
@@ -151,4 +154,6 @@ powershell -File tools\discord\autostart.ps1 -Action status   # reports the brid
 
 It also refuses to run twice. Telegram allows a single `getUpdates` consumer per bot, so a
 second poller would split the mail between them; the bridge takes a pid-validated lock and a
-second one exits quietly rather than fighting.
+second copy goes to **standby** — alive, polling nothing, stamping `state: standby` — so it
+takes over the moment the first one stops. It deliberately does not exit: to the watchdog an
+exit is indistinguishable from a crash, and would earn a fresh copy every minute.

@@ -103,9 +103,13 @@ Paste the three values into `.env`, save, and setup takes it from there — it
 checks the token, the server *and* the message-content intent against Discord
 live, then creates the channels for you.
 
-> The owner ID matters more than it looks: the bot obeys **only** that user.
-> Messages from anyone else — people and bots alike — are dropped before any
-> agent ever sees them. That, plus a private server, is the security model.
+> The owner ID matters more than it looks: the bot obeys **only** that user,
+> plus anyone you invite yourself — `config\guests.ini` for people with a
+> Discord account, `config\telegram.ini` for people without one. Everyone
+> else, people and bots alike, is dropped before any agent ever sees them. And
+> an invited person can only send mail: control verbs, permission answers and
+> takeover answers stay yours. That, plus a private server, is the security
+> model.
 
 ### Getting the Mistral key (2 minutes)
 
@@ -134,7 +138,7 @@ Omnius costs nothing.
   desk, so a long job never eats the session you are talking to.
 - **One desk, one job.** Each Discord channel is a separate session with its own
   memory, so a stuck or expensive job is contained to that channel.
-- Model and effort are set once in `config\fleet.json` (currently Opus, high
+- Model and effort are set once in `config\fleet.json` (currently Opus, xhigh
   effort, everywhere). Lower them there if you want cheaper, shallower runs.
 
 **Why not an API key instead?** Measured on 2026-08-07 rather than guessed: the
@@ -204,7 +208,7 @@ Typed commands, answered instantly with no session started:
 
 ### Making a desk cheaper or sharper
 
-Everything runs on Opus at high effort, which is right for coding and overkill
+Everything runs on Opus at xhigh effort, which is right for coding and overkill
 for a desk that just files notes. In that desk's own channel:
 
 ```

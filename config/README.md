@@ -4,7 +4,7 @@ Omnius reads its settings from this folder. **You never have to edit anything
 here**: every key has a working default, and a missing file behaves exactly
 like an untouched one. Change something only when you want it different.
 
-## The three rules
+## The four rules
 
 **1 · Precedence: environment variable → this folder → built-in default.**
 
@@ -57,6 +57,8 @@ flush left and it never arises.
 | `skills.ini` | slash commands your Discord mail may fire on a desk (see `skills.example.ini`) — closed until you fill it |
 | `websites.ini` | sites your desks log into: url, user, and the **name** of the `.env` key holding the password (see `websites.example.ini` and `docs\WEB.md`) — never the password itself |
 | `email.ini` | mail accounts (see `email.example.ini`) — IMAP/SMTP **and** Microsoft Graph; one Discord channel per account |
+| `ai.ini` | which provider (and which `.env` key) powers image, video, speech and OCR — each stays off until it has both (see `ai.example.ini`) |
+| `transcribe.ini` | Whisper model size and custom vocabulary for voice notes (see `transcribe.example.ini`) |
 | `telegram.ini` | people with **no Discord account** invited into exactly one channel through a Telegram bot (see `telegram.example.ini` and `tools\telegram\README.md`) — no file, nobody invited |
 
 Files ending in `.example.ini` are templates that ship with Omnius. Copy one to

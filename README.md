@@ -48,7 +48,7 @@ For **me** it works far better than either — and that sentence means nothing w
 **What it deliberately is not**
 
 - Not multi-messenger, not model-agnostic, no canvas UI, no TTS — recorded as *decisions*, not gaps, in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
-- Not multi-user: the bot obeys exactly one Discord account (plus explicitly invited guests, confined to their project).
+- Not multi-user: the bot obeys exactly one Discord account, plus the guests you invite — each confined to the channels you list for them.
 - Not cross-platform: Windows is load-bearing, see below.
 - Not a supported product — a personal tool, shared for the curious.
 
@@ -83,7 +83,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - Live *typing…* while a desk works, a **fleet board** in `#fleet-status` edited in place, and a deadman alarm that pages you if mail ever sits with nothing alive to take it.
 - Push delivery over Discord's Gateway websocket, with a REST sweep as the authority behind it — a dropped frame costs latency, never a message.
 - **Thirteen instant control commands**, handled by the watchdog itself: `!status` `!model` `!restart` `!stop` `!kill` `!killall` `!cron` `!config` `!screen` `!desktop` `!reload` `!update` `!trace`.
-- **Guests**: give a client or collaborator write access to exactly one project's channels — they're answered in their own language and can't touch anything else.
+- **Guests**: give a client or collaborator write access to exactly the channels you list — one project's or several — and nothing else. They're answered in their own language.
 
 **Running the fleet**
 - Create, archive and reopen whole projects by asking. Desks spawn on demand, one per component, each with its own Discord channel.
@@ -110,7 +110,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 | 📄 **documents** | PDF text locally, OCR fallback for scans, structured extraction (invoices) with checksum validation |
 | 🌐 **playwright** | Headless browsing + a polite parallel crawler, and `weblogin` for sites you register: the **tool** holds the password (from `.env`, which desks may not read) and hands the desk a signed-in session — **a 6-digit 2FA code is asked for in your channel** and used once. Or skip scripting entirely: sign in yourself and let desks drive your real browser through the Chrome extension |
 | 🎬 **watch** | Watch a video (URL or file) and answer questions about it — frames + transcript, captions or local Whisper |
-| 💬 **telegram** | Invite someone who has **no Discord account** into exactly **one** channel: they write to a bot, their message appears attributed, a desk answers, the answer arrives back. Text, photos and voice notes (transcribed on arrival). Invite by **@handle** — the numeric id is pinned on their first message, so a handle later taken by somebody else inherits nothing. They reach no other channel, never see the fleet's own asks, and cannot use a single control verb — that is the watchdog's rule, not this bridge's |
+| 💬 **telegram** | Invite someone who has **no Discord account** into exactly **one** channel: they write to a bot, their message appears attributed, a desk answers, the answer arrives back. Text, photos and voice notes (transcribed on arrival). Invite by **@handle** — the numeric id is pinned on their first message, so a handle later taken by somebody else inherits nothing. They reach no other channel and cannot use a single control verb — that is the watchdog's rule, not this bridge's — and under the default `visibility = own` they never see the fleet's own asks either (`all` shows them everything in that channel, and is what two people sharing one must both use) |
 | 📓 **daybook** | Notes & tasks app: plain markdown files are the data, stdlib-only server, web UI at `localhost:5111`. Its Today page replays **any day** — your notes plus every commit and desk that worked that day |
 
 **Ops that don't need you**
