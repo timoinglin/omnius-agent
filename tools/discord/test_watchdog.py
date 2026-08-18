@@ -1254,6 +1254,42 @@ try:
     _b.nudge_took = False; _b.last_nudge = 0.0
     for f in _b.box.glob("*.json"):
         f.unlink()
+
+    # == bridge: a refused --continue costs one relaunch, not the desk =========
+    # 2026-08-18: the CLI refused --continue ("No conversation found to
+    # continue" - transcript written by an older CLI, no longer resumable) and
+    # exited seconds after boot. The bridge read that as the desk closing;
+    # the watchdog reopened it; 112 windows in an hour. Now the pump watches
+    # for the refusal line and main() relaunches ONCE without the flag.
+    _b.saw_continue_refusal, _b._refusal_tail = False, ""
+    _b._scan_refusal("booting up\r\nall fine so far")
+    check("bridge: ordinary output never trips the refusal watch",
+          _b.saw_continue_refusal is False)
+    _b._scan_refusal("No conversation found to continue\r\n")
+    check("bridge: the refusal line trips it", _b.saw_continue_refusal is True)
+    _b.saw_continue_refusal, _b._refusal_tail = False, ""
+    _b._scan_refusal("blah blah No conversation fou")
+    _b._scan_refusal("nd to continue\r\n")
+    check("bridge: ...even split across two pty reads", _b.saw_continue_refusal is True)
+    _cmd_c = ["claude", "--model", "opus", "--continue"]
+    check("bridge: refusal + fast exit + first attempt -> relaunch fresh",
+          _db.retry_without_continue(1, _cmd_c, True, 5.0) is True)
+    check("bridge: without --continue there is nothing to retry",
+          _db.retry_without_continue(1, ["claude"], True, 5.0) is False)
+    check("bridge: the second attempt never retries (no loop by construction)",
+          _db.retry_without_continue(2, _cmd_c, True, 5.0) is False)
+    check("bridge: a long-lived desk that merely PRINTED the phrase is not a refusal",
+          _db.retry_without_continue(1, _cmd_c, True,
+                                     _db.RETRY_FRESH_SECONDS + 30) is False)
+    check("bridge: a fast exit with no refusal line is some other death",
+          _db.retry_without_continue(1, _cmd_c, False, 5.0) is False)
+    _bsrc_r = (_rr / "tools" / "bridge" / "desk_bridge.py").read_text(encoding="utf-8")
+    check("bridge: main() strips the flag and relaunches, logged",
+          '[a for a in cmd if a != "--continue"]' in _bsrc_r
+          and "relaunching WITHOUT it" in _bsrc_r)
+    check("bridge: the pump feeds the refusal watch",
+          "self._scan_refusal(data)" in _bsrc_r)
+
     # The bridge must obey the desk's RESUME POLICY, not just its own instinct
     # to stay warm. Until 2026-08-16 it always passed --continue, so a takeover
     # moved the orchestrator - the one desk set `resume: "fresh"` because its
@@ -1692,6 +1728,60 @@ try:
     for f in _lbox.glob("*.json"):
         f.unlink()
     wd._run_failures.clear(); wd._run_backoff.clear(); wd._run_alerted.clear()
+
+    # == a tab that CLAIMS and then dies is still a failed start ===============
+    # The 2026-08-18 boot loop: a refused --continue killed the desk ~4s AFTER
+    # it claimed - 112 windows in an hour, the ledger stuck at 1, no alert.
+    # The guard above only knows "never claimed"; this one counts "claimed,
+    # then the claim's pid was gone within seconds".
+    print("== fast death: claimed, then gone ==")
+    wd.RUNNING.clear(); wd._run_failures.clear(); wd._run_backoff.clear()
+    wd._run_alerted.clear(); wd._tab_booted.clear()
+    _fd = "fastdeath.desk"
+    wd.RUNS.mkdir(parents=True, exist_ok=True)
+    (wd.RUNS / f"{_fd}.json").write_text(json.dumps(
+        {"session": _fd, "mode": "terminal",
+         "startedAt": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}),
+        encoding="utf-8")
+    claim(_fd, pid=_os0.getpid())
+    check("a terminal that claims hands over to the claim (as before)",
+          wd.run_active(_fd) is False and not (wd.RUNS / f"{_fd}.json").exists())
+    check("...and the fast-death watch starts", _fd in wd._tab_booted)
+    claim(_fd, pid=999999999)                       # the claim dies seconds in
+    check("the claim dying within the window is a FAILURE in the same ledger",
+          wd.run_active(_fd) is False and wd._run_failures.get(_fd) == 1
+          and wd._run_backoff.get(_fd, 0) > _bt.time())
+    wd.run_active(_fd)
+    check("...counted once, not per poll",
+          _fd not in wd._tab_booted and wd._run_failures.get(_fd) == 1)
+    claim(_fd, pid=_os0.getpid())                   # survives the window
+    wd._tab_booted[_fd] = _bt.time() - wd.TAB_FAST_DEATH_SECONDS - 5
+    wd.run_active(_fd)
+    check("a claim alive past the window clears the watch without counting",
+          _fd not in wd._tab_booted and wd._run_failures.get(_fd) == 1)
+    wd._tab_booted[_fd] = _bt.time() - wd.TAB_FAST_DEATH_SECONDS * 2 - 10
+    claim(_fd, pid=999999999)                       # owner closed it much later
+    wd.run_active(_fd)
+    check("a death long after boot never counts", wd._run_failures.get(_fd) == 1)
+    _rb2, _rpc2, _rls2 = wd.build_map, wd.primary_channel_id, api.load_schema
+    wd.build_map = lambda s: {}
+    wd.primary_channel_id = lambda m, s: "c_fd"
+    api.load_schema = lambda: {}
+    sent.clear()
+    wd._run_failures[_fd] = 2
+    wd._tab_booted[_fd] = _bt.time() - 4
+    wd.run_active(_fd)
+    check("the third fast death pages him, naming the shape",
+          wd._run_failures.get(_fd) == 3 and bool(sent)
+          and "dies within seconds" in sent[-1][1])
+    wd._tab_booted[_fd] = _bt.time() - 4
+    wd.run_active(_fd)
+    check("...and only once", len(sent) == 1)
+    wd.build_map, wd.primary_channel_id, api.load_schema = _rb2, _rpc2, _rls2
+    (wd.SESSIONS / f"{_fd}.json").unlink(missing_ok=True)
+    wd._run_failures.clear(); wd._run_backoff.clear(); wd._run_alerted.clear()
+    wd._tab_booted.clear()
+    sent.clear()
 
     # == only HIS mail earns a window ==========================================
     # 2026-08-03: he was working in another project when an orchestrator window
@@ -2775,6 +2865,15 @@ try:
         d.mkdir(parents=True, exist_ok=True)
         check("an EMPTY history folder still counts as none", not wd.has_history(fresh))
         (d / "session.jsonl").write_text("{}", encoding="utf-8")
+        check("a .jsonl with no conversation turns is NOT history",
+              not wd.has_history(fresh),
+              "2026-08-18: folder-non-empty said True, the CLI said no - 112 windows")
+        (d / "notes.txt").write_text("stray", encoding="utf-8")
+        check("stray non-transcript files are not history either",
+              not wd.has_history(fresh))
+        (d / "session.jsonl").write_text(
+            json.dumps({"message": {"role": "user", "content": "hola"}}) + "\n",
+            encoding="utf-8")
         check("a folder with a real transcript reports history", wd.has_history(fresh))
 
         # No claim here on purpose: a live claim means a HUMAN owns this

@@ -73,6 +73,7 @@ BRIDGES = STATE / "bridges"      # <id>.json: a live bridge owns this desk
 
 READ_CHUNK = 16384
 POLL_SECONDS = 0.02          # 50 Hz: below the threshold where typing feels laggy
+RETRY_FRESH_SECONDS = 30     # a --continue refusal kills the CLI this fast at boot
 INBOX_POLL_SECONDS = 0.5     # mail latency; the gateway push already did the waiting
 HUMAN_QUIET_SECONDS = 4.0    # never type into a line the owner is still writing
 NUDGE = "/omnius"            # what the bus types; the skill does the rest
@@ -215,6 +216,13 @@ class Bridge:
         self.box = INBOX / self.session
         self.title_seq = f"\x1b]0;{session}\x07"
         self._tail = ""              # a title sequence may straddle two reads
+        # A refused `--continue` kills the CLI one line after boot ("No
+        # conversation found to continue", interactive only - 2026-08-18, the
+        # 112-window daybook loop). The pump watches for that line so main()
+        # can relaunch once WITHOUT the flag instead of dying as if the desk
+        # had closed normally.
+        self.saw_continue_refusal = False
+        self._refusal_tail = ""      # the marker may straddle two reads too
 
     @staticmethod
     def clean_env():
@@ -287,6 +295,19 @@ class Bridge:
         out, n = OSC_TITLE.subn("", data)
         return out + (self.title_seq if n else "")
 
+    CONTINUE_REFUSED = "No conversation found to continue"
+
+    def _scan_refusal(self, data):
+        """Notice the CLI refusing `--continue`, across chunk boundaries."""
+        if self.saw_continue_refusal:
+            return
+        joined = self._refusal_tail + data
+        if self.CONTINUE_REFUSED in joined:
+            self.saw_continue_refusal = True
+            self._refusal_tail = ""
+        else:
+            self._refusal_tail = joined[-(len(self.CONTINUE_REFUSED) - 1):]
+
     def pump_out(self):
         """ConPTY -> this console. Passthrough, minus the app's title grab."""
         out = sys.stdout
@@ -298,6 +319,7 @@ class Bridge:
             except Exception:
                 break
             if data:
+                self._scan_refusal(data)
                 try:
                     out.write(self._rename(data))
                     out.flush()
@@ -491,6 +513,16 @@ class Bridge:
         return 0
 
 
+def retry_without_continue(attempt, cmd, saw_refusal, alive_seconds):
+    """One relaunch, only for the one failure it exists for: the CLI refused
+    `--continue` and died at boot. A long-lived desk whose CONVERSATION merely
+    contained the marker text is not a refusal - the fast-exit window is what
+    tells them apart - and the second attempt never loops: it runs without the
+    flag, so the refusal cannot recur."""
+    return (attempt == 1 and "--continue" in cmd and saw_refusal
+            and alive_seconds <= RETRY_FRESH_SECONDS)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description="Omnius desk bridge (ConPTY)")
     ap.add_argument("session", help="desk id: orchestrator, <project>.<component>, tool.<t>, daybook")
@@ -512,20 +544,35 @@ def main(argv=None):
 
     cmd = claude_argv(args.session, cwd, args.model, args.effort)
     log(f"cwd {cwd}")
-    log("exec " + " ".join(cmd))
-    try:
-        b = Bridge(args.session, cmd, cwd).start()
-    except Exception as e:
-        import traceback
-        log(f"FATAL: could not start the pty: {type(e).__name__}: {e}")
-        for ln in traceback.format_exc().rstrip().splitlines():
-            log("  " + ln)
-        return 2
-    print()
-    try:
-        return b.run()
-    finally:
-        log("desk closed")
+    rc = 0
+    for attempt in (1, 2):
+        log("exec " + " ".join(cmd))
+        try:
+            b = Bridge(args.session, cmd, cwd).start()
+        except Exception as e:
+            import traceback
+            log(f"FATAL: could not start the pty: {type(e).__name__}: {e}")
+            for ln in traceback.format_exc().rstrip().splitlines():
+                log("  " + ln)
+            return 2
+        print()
+        try:
+            rc = b.run()
+        finally:
+            log("desk closed")
+        alive = time.time() - b.started_at
+        if retry_without_continue(attempt, cmd, b.saw_continue_refusal, alive):
+            # The 2026-08-18 boot loop: the CLI refused --continue (transcript
+            # present but not resumable - e.g. written by an older CLI) and
+            # exited one line in. That must cost ONE relaunch and a fresh
+            # conversation, never the desk. has_history() cannot predict this
+            # (the CLI owns the rule and changes it); this catch does not try.
+            log(f"`--continue` refused by the CLI ({int(alive)}s after boot) - "
+                f"nothing resumable here; relaunching WITHOUT it, fresh conversation")
+            cmd = [a for a in cmd if a != "--continue"]
+            continue
+        break
+    return rc
 
 
 if __name__ == "__main__":

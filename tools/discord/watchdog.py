@@ -176,16 +176,35 @@ def history_dir_for(cwd):
 
 
 def has_history(cwd):
-    """True when `claude --continue` has something of ITS OWN to resume here.
+    """True when `claude --continue` PLAUSIBLY has something of ITS OWN here.
 
     False means --continue would silently attach to the most recent conversation
     from another folder - see the comment in start_run(). Treat an unreadable
     home directory as "no history": starting cold is always safe, resuming the
     wrong conversation is not.
-    """
+
+    This is a cheap NEGATIVE check, not a promise: an empty folder, stray
+    non-transcript files, or a .jsonl with no conversation turns mean "nothing
+    to resume" for certain, but True is only a prediction - the CLI owns the
+    real decision, and it can change it (2026-08-18: a transcript written by
+    CLI 2.1.232, 145 valid turns, was refused by 2.1.234 with "No conversation
+    found to continue", and the folder-non-empty version of this check turned
+    that refusal into a 112-window boot loop on a desk). The durable guard is
+    downstream: the bridge relaunches WITHOUT --continue when the CLI refuses
+    it at boot (desk_bridge), and a fast-dying tab now counts as a failed
+    start (run_active)."""
     try:
         d = history_dir_for(cwd)
-        return d.is_dir() and any(d.iterdir())
+        if not d.is_dir():
+            return False
+        for f in d.glob("*.jsonl"):
+            try:
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    if '"message"' in fh.read(65536):
+                        return True
+            except OSError:
+                continue
+        return False
     except OSError:
         return False
 
@@ -1063,6 +1082,8 @@ _run_failures = {}    # session -> consecutive failed runs
 _run_backoff = {}     # session -> unix ts before which we will not retry
 _run_oldest = {}      # session -> oldest envelope name the run was started for
 _run_alerted = set()  # sessions whose crash-loop the owner has already heard about
+_tab_booted = {}      # session -> when its terminal CLAIMED (fast-death watch, run_active)
+TAB_FAST_DEATH_SECONDS = 30  # a claim dying this soon after boot is a FAILED start
 
 
 TAB_GRACE_SECONDS = 150   # terminal spawn -> claude boot -> /omnius check-in, generously
@@ -1142,11 +1163,13 @@ def run_active(session):
         return True
     lease = read_lease(session)
     if not lease:
+        _tab_fast_death(session)
         return False
     if lease.get("mode") == "terminal":
         c = read_claim(session)
         if c and str(c.get("machine") or "") == api.MACHINE and pid_alive(c.get("pid")):
             (RUNS / f"{session}.json").unlink(missing_ok=True)   # booted: claim governs now
+            _tab_booted[session] = time.time()                   # fast-death watch starts
             return False
         try:
             age = time.time() - datetime.strptime(
@@ -1185,6 +1208,48 @@ def run_active(session):
         # a dead lease from a previous watchdog: nothing owns it, clean it up
         (RUNS / f"{session}.json").unlink(missing_ok=True)
     return False
+
+
+def _tab_fast_death(session):
+    """Count 'the tab claimed, then died within seconds' as a FAILED start.
+
+    The 2026-08-18 boot loop: a refused `--continue` killed the desk ~4s after
+    it claimed, every ~6s, 112 windows in an hour - and the tab-loop ledger
+    never moved, because it only counts a tab that NEVER claims. To every
+    check the loop looked like a healthy boot. So: when the claim a terminal
+    just wrote dies inside TAB_FAST_DEATH_SECONDS of booting, it goes into the
+    same failure ledger as never-claimed - backoff, and the owner is told at
+    the same threshold. A claim that survives the window clears the watch: an
+    owner closing his own window ten minutes later is not a crash."""
+    booted = _tab_booted.get(session)
+    if booted is None:
+        return
+    c = read_claim(session)
+    if c and str(c.get("machine") or "") == api.MACHINE and pid_alive(c.get("pid")):
+        if time.time() - booted > TAB_FAST_DEATH_SECONDS:
+            _tab_booted.pop(session, None)      # survived the window: a real desk
+        return
+    _tab_booted.pop(session, None)
+    if time.time() - booted > TAB_FAST_DEATH_SECONDS * 2:
+        return   # died long after boot (or we looked late) - not a boot failure
+    fails = _run_failures.get(session, 0) + 1
+    _run_failures[session] = fails
+    _run_backoff[session] = time.time() + RUN_BACKOFF_SECONDS
+    log(f"terminal for {session} claimed and DIED within "
+        f"{int(time.time() - booted)}s (failure #{fails}) - backing off "
+        f"{RUN_BACKOFF_SECONDS}s")
+    if fails >= RUN_FAILURES_BEFORE_ALERT and session not in _run_alerted:
+        _run_alerted.add(session)
+        try:
+            cid = primary_channel_id(build_map(api.load_schema()), session)
+            if cid:
+                api.send_message(cid, f"🛑 `{session}`: its desk window connects and then "
+                                      f"dies within seconds ({fails} tries). Check "
+                                      f"`state\\logs\\bridge-{session}.log` - the last "
+                                      f"exec line and what follows it usually name the "
+                                      f"reason.")
+        except Exception as e:
+            log(f"fast-death alert failed for {session}: {e}")
 
 
 def _desktop_hosted(p):
