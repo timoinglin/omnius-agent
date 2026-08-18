@@ -89,12 +89,12 @@ class FakeApi:
         self.posts = []
         self.downloads = []
         self.channels = channels or [
-            {"id": "900000000000000001", "name": "general", "type": 0,
-             "parent_id": "900000000000000000"},
-            {"id": "900000000000000000", "name": "my-project", "type": 4},
+            {"id": "900000000001", "name": "general", "type": 0,
+             "parent_id": "900000000000"},
+            {"id": "900000000000", "name": "my-project", "type": 4},
         ]
         self.history = {}
-        self._next = 700000000000000000
+        self._next = 700000000000
 
     def redact(self, t):
         return t
@@ -117,7 +117,7 @@ class FakeApi:
         return [{"id": mid}]
 
     def latest_message_id(self, cid):
-        return "600000000000000000"
+        return "600000000000"
 
     def messages_after(self, cid, after, limit=50):
         return [m for m in self.history.get(str(cid), []) if int(m["id"]) > int(after)]
@@ -227,10 +227,10 @@ check("the envelope carries the guest label, NEVER owner", _env["from"] == "anto
 check("the envelope id IS the discord message id, so the inbox sorts honestly",
       _env["id"] == api.posts[0]["id"] and _env_names[0] == api.posts[0]["id"] + ".json")
 check("an older discord snowflake still sorts first next to it",
-      sorted(["600000000000000000.json", _env_names[0]])[0] == "600000000000000000.json")
+      sorted(["600000000000.json", _env_names[0]])[0] == "600000000000.json")
 check("channel and category are resolved, so the desk knows where it is",
       _env["channel"] == "general" and _env["category"] == "my-project")
-check("channelId is the id, not the name", _env["channelId"] == "900000000000000001")
+check("channelId is the id, not the name", _env["channelId"] == "900000000001")
 check("nothing was written to state\\outbox - the watchdog owns replies",
       not (SAND / "state" / "outbox").exists())
 check("the exchange is in the desk transcript, so !trace can find it",
@@ -263,16 +263,16 @@ check("the first pass starts from now - no history is replayed into their phone"
       _sent == [],
       "being invited must not dump the last month of a channel to a stranger")
 _cursor = json.loads((bridge.STATE / "mirror.json").read_text(encoding="utf-8"))
-check("the bridge keeps its OWN cursor file", _cursor.get("900000000000000001"))
+check("the bridge keeps its OWN cursor file", _cursor.get("900000000001"))
 check("it never touches the watchdog's last_ids.json",
       "last_ids" not in CODE and not (SAND / "state" / "watchdog").exists(),
       "two cursors over one channel is fine; SHARING one is how the watchdog "
       "starts skipping the owner's messages")
 
-api.history["900000000000000001"] = [
-    {"id": "600000000000000001", "content": "owner private note",
+api.history["900000000001"] = [
+    {"id": "600000000001", "content": "owner private note",
      "author": {"id": "111", "username": "the-owner", "bot": False}, "attachments": []},
-    {"id": "600000000000000002", "content": "here you go",
+    {"id": "600000000002", "content": "here you go",
      "author": {"id": "222", "username": "omnius", "bot": True},
      "attachments": [{"filename": "report.pdf", "size": 10, "url": "http://x/y"}]},
 ]
@@ -293,15 +293,15 @@ check("media_out=0 names attachments instead of uploading them",
 _all = {"antonio": dict(CHATS["antonio"], visibility="all")}
 shutil.rmtree(bridge.STATE, ignore_errors=True)
 bridge.outbound(FAKE_TOKEN, _all, api, "222")          # first pass = cursor only
-bridge.write_cursor("mirror", {"900000000000000001": "600000000000000000"})
+bridge.write_cursor("mirror", {"900000000001": "600000000000"})
 _sent.clear()
 bridge.outbound(FAKE_TOKEN, _all, api, "222")
 check("visibility=all does deliver the owner's messages",
       any("owner private note" in s["params"].get("text", "") for s in _sent))
 
 # loop guard
-bridge.write_cursor("mirror", {"900000000000000001": "600000000000000000"})
-bridge.write_cursor("posted", {"ids": ["600000000000000002"]})
+bridge.write_cursor("mirror", {"900000000001": "600000000000"})
+bridge.write_cursor("posted", {"ids": ["600000000002"]})
 _sent.clear()
 bridge.outbound(FAKE_TOKEN, _all, api, "222")
 check("a message the bridge itself posted is never mirrored back",
@@ -309,20 +309,20 @@ check("a message the bridge itself posted is never mirrored back",
       "without this every relayed message echoes forever")
 
 # failure handling
-bridge.write_cursor("mirror", {"900000000000000001": "600000000000000001"})
+bridge.write_cursor("mirror", {"900000000001": "600000000001"})
 bridge.write_cursor("posted", {"ids": []})
 _sent.clear()
 _fail_next[0] = 1
 bridge.outbound(FAKE_TOKEN, _all, api, "222")
 _cur = json.loads((bridge.STATE / "mirror.json").read_text(encoding="utf-8"))
 check("a failed mirror does NOT advance the cursor - it is retried, not lost",
-      _cur["900000000000000001"] == "600000000000000001")
+      _cur["900000000001"] == "600000000001")
 _fail_next[0] = 5
 for _ in range(3):
     bridge.outbound(FAKE_TOKEN, _all, api, "222")
 _cur = json.loads((bridge.STATE / "mirror.json").read_text(encoding="utf-8"))
 check("after three failures it moves on rather than wedging the mirror",
-      _cur["900000000000000001"] == "600000000000000002")
+      _cur["900000000001"] == "600000000002")
 check("...and says so, so a dropped message is never silent",
       "gave up mirroring" in bridge.LOG.read_text(encoding="utf-8"))
 _fail_next[0] = 0
