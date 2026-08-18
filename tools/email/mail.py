@@ -38,6 +38,7 @@ SECURITY NOTES, none of them optional:
     body), because a headless run otherwise leaves no reviewable trace.
 """
 import argparse
+import base64
 import email
 import email.policy
 import email.utils
@@ -252,6 +253,66 @@ def _quote(folder):
     two arguments and the command fails in a way that reads like 'no such
     folder'."""
     return '"%s"' % folder.replace('"', r'\"')
+
+
+LIST_LINE_RE = re.compile(rb'^\([^)]*\)\s+(?:"([^"]*)"|NIL)\s+(.*)$')
+
+
+def _imap_folder_name(line):
+    """One LIST reply -> a "/"-joined folder path, or "" for a line to skip.
+
+    Two things bite here and both are silent: the hierarchy delimiter is the
+    SERVER's choice (Gmail uses "/", Exchange and Dovecot often "."), and the
+    name is modified UTF-7, so "Borradores" is fine but any accent arrives as
+    "&AOk-". Normalising the delimiter keeps `folders` and `--folder` speaking
+    the same paths across providers.
+    """
+    if isinstance(line, tuple):          # a literal: (b'(...) "/" {6}', b'name')
+        line = b" ".join(x for x in line if isinstance(x, bytes))
+    if not isinstance(line, bytes):
+        return ""
+    m = LIST_LINE_RE.match(line.strip())
+    if not m:
+        return ""
+    delim = (m.group(1) or b"/").decode("ascii", "replace")
+    raw = m.group(2).strip()
+    if raw.startswith(b'"') and raw.endswith(b'"'):
+        raw = raw[1:-1]
+    name = _utf7_decode(raw)
+    return name.replace(delim, "/") if delim else name
+
+
+def _utf7_decode(raw):
+    """IMAP's modified UTF-7 (RFC 3501 §5.1.3) -> str.
+
+    Python has no codec for it: "utf-7" is the RFC 2152 variant and rejects
+    the "&" shift character and the "," that replaces "/" in base64. Written
+    out by hand rather than shelled to a dependency, because the failure mode
+    is a folder that simply cannot be named - "Ni&APM-minas" is untypable.
+    """
+    text, i = [], 0
+    while i < len(raw):
+        c = raw[i:i + 1]
+        if c != b"&":
+            text.append(c.decode("ascii", "replace"))
+            i += 1
+            continue
+        end = raw.find(b"-", i + 1)
+        if end < 0:                       # unterminated: keep it literal
+            text.append(raw[i:].decode("ascii", "replace"))
+            break
+        chunk = raw[i + 1:end]
+        if not chunk:                     # "&-" is a literal ampersand
+            text.append("&")
+        else:
+            b64 = chunk.replace(b",", b"/")
+            b64 += b"=" * (-len(b64) % 4)
+            try:
+                text.append(base64.b64decode(b64).decode("utf-16-be"))
+            except Exception:
+                text.append(raw[i:end + 1].decode("ascii", "replace"))
+        i = end + 1
+    return "".join(text)
 
 
 FETCH_UID_RE = re.compile(rb"UID\s+(\d+)")
@@ -484,6 +545,43 @@ def _graph():
     Graph module can never stop `accounts` from answering."""
     import graph
     return graph
+
+
+@verb("folders", "every folder in the mailbox, with message and unread counts")
+def v_folders(args):
+    """Answers "what can you actually see?" before any message is fetched.
+
+    It exists because `list --folder` used to be a guessing game: Graph accepts
+    only ENGLISH well-known names, his mailbox displays Spanish ones, and a
+    custom folder needs an opaque id no human would type. `folders` prints the
+    paths that `--folder` now accepts, so the two verbs compose.
+    """
+    label, body, password = account(args.account)
+    if provider_of(body) == "graph":
+        g = _graph()
+        try:
+            rows = g.list_folders(body)
+        except g.GraphError as e:
+            raise MailError(str(e))
+        return {"account": label, "count": len(rows),
+                "folders": [{"name": f["name"], "path": f["path"],
+                             "depth": f["depth"], "messages": f["total"],
+                             "unread": f["unread"]} for f in rows]}
+    conn = imap_connect(body, password)
+    try:
+        typ, data = conn.list()
+        if typ != "OK":
+            raise MailError("LIST failed")
+        rows = []
+        for line in data or []:
+            name = _imap_folder_name(line)
+            if name:
+                rows.append({"name": name.rsplit("/", 1)[-1], "path": name,
+                             "depth": name.count("/"),
+                             "messages": None, "unread": None})
+        return {"account": label, "count": len(rows), "folders": rows}
+    finally:
+        _close(conn)
 
 
 @verb("list", "recent messages: id, from, subject, date, flags")
@@ -833,7 +931,7 @@ def main(argv=None):
     sub = p.add_subparsers(dest="verb")
     for name, fn in VERBS.items():
         sp = sub.add_parser(name, help=fn.help)
-        if name in ("list", "send"):
+        if name in ("list", "send", "folders"):
             sp.add_argument("--account", help="account label (default: config's)")
         if name == "list":
             sp.add_argument("--folder")

@@ -253,6 +253,75 @@ try:
 finally:
     ocfg.CONFIG_DIR, ocfg.ROOT = _real_dir, _real_root
 
+# --- folders ------------------------------------------------------------------
+# A folder the user can SEE must be a folder he can NAME. Graph speaks English
+# well-known names and opaque ids; IMAP speaks modified UTF-7 and a delimiter
+# the server picks. Both used to surface as "Id is malformed" / "no such
+# folder", which reads like a broken tool rather than a lookup miss.
+print("== folders ==")
+check("a plain ASCII folder decodes unchanged",
+      mail._utf7_decode(b"Recibos") == "Recibos")
+check("modified UTF-7 decodes to the name he actually sees",
+      mail._utf7_decode(b"N&APM-minas") == "Nóminas",
+      f"got {mail._utf7_decode(b'N&APM-minas')!r}")
+check("',' is base64 '/' in modified UTF-7, not a path separator",
+      mail._utf7_decode(b"&BdMF3AXVBdA-") == "דלוא"
+      or mail._utf7_decode(b"&ZeVnLIqe-") == "日本語")
+check("'&-' is a literal ampersand", mail._utf7_decode(b"R&-D") == "R&D")
+check("an unterminated shift is kept literal rather than crashing",
+      mail._utf7_decode(b"broken&AOk") == "broken&AOk")
+check("a LIST reply yields the folder path",
+      mail._imap_folder_name(b'(\HasNoChildren) "/" "INBOX"') == "INBOX")
+check("the server's delimiter is normalised to '/'",
+      mail._imap_folder_name(b'(\HasChildren) "." "INBOX.Trabajo"')
+      == "INBOX/Trabajo",
+      f"got {mail._imap_folder_name(b'(\HasChildren) \".\" \"INBOX.Trabajo\"')!r}")
+check("a LIST line that is not a folder is skipped, not half-parsed",
+      mail._imap_folder_name(b"") == "" and mail._imap_folder_name(None) == "")
+check("`folders` is a verb, so `--folder` is never a guessing game",
+      "folders" in mail.VERBS)
+
+_GSRC = (HERE / "graph.py").read_text(encoding="utf-8")
+import graph  # noqa: E402
+check("a well-known folder resolves with NO network call",
+      graph.resolve_folder({}, "SentItems") == "sentitems"
+      and graph.resolve_folder({}, "inbox") == "inbox")
+check("an empty folder falls back to the inbox",
+      graph.resolve_folder({}, "") == "inbox" and graph.resolve_folder({}, None) == "inbox")
+check("a Graph id is passed through untouched",
+      graph.resolve_folder({}, "AAMkAGM3-fake-id") == "AAMkAGM3-fake-id")
+
+_tree_stub = [
+    {"name": "keep", "path": "Bandeja de entrada/keep", "id": "ID-A", "depth": 1,
+     "total": 0, "unread": 0},
+    {"name": "keep", "path": "Archivo/keep", "id": "ID-B", "depth": 1,
+     "total": 0, "unread": 0},
+    {"name": "Nominas", "path": "Bandeja de entrada/keep/Nominas", "id": "ID-C",
+     "depth": 2, "total": 1, "unread": 0},
+]
+_real_list = graph.list_folders
+graph.list_folders = lambda body, token=None: _tree_stub
+try:
+    check("a full path picks exactly one folder",
+          graph.resolve_folder({}, "Bandeja de entrada/keep/Nominas") == "ID-C")
+    check("a unique display name is enough",
+          graph.resolve_folder({}, "nominas") == "ID-C")
+    check("a backslash path works too - he types Windows paths",
+          graph.resolve_folder({}, "Archivo\keep") == "ID-B")
+    # The one that matters: two folders named "keep" and a silent pick would
+    # read the WRONG mailbox folder with no error anywhere.
+    check("an ambiguous name is refused, listing the candidates",
+          raises(lambda: graph.resolve_folder({}, "keep"), graph.GraphError))
+    check("an unknown folder names the folders that DO exist",
+          raises(lambda: graph.resolve_folder({}, "nope"), graph.GraphError))
+finally:
+    graph.list_folders = _real_list
+
+check("Graph list goes through resolve_folder, so a Spanish folder name works",
+      "resolve_folder(body, folder" in _GSRC,
+      "without it, every non-English folder answers 'Id is malformed'")
+
+
 # --- the two silent mistakes, pinned in the AST -------------------------------
 print("== silent-failure guards ==")
 _tree = ast.parse(SRC)

@@ -58,8 +58,9 @@ What the removed friction did **not** remove:
 
 | Command | Does |
 |---|---|
+| `python tools\email\mail.py folders [--account X]` | every folder in the mailbox with its path, message count and unread count. Run it before `--folder`, never guess |
 | `python tools\email\mail.py accounts` | which accounts exist, and whether each password is set. **No network** — this is the "is mail even set up?" verb |
-| `python tools\email\mail.py list [--limit 20] [--unseen] [--since 2026-07] [--until 2026-07]` | messages: id, from, subject, date, seen. `--since`/`--until` take a whole month (`2026-07`) or a day (`2026-07-14`), and the end is **inclusive** |
+| `python tools\email\mail.py list [--folder PATH] [--limit 20] [--unseen] [--since 2026-07] [--until 2026-07]` | messages: id, from, subject, date, seen. `--folder` takes a name or path **as `folders` prints it** (see below). `--since`/`--until` take a whole month (`2026-07`) or a day (`2026-07-14`), and the end is **inclusive** |
 | `python tools\email\mail.py read --id <id> [--save-attachments]` | one message in full; attachments to `media\inbox\YYYY-MM\` |
 | `python tools\email\mail.py send --to <addr> --subject <s> --body-file <f> [--attach FILE ...] [--dry-run]` | send. A missing or oversized attachment refuses the whole send rather than sending part of it |
 | `python tools\email\mail.py reply --id <id> --body-file <f> [--attach FILE ...] [--dry-run]` | reply, threaded |
@@ -86,6 +87,46 @@ Use an **app password** for Zoho, Gmail and Outlook — those accounts have 2FA 
 
 Not configured is not an error: with no `config\email.ini`, `accounts` returns an empty list and every other verb exits 2 saying exactly what to add.
 
+## Folders — the whole mailbox, not just the inbox
+
+`folders` lists them; `--folder` takes what it printed. Nothing else is a folder
+name you should type.
+
+```
+python tools\email\mail.py folders --account laiatech
+python tools\email\mail.py list --account laiatech --folder "Elementos enviados"
+python tools\email\mail.py list --account laiatech --folder "Bandeja de entrada/keep/Nominas"
+```
+
+**Why a resolver exists at all** (built 2026-08-18, when the owner asked whether
+this desk could read *all* his Outlook folders — it could not):
+
+- **Graph knows the six standard folders by their ENGLISH names only** —
+  `inbox`, `archive`, `sentitems`, `deleteditems`, `drafts`, `junkemail`. His
+  mailbox *displays* `Bandeja de entrada` / `Elementos enviados`, so the name
+  on his screen is not a name any Graph URL accepts.
+- **A custom folder has no name at all in the API**, only an opaque id
+  (`AAMkAGM3…`) no human would ever type.
+- Both used to come back as **`Graph 400: Id is malformed`**, which reads like a
+  broken tool rather than "that folder is not spelled that way".
+
+So `graph.resolve_folder()` answers a well-known name **with no network call**,
+passes an id straight through, and otherwise walks the folder tree once and
+matches case-insensitively — **full path first**, then display name. Two folders
+sharing a display name is an **error listing both**, never a pick: reading the
+wrong `keep` would produce plausible output and no symptom anywhere.
+
+On IMAP the same verb runs `LIST`, decodes **modified UTF-7** (RFC 3501 §5.1.3 —
+Python has no codec for it; `utf-7` is the other variant and rejects `&`) and
+normalises the server's delimiter to `/`, so a Gmail `[Gmail]/Enviados` and a
+Dovecot `INBOX.Trabajo` both come back as paths that `--folder` accepts. IMAP
+counts are `null` — `LIST` does not carry them and a `STATUS` per folder would
+turn one verb into N round-trips.
+
+**Reading is still read-only everywhere.** `folders` cannot create, rename or
+move anything; there is no verb in this tool that writes to a mailbox except
+`send`/`reply`.
+
 ## Message ids
 
 `<account>/<folder>/<uidvalidity>/<uid>` — e.g. `work/INBOX/1690000000/4211`.
@@ -107,7 +148,7 @@ Never a sequence number. Sequence numbers shift whenever anything else touches t
 
 ## Tests
 
-`python tools\email\test_email.py` — 51 checks, no mailbox or network needed. Two mistakes that would be *silent* in production are pinned with AST checks: using sequence numbers instead of UIDs, and marking his mail read just by looking at it.
+`python tools\email\test_email.py` — 86 checks, no mailbox or network needed. Two mistakes that would be *silent* in production are pinned with AST checks: using sequence numbers instead of UIDs, and marking his mail read just by looking at it. A third is pinned by test rather than AST: a folder name that matches two folders must be an error, not a pick.
 
 ## Proven against a live mailbox (Gmail, 2026-08-05)
 

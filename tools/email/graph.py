@@ -176,9 +176,83 @@ def _addr(entry):
     return f"{name} <{addr}>".strip() if name else addr
 
 
+# Graph names the six standard folders in ENGLISH no matter what language the
+# mailbox displays. His own mailbox shows "Bandeja de entrada" / "Elementos
+# enviados", so a folder the user can see is very often NOT a name any Graph
+# URL accepts - and an unknown name comes back as "Id is malformed", which
+# reads like a bug in us rather than a lookup miss. Hence resolve_folder.
+WELL_KNOWN = {
+    "inbox", "archive", "drafts", "sentitems", "deleteditems", "junkemail",
+    "outbox", "clutter", "conflicts", "conversationhistory", "localfailures",
+    "msgfolderroot", "recoverableitemsdeletions", "scheduled", "searchfolders",
+    "serverfailures", "syncissues",
+}
+
+
+def list_folders(body, token=None):
+    """The whole folder tree, depth-first, parents before children.
+
+    Each entry carries `path` ("Bandeja de entrada/keep/Nominas") because a
+    display name alone is not unique - two parents may both hold a "keep".
+    """
+    token = token or access_token(body)
+    out = []
+
+    def walk(parent_id, prefix, depth):
+        base = (f"{GRAPH}/me/mailFolders/{urllib.parse.quote(parent_id)}/childFolders"
+                if parent_id else f"{GRAPH}/me/mailFolders")
+        q = urllib.parse.urlencode({
+            "$top": "100",
+            "$select": "id,displayName,totalItemCount,unreadItemCount,childFolderCount"})
+        for f in _request("GET", f"{base}?{q}", token=token).get("value", []):
+            name = f.get("displayName") or ""
+            path = f"{prefix}/{name}" if prefix else name
+            out.append({"name": name, "path": path, "id": f.get("id") or "",
+                        "depth": depth, "total": int(f.get("totalItemCount") or 0),
+                        "unread": int(f.get("unreadItemCount") or 0)})
+            if f.get("childFolderCount"):
+                walk(f.get("id") or "", path, depth + 1)
+
+    walk("", "", 0)
+    return out
+
+
+def resolve_folder(body, folder, token=None):
+    """A user-typed folder -> something a Graph URL accepts.
+
+    Order matters: a well-known name is answered without a network call, and
+    only a name Graph would reject costs a tree walk. Matching is
+    case-insensitive on full path first, then on display name; an ambiguous
+    display name is an ERROR listing the candidates rather than a guess -
+    silently reading the wrong "keep" is the failure with no symptom.
+    """
+    folder = (folder or "inbox").strip()
+    if not folder:
+        return "inbox"
+    if folder.lower().replace(" ", "") in WELL_KNOWN:
+        return folder.lower().replace(" ", "")
+    if folder.startswith("AAMk") or folder.startswith("AQMk"):  # already an id
+        return folder
+    tree = list_folders(body, token=token)
+    want = folder.lower().replace("\\", "/").strip("/")
+    hits = [f for f in tree if f["path"].lower() == want]
+    if not hits:
+        hits = [f for f in tree if f["name"].lower() == want]
+    if not hits:
+        known = ", ".join(f["path"] for f in tree) or "(none)"
+        raise GraphError(f"no folder named {folder!r} in this mailbox. "
+                         f"Folders: {known}")
+    if len(hits) > 1:
+        raise GraphError(
+            f"{folder!r} is ambiguous - it matches "
+            + ", ".join(f["path"] for f in hits)
+            + ". Pass the full path.")
+    return hits[0]["id"]
+
+
 def list_messages(body, folder, limit, unseen=False, since=None, until=None):
     token = access_token(body)
-    folder = folder or "inbox"
+    folder = resolve_folder(body, folder, token=token)
     # A date range is an asked-for set, so raise the page size for it rather
     # than silently returning the newest 25 of "all of July".
     top = 200 if (since or until) else max(1, min(limit or 25, 100))
