@@ -158,8 +158,44 @@ def load(name, legacy=None):
             # between him and a working fleet.
             _note(f"{p.name} ignored ({type(e).__name__}: {e}) - using defaults")
             continue
-        return {s: dict(parser[s]) for s in parser.sections()}
+        return {s: _unfold(dict(parser[s]), p.name, s) for s in parser.sections()}
     return {}
+
+
+def _unfold(section, filename, section_name):
+    """Repair a setting that an indented line swallowed. -> {key: value}.
+
+    In INI, a line that starts with whitespace CONTINUES the previous value. So
+
+        visibility = own
+         media_out = 0        <- one stray space
+
+    is not two settings, it is `visibility = "own\\nmedia_out = 0"` - and since
+    an unknown visibility is refused (rightly), one invisible space silently
+    unlisted an invited person and left the bridge idling. That happened on
+    2026-08-19, live, and the only clue was a value with a newline in it.
+
+    Nothing in config\\ is ever meant to be multi-line, so a continuation that
+    looks like `key = value` is put back where it belongs and REPORTED. Anything
+    else is left exactly as written - guessing beyond this would be its own trap.
+    """
+    out = {}
+    for key, value in section.items():
+        if "\n" not in (value or ""):
+            out[key] = value
+            continue
+        first, rest = value.split("\n", 1)
+        out[key] = first
+        for line in rest.split("\n"):
+            m = re.match(r"\s*([A-Za-z0-9_.-]+)\s*[=:]\s*(.*)$", line)
+            if m:
+                out[m.group(1).strip().lower()] = m.group(2).strip()
+                _note(f"config\\{filename} [{section_name}]: '{m.group(1).strip()}' "
+                      f"was indented, which INI reads as part of '{key}' above it "
+                      f"- read as a setting of its own; remove the leading space")
+            else:
+                out[key] = out[key] + "\n" + line
+    return out
 
 
 def get(cfg, section, key, env_var=None, default="", env=None):

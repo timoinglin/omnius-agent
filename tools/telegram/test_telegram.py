@@ -210,6 +210,20 @@ check("the bridge resolves it from the fleet's own map, not a second copy",
 check("every rejection above was reported, not swallowed",
       any("telegram" in p.lower() for p in ocfg.problems()))
 
+# LIVE, 2026-08-19: one leading space made INI read `media_out = 0` as part of
+# the value above it, so `visibility` became "own\nmedia_out = 0", the entry was
+# refused, and the bridge sat idle with nothing obviously wrong in the file.
+write_config("[telegram]\n[chat.antonio]\ntelegram_username = antonio_h\n"
+             "discord_channel = general\nvisibility = own\n media_out = 1\n")
+_indented = ocfg.telegram_chats()
+check("an indented setting is put back where it belongs, not swallowed",
+      list(_indented) == ["antonio"]
+      and _indented["antonio"]["visibility"] == "own"
+      and _indented["antonio"]["media_out"] is True,
+      f"got {_indented}")
+check("...and the stray space is named, so it gets fixed rather than lived with",
+      any("was indented" in p for p in ocfg.problems()))
+
 # One person, one channel. Listed twice, the bridge would have matched whichever
 # block sorted first and dropped the other without a word - so they would be
 # writing into a channel nobody told them about.
@@ -398,6 +412,30 @@ check("a DIFFERENT id claiming the same handle is not let in",
       not any("soy antonio" in p["text"] for p in api.posts),
       "the pin is what makes inviting by handle safe")
 bridge.tg = fake_tg
+
+# LIVE FINDING, 2026-08-19: the id was pinned and the message relayed, but the
+# desk's answer went to an empty chat_id (HTTP 400) - the mirror read the id
+# from the config, which an invite-by-handle leaves blank. Two review rounds
+# missed it because every fixture carried an id.
+check("an invite by handle sends to the PINNED id, not the empty config field",
+      bridge.telegram_id_of("antonio", _byname["antonio"]) == "555111")
+check("...and an id in the config still wins",
+      bridge.telegram_id_of("antonio", CHATS["antonio"]) == "555111")
+check("...while someone who has never written has nowhere to send, and says so "
+      "by returning nothing rather than an empty API call",
+      bridge.telegram_id_of("nobody", {"telegram_user_id": "",
+                                       "telegram_username": "nobody"}) == "")
+api.history["900000000001"] = [
+    {"id": "600000000021", "content": "answer for a handle invite",
+     "author": {"id": "222", "username": "omnius", "bot": True}, "attachments": []},
+]
+bridge.write_cursor("mirror", {"antonio@900000000001": "600000000020"})
+bridge.open_reply_window("antonio", "900000000001")
+_sent.clear()
+bridge.outbound(FAKE_TOKEN, _byname, api, "222")
+check("so a handle-invited person actually receives the desk's answer",
+      any(s["params"].get("chat_id") == "555111" for s in _sent),
+      "this is the whole point of the feature and it was broken end to end")
 
 # desk resolved from the channel, exactly as the watchdog would
 print("\n== the channel already knows its desk ==")

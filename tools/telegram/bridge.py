@@ -799,8 +799,27 @@ def outbound(token, chats, api, me_id):
     return sent
 
 
+def telegram_id_of(label, chat, pins=None):
+    """Where to SEND to. -> numeric chat id, or "" if they have never written.
+
+    An invite by @handle carries no numeric id until the person writes once and
+    the bridge pins it; reading only the config sent every reply to an empty
+    chat_id, which Telegram answers with HTTP 400. Live testing found this
+    within a minute - two rounds of review had not, because both directions
+    were exercised with an id-shaped fixture.
+
+    An empty answer is not an error: a bot cannot open a conversation, so there
+    is genuinely nowhere to send until they have spoken.
+    """
+    if chat.get("telegram_user_id"):
+        return chat["telegram_user_id"]
+    pins = read_cursor("pinned", {}) if pins is None else pins
+    return str(pins.get(label) or "")
+
+
 def _mirror(token, chats, api, me_id, cur, relayed):
     sent = 0
+    pins = read_cursor("pinned", {})
     rooms = {}
     for label, chat in chats.items():
         try:
@@ -822,6 +841,12 @@ def _mirror(token, chats, api, me_id, cur, relayed):
         # sharing that room got an empty read - permanently. The shared-room
         # feature was documented, tested, and silently one-way.
         key = f"{label}@{cid}"
+        target = telegram_id_of(label, chat, pins)
+        if not target:
+            # Invited by handle and has never written: there is no chat to send
+            # to, and Telegram does not let a bot open one. Nothing to report
+            # every pass - it resolves itself the moment they tap Start.
+            continue
         if key not in cur and cid in cur:
             # Upgrading from the version that keyed this by channel alone. Left
             # unmigrated, the new key looks like a first run and jumps to NOW -
@@ -886,7 +911,7 @@ def _mirror(token, chats, api, me_id, cur, relayed):
             body += describe_attachments(m)
             files = _fetch_for_telegram(api, m) if chat.get("media_out") else []
             try:
-                _send_to_telegram(token, chat["telegram_user_id"], body, files)
+                _send_to_telegram(token, target, body, files)
                 cur[key] = mid                 # ONLY on success - see below
                 cur.pop(f"stuck:{key}", None)
                 sent += 1
@@ -997,7 +1022,8 @@ def describe():
     if not chats:
         print("no [chat.*] blocks - nobody is invited (copy config\\telegram.example.ini)")
     for label, c in chats.items():
-        print(f"  {label:14} tg {c['telegram_user_id']:14} -> #{c['discord_channel']}"
+        _id = telegram_id_of(label, c) or f"@{c['telegram_username']} (not yet)"
+        print(f"  {label:14} tg {_id:24} -> #{c['discord_channel']}"
               f"  desk={c['desk']}  sees={c['visibility']}"
               f"  media_out={int(c['media_out'])}")
     for p in ocfg.problems():
