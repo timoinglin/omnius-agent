@@ -6536,12 +6536,37 @@ try:
         (("status", "--porcelain"), (0, " D projects/.gitkeep\n?? scratch/x\n")),
     ])
     wd.handle_update("!update go", "CID_OM")
-    check("a MISSING tracked file gets the restore command, not a lecture about stashing",
-          "projects/.gitkeep" in sent[-1][1] and "checkout --" in sent[-1][1]
-          and "stash" not in sent[-1][1],
+    check("the refusal gives the exact restore command for the file it named",
+          "projects/.gitkeep" in sent[-1][1]
+          and "git checkout -- projects/.gitkeep" in sent[-1][1],
           "this exact case shipped in a release and blocked a colleague's first update")
+    # Most instances are read-only clones of the public repo: no push rights,
+    # and !update pulls --ff-only, so "just commit it" would wedge updates for
+    # good. Everything of theirs is gitignored, which is what makes discarding
+    # the safe default to offer.
+    check("...and it warns against committing rather than suggesting it",
+          "Don't commit" in sent[-1][1] and "fast-forward only" in sent[-1][1])
+    check("...and says why discarding is safe: nothing personal is tracked",
+          "gitignored" in sent[-1][1])
     check("...and an untracked stray is still not counted as local work",
           "1 tracked file(s)" in sent[-1][1] and "scratch/x" not in sent[-1][1])
+    sent.clear(); _upd_calls[:] = []
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-list",), (0, "3\n")),
+        (("status", "--porcelain"), (0, "")),
+        (("pull",), (1, "fatal: Not possible to fast-forward, aborting.")),
+    ])
+    wd._update_suite = lambda: (True, "ok", frozenset())
+    wd.handle_update("!update go", "CID_OM")
+    check("a DIVERGED branch names the way back instead of 'resolve at the desk'",
+          "reset --hard origin/main" in sent[-1][1],
+          "a downstream owner cannot push, so a diverged branch never reconciles "
+          "and every later !update fails identically")
+    check("...and states what that costs, so it is a decision and not a leap",
+          "code" in sent[-1][1] and "gitignored" in sent[-1][1])
     _seq = {"n": 0}
 
     def _upd_happy(*args, timeout=60):

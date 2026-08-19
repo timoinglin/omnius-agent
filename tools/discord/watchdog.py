@@ -3833,14 +3833,22 @@ def handle_update(text, cid):
         # guessed. The whole point of !update is not needing the desk.
         shown = "\n".join(dirty_lines[:8])
         more = f"\n… and {len(dirty_lines) - 8} more" if len(dirty_lines) > 8 else ""
-        gone = [ln[3:].strip() for ln in dirty_lines if ln[:2].strip() == "D"]
-        hint = ("\nThose marked `D` are files that are simply MISSING - nothing "
-                "of yours is in them. Restore and retry:\n"
-                f"```\ngit -C . checkout -- {' '.join(gone[:4])}\n```"
-                if gone else
-                "\nCommit or stash them first; a pull must never eat local work.")
-        api.send_message(cid, f"⛔ not updating: {len(dirty_lines)} tracked file(s) changed "
-                              f"locally.\n```\n{shown}{more}\n```{hint}")
+        paths = [ln[3:].strip().strip('"') for ln in dirty_lines][:4]
+        # NOT "commit or stash". Most instances are read-only clones of the
+        # public repo - no push rights - and !update pulls --ff-only, so a local
+        # commit here blocks every future update permanently. Everything of
+        # theirs is gitignored by design, which is exactly what makes discarding
+        # the safe default to offer.
+        api.send_message(cid,
+            f"⛔ not updating: {len(dirty_lines)} tracked file(s) changed locally.\n"
+            f"```\n{shown}{more}\n```\n"
+            f"Nothing of yours lives in tracked files — `.env`, `config\\`, `memory\\`, "
+            f"`projects\\`, your notes and `state\\` are all gitignored — so these are "
+            f"almost always an accidental edit or an install artifact. Discard them and "
+            f"retry:\n```\ngit checkout -- {' '.join(paths)}\n```\n"
+            f"If you changed them on purpose, `git stash` instead. **Don't commit them**: "
+            f"this instance pulls fast-forward only, and a local commit would block every "
+            f"future update.")
         return
     # BASELINE first: this instance's failures BEFORE the pull are its own
     # housekeeping, not the update's fault. The gate judges only the delta.
@@ -3853,8 +3861,19 @@ def handle_update(text, cid):
                               + (" …" if len(base_fails) > 3 else ""))
     rc, out = _git("pull", "--ff-only", "origin", "main", timeout=180)
     if rc != 0:
-        api.send_message(cid, f"⛔ pull refused (local commits diverge from origin?):\n"
-                              f"```\n{out.strip()[:400]}\n```\nResolve at the desk.")
+        # "Resolve at the desk" is a dead end on a read-only clone: the owner of
+        # a downstream instance cannot push, so a diverged branch never
+        # reconciles on its own and every later !update fails the same way.
+        # Name the way out, and say plainly what it costs.
+        api.send_message(cid,
+            f"⛔ pull refused — this instance has local commits that origin does not:\n"
+            f"```\n{out.strip()[:400]}\n```\n"
+            f"Updates are fast-forward only. If those commits were not deliberate, this "
+            f"puts the instance back on the published line:\n"
+            f"```\ngit reset --hard origin/main\n```\n"
+            f"It discards local **code** changes only — `.env`, `config\\`, `memory\\`, "
+            f"`projects\\`, your notes and `state\\` are gitignored and untouched. Keeping "
+            f"the commits instead means updating by hand from now on.")
         return
     _rc, new = _git("rev-parse", "--short", "HEAD")
     new = new.strip()
