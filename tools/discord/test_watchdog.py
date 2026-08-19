@@ -4362,18 +4362,36 @@ try:
           "projects/demo/app/.claude/settings.json" in _found)
     check("...and it still finds this instance's own desks", len(_files) >= 4,
           f"found {len(_files)}")
-    _shortfall = {}
+    # TRACKED files are the PRODUCT and must be complete - that is what this
+    # gate is for. A desk under projects\ is instance state: gitignored, never
+    # shipped, and stamped by install, autostart and every !update.
+    #
+    # The distinction is not pedantry; it cost every instance an update. This
+    # suite is ALSO the update gate, and an OLD watchdog runs the NEW suite to
+    # decide whether to keep a pull. So a release that widens the allow-list
+    # judged machines whose local desks had not been stamped yet - they never
+    # had been, the stamp comes afterwards - and every install rolled the update
+    # back and could not move (2026-08-19, from two machines reachable only
+    # through Discord). Failing on tracked files keeps the product honest;
+    # reporting on local ones lets a machine take the release that fixes it.
+    _shortfall, _local_short = {}, {}
     for _p in _files:
         try:
             _d = json.loads(_p.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         _miss = [t for t in sp.ALLOW if t not in (_d.get("permissions", {}).get("allow") or [])]
-        if _miss:
-            _shortfall[_p.name if _p.parent.parent == real_root else
-                       str(_p.relative_to(real_root))] = _miss
-    check("every desk carries the full shared allow-list",
+        if not _miss:
+            continue
+        _name = (_p.name if _p.parent.parent == real_root
+                 else str(_p.relative_to(real_root)))
+        _is_local = _name.replace("\\", "/").startswith("projects/")
+        (_local_short if _is_local else _shortfall)[_name] = _miss
+    check("every SHIPPED desk profile carries the full shared allow-list",
           not _shortfall, f"short: {list(_shortfall)[:3]}")
+    if _local_short:
+        print(f"  [i] {len(_local_short)} local project desk(s) not stamped yet — "
+              f"install, autostart and !update all do that; not held against the build")
     check("Artifact is allowed - a desk must not need permission to publish its answer",
           "Artifact" in sp.ALLOW)
     # The fence that must survive every widening.
