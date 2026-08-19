@@ -1,14 +1,15 @@
 # Updating an Omnius instance
 
-Three ways in, one path underneath. Pick whichever you can reach.
+Four doors, one path underneath. Pick whichever you can reach.
 
 | From | Do this |
 |---|---|
 | **Discord** (the normal way) | `!update` to preview, `!update go` to apply |
+| **Discord, when the watchdog is too old for `!update`** | tell a desk: *"run this in PowerShell: `irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 \| iex`"*, then `!reload` |
 | **PowerShell, anywhere** | `irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 \| iex` |
 | **At the install** | `powershell -ExecutionPolicy Bypass -File update.ps1` |
 
-All three end up running the same `update.ps1`. Your own changes are kept, and
+All of them end up running the same `update.ps1`. Your own changes are kept, and
 nothing personal moves — `.env`, `config\`, `memory\`, `projects\`, your notes
 and `state\` are gitignored and never touched.
 
@@ -25,8 +26,12 @@ and `state\` are gitignored and never touched.
 4. **Run the suite.** A failure the update *introduces* rolls everything back to
    the previous commit and re-stamps, so the machine is never left half-updated.
 5. **Restart the watchdog**, because a running service keeps the code it was
-   born with. (`!update go` skips this step and reloads itself instead, so the
-   handshake in step 6 still applies.)
+   born with. Two cases skip it and say so: `!update go` (it reloads itself, so
+   the handshake below still applies), and **a desk running the script**, which
+   is detected by the `OMNIUS_SESSION` the watchdog stamps into every run.
+   Restarting from inside a desk would kill the process printing the result -
+   the update would finish and Discord would simply go quiet. Type `!reload`
+   after that one.
 6. **The handshake** (Discord path): the new watchdog must report back healthy —
    one that crash-loops or sits deaf reverts to the previous commit on its own
    and says so.

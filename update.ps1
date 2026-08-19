@@ -171,6 +171,18 @@ function Stamp-Machine([string]$root) {
 }
 
 function Restart-Watchdog([string]$root) {
+  # RUNNING INSIDE A DESK? Then restarting is the one thing not to do. A desk is
+  # a child of the watchdog, so stopping that task can kill the very process
+  # printing this - the update would be complete and Discord would simply go
+  # quiet, which looks exactly like a hang. The watchdog stamps OMNIUS_SESSION
+  # into every run it starts, so this is knowable rather than guessable, and the
+  # plain one-liner stays safe to paste into a channel.
+  if ($env:OMNIUS_SESSION -or $env:OMNIUS_RUN_ID) {
+    Write-Host ("  [OK] updated - now type !reload in Discord to run the new code " +
+                "(not restarting from inside the $($env:OMNIUS_SESSION) desk: " +
+                "that would kill this run mid-sentence)") -ForegroundColor Green
+    return
+  }
   # A running service keeps the code it was born with, so an update nobody
   # restarts is an update nobody got.
   $task = Get-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction SilentlyContinue
