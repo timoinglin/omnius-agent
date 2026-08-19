@@ -91,6 +91,23 @@ function Update-Omnius {
     return 1
   }
 
+  # --- 1b. BASELINE: what is already red, before we touch anything ------------
+  # This machine's own housekeeping is not the release's fault. A memory file
+  # over budget, a desk short of the allow-list - those fail on the CURRENT code
+  # too, and judging the update by the raw exit code blames the release for them
+  # and reverts a perfectly good update. Found on the owner's own machine
+  # 2026-08-19, where "memory budget: topics/discord-fleet.md <= 13,000" would
+  # have rolled back every release until someone noticed.
+  $baseFails = @()
+  if (-not $NoTests) {
+    Say '..' 'baseline: running the suite on the CURRENT code first'
+    $baseFails = Get-SuiteFailures $root
+    if ($baseFails.Count) {
+      Say '!' "$($baseFails.Count) check(s) already failing here - noted, not held against the update" 'Yellow'
+      $baseFails | Select-Object -First 3 | ForEach-Object { Write-Host "      $_" }
+    }
+  }
+
   # --- 2. fetch and rebase ----------------------------------------------------
   $before = (& git -C $root rev-parse --short HEAD 2>$null)
   Say '..' "at $before - fetching"
@@ -139,18 +156,25 @@ function Update-Omnius {
   if ($NoTests) {
     Say '!' 'suite skipped (-NoTests)' 'Yellow'
   } else {
-    Say '..' 'running the test suite'
-    $suite = & python (Join-Path $root 'tools\discord\test_watchdog.py') 2>&1
-    if ($LASTEXITCODE -ne 0) {
-      $failed = @($suite | Select-String -Pattern '\[FAIL\]' | Select-Object -First 5)
+    Say '..' 'running the test suite on the new code'
+    $postFails = Get-SuiteFailures $root
+    # ONLY the delta. A check that was already red before the pull is this
+    # machine's housekeeping; a check the update BREAKS is the release's fault
+    # and the only thing worth reverting for.
+    $introduced = @($postFails | Where-Object { $baseFails -notcontains $_ })
+    if ($introduced.Count) {
       & git -C $root reset --hard $before 2>&1 | Out-Null
       Stamp-Machine $root        # restore stamps to match the restored code
-      Say 'X' "the new code failed its own suite - rolled back to $before" 'Red'
-      $failed | ForEach-Object { Write-Host "      $_" }
+      Say 'X' "the update BROKE $($introduced.Count) check(s) that were green - rolled back to $before" 'Red'
+      $introduced | Select-Object -First 5 | ForEach-Object { Write-Host "      $_" }
       Write-Host '      Nothing was reloaded. Report this - a released commit should never do it.'
       return 1
     }
-    Say 'OK' ("suite green: " + (($suite | Select-Object -Last 1) -replace '=', '').Trim()) 'Green'
+    if ($postFails.Count) {
+      Say 'OK' "no NEW failures ($($postFails.Count) pre-existing local one(s) ride along)" 'Green'
+    } else {
+      Say 'OK' 'suite green' 'Green'
+    }
   }
 
   # --- 5. run the new code ----------------------------------------------------
@@ -161,6 +185,16 @@ function Update-Omnius {
     Say 'OK' "updated $before -> $after and restarted" 'Green'
   }
   return 0
+}
+
+function Get-SuiteFailures([string]$root) {
+  # -> the NAMES of failing checks, so before and after can be compared. The
+  # exit code alone cannot tell "this machine has an untidy memory file" from
+  # "the release is broken", and those need opposite reactions.
+  $out = & python (Join-Path $root 'tools\discord\test_watchdog.py') 2>&1
+  return @($out | Select-String -Pattern '\[FAIL\]' | ForEach-Object {
+    ($_.ToString() -replace '.*\[FAIL\]\s*', '') -split '\s{2,}' | Select-Object -First 1
+  })
 }
 
 function Stamp-Machine([string]$root) {
@@ -185,13 +219,48 @@ function Restart-Watchdog([string]$root) {
   }
   # A running service keeps the code it was born with, so an update nobody
   # restarts is an update nobody got.
+  #
+  # THE LIVE WATCHDOG IS NOT ALWAYS THE TASK. It can be a plain process someone
+  # started by hand (start-omnius.bat, a terminal) while the task sits Ready -
+  # exactly the case on the owner's machine, 2026-08-19, pid 6668 since 09:42.
+  # Restarting only the task then launches a second watchdog, which finds the
+  # first one's lock and exits: updated on disk, still running the old code, and
+  # nothing says so. So the process holding the lock is what has to go.
+  $lock = Join-Path $root 'state\watchdog\lock.json'
+  $livePid = $null
+  if (Test-Path $lock) {
+    try { $livePid = [int](Get-Content $lock -Raw | ConvertFrom-Json).pid } catch { }
+  }
   $task = Get-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction SilentlyContinue
+  if ($task) { try { Stop-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction SilentlyContinue } catch { } }
+  if ($livePid) {
+    $p = Get-Process -Id $livePid -ErrorAction SilentlyContinue
+    if ($p -and $p.ProcessName -match 'python') {
+      Stop-Process -Id $livePid -Force -ErrorAction SilentlyContinue
+      Write-Host "  [OK] stopped the running watchdog (pid $livePid)" -ForegroundColor Green
+    }
+  }
+  Start-Sleep -Seconds 2
   if ($task) {
     try {
-      Stop-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction SilentlyContinue
-      Start-Sleep -Seconds 2
       Start-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction Stop
-      Write-Host '  [OK] watchdog restarted on the new code' -ForegroundColor Green
+      # VERIFY, do not assume: a fresh beacon is the watchdog saying it is
+      # listening, and a start that silently did nothing looks identical here.
+      $beacon = Join-Path $root 'state\watchdog\beacon.json'
+      $deadline = (Get-Date).AddSeconds(45)
+      while ((Get-Date) -lt $deadline) {
+        Start-Sleep -Seconds 3
+        if (Test-Path $beacon) {
+          try {
+            $at = ([datetime](Get-Content $beacon -Raw | ConvertFrom-Json).at).ToUniversalTime()
+            if (((Get-Date).ToUniversalTime() - $at).TotalSeconds -lt 60) {
+              Write-Host '  [OK] watchdog restarted and listening on the new code' -ForegroundColor Green
+              return
+            }
+          } catch { }
+        }
+      }
+      Write-Host '  [!] watchdog task started but has not reported in yet - check state\logs\' -ForegroundColor Yellow
       return
     } catch { }
   }

@@ -299,11 +299,12 @@ what they themselves said. Full contract:
   Your files never move; everything personal is gitignored. **Changes you made
   to the code are kept**: your commits are replayed on top of the new release,
   so an instance you have customised still updates. Two other doors to the same
-  path, for when Discord is not enough — `irm
+  path, for when Discord is not enough. The reliable one: open PowerShell **in
+  your Omnius folder** and run `irm
   https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 |
-  iex` in any PowerShell, or `update.ps1` at the install; both repair a machine
-  whose watchdog is too old or too broken to update itself
-  ([UPDATING.md](UPDATING.md)). If your edit and the new
+  iex` — from that folder it cannot fail to find the install. Or
+  `powershell -File update.ps1` there. Both repair a machine whose watchdog is
+  too old or too broken to update itself ([UPDATING.md](UPDATING.md)). If your edit and the new
   release touch the same lines, the update stops, names those files, and leaves
   the instance exactly as it was. (`git pull` +
   `!reload` at the desk still works.) Zip installs attach themselves to the

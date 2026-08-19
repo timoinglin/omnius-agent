@@ -1,12 +1,23 @@
 # Updating an Omnius instance
 
+**The one that always works:** open PowerShell **in your Omnius folder** and run
+
+```powershell
+cd C:\path\to\omnius
+irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 | iex
+```
+
+Proven on a live instance 2026-08-19. From that folder the script cannot fail to
+find the install, which is the one thing auto-discovery can get wrong: a
+watchdog started by hand leaves the scheduled task's working directory empty.
+
 Four doors, one path underneath. Pick whichever you can reach.
 
 | From | Do this |
 |---|---|
 | **Discord** (the normal way) | `!update` to preview, `!update go` to apply |
-| **Discord, when the watchdog is too old for `!update`** | tell a desk: *"run this in PowerShell: `irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 \| iex`"*, then `!reload` |
-| **PowerShell, anywhere** | `irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 \| iex` |
+| **Discord, when the watchdog is too old for `!update`** | tell a desk: *"run `git pull --rebase origin main`, then `powershell -ExecutionPolicy Bypass -File update.ps1`"* — then `!reload` |
+| **PowerShell** (most reliable) | `cd` to the Omnius folder, then `irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 \| iex` |
 | **At the install** | `powershell -ExecutionPolicy Bypass -File update.ps1` |
 
 All of them end up running the same `update.ps1`. Your own changes are kept, and
@@ -23,10 +34,19 @@ and `state\` are gitignored and never touched.
 3. **Stamp hooks and permissions** — `fix_hook_paths.py`, `sync_permissions.py`.
    This happens **before** the tests, because new code raises the bar (a wider
    allow-list, a new hook) and these idempotent stamps are what meet it.
-4. **Run the suite.** A failure the update *introduces* rolls everything back to
-   the previous commit and re-stamps, so the machine is never left half-updated.
+4. **Run the suite — twice.** Once BEFORE the pull, to learn what is already red
+   on this machine, and once after. Only a failure the update *introduces* rolls
+   everything back (and re-stamps, so the machine is never left half-updated). A
+   check that was already failing is this instance's housekeeping — an
+   over-budget memory file, a desk short of the allow-list — and blaming the
+   release for it reverted perfectly good updates until 2026-08-19.
 5. **Restart the watchdog**, because a running service keeps the code it was
-   born with. Two cases skip it and say so: `!update go` (it reloads itself, so
+   born with — and the *live* one, which is not always the scheduled task. A
+   watchdog started by hand holds the lock while the task sits Ready, so
+   restarting only the task launches a second one that exits on that lock:
+   updated on disk, still running the old code, with nothing saying so. The
+   process holding the lock is stopped, the task started, and a fresh beacon
+   waited for rather than assumed. Two cases skip it and say so: `!update go` (it reloads itself, so
    the handshake below still applies), and **a desk running the script**, which
    is detected by the `OMNIUS_SESSION` the watchdog stamps into every run.
    Restarting from inside a desk would kill the process printing the result -
@@ -51,6 +71,13 @@ instead of every future one.
 The `irm` one-liner is the same file, reached without needing the instance to
 work at all. That is the escape hatch: it repairs a machine whose watchdog is
 too old, too broken, or simply not running.
+
+**A desk cannot run that one-liner, and should not be asked to.** Claude Code's
+own safety classifier blocks downloading code and executing it in one gesture,
+and a desk that worked around it — fetching to disk, then running the file —
+would be defeating a fence rather than respecting it. A desk asked to do this
+will say so and stop, which is correct. Give a desk the two local commands in
+the table instead (`git pull`, then the file), or run the one-liner yourself.
 
 ## When something stops it
 
