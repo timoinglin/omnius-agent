@@ -41,7 +41,7 @@ function New-Instance([string]$at) {
   & git -C $dir checkout --quiet $at 2>&1 | Out-Null
   & git -C $dir checkout --quiet -B main 2>&1 | Out-Null
   & git -C $dir remote set-url origin $repo 2>&1 | Out-Null
-  & git -C $dir config user.email 'drill@example.invalid' 2>&1 | Out-Null
+  & git -C $dir config user.email 'drill' 2>&1 | Out-Null
   & git -C $dir config user.name 'drill' 2>&1 | Out-Null
   $script:temps += $dir
   return $dir
@@ -175,7 +175,7 @@ if (Want 'rollback') {
   $stage = Join-Path ([IO.Path]::GetTempPath()) ("omnius-stage-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
   $script:temps += $stage
   & git clone --quiet $bare $stage 2>&1 | Out-Null
-  & git -C $stage config user.email 'drill@example.invalid' 2>&1 | Out-Null
+  & git -C $stage config user.email 'drill' 2>&1 | Out-Null
   & git -C $stage config user.name 'drill' 2>&1 | Out-Null
   # Break something the suite genuinely asserts, rather than appending a failing
   # line to the suite file: everything after its sys.exit() never runs, so the
