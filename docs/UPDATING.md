@@ -97,6 +97,29 @@ it once (it attaches without touching your files), then update.
 **Anything else, or the watchdog is dead** — use the `irm` one-liner. It needs
 nothing from the instance except git, Python and the folder itself.
 
+## How it is tested
+
+`powershell -File tools\update_drills.ps1` — 28 checks, a few minutes. It does
+not read the script; it builds disposable clones that are **already in trouble**
+and runs the real updater at them:
+
+| Drill | Asserts |
+|---|---|
+| plain | a behind-but-clean instance lands exactly on the published commit |
+| idempotent | running it again is a no-op, not an error |
+| local work | a local commit is replayed on top, uncommitted files survive |
+| conflict | a colliding commit stops it — old commit kept, their version intact, no markers, no rebase left in progress |
+| autostash | a colliding *uncommitted* edit does the same: the case where git exits 0 with markers in the file |
+| baseline | a check that was already red does NOT revert the update |
+| rollback | a release that really does break the suite IS reverted, and the broken check named |
+| desk | run from inside a desk, it refuses to restart the watchdog |
+| refusals | a folder that is not an install, and one with no `.git`, are refused legibly |
+
+Every drill is a shape that happened, or that would have stranded somebody. The
+harness found two real bugs the day it was written: `-Path` pointing at a
+non-install silently updated a *different* instance, and the rollback path had
+never once been exercised end to end.
+
 ## Flags
 
 | Flag | Meaning |

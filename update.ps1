@@ -55,6 +55,19 @@ function Update-Omnius {
   # parameter (explicit), the folder this file sits in (a local run), the
   # registered task (an `irm` run on a machine that installed normally), and
   # the current directory (someone standing in it).
+  # AN EXPLICIT -Path IS OBEYED OR REFUSED, never quietly replaced. Falling
+  # through to the other candidates meant `-Path D:\typo` updated whatever
+  # install the script happened to find instead - a different machine's fleet,
+  # silently, while printing a cheerful OK. Found by tools\update_drills.ps1
+  # 2026-08-19, which is the entire reason that file exists.
+  if ($Path) {
+    if (-not (Test-Path (Join-Path $Path 'tools\discord\watchdog.py'))) {
+      Say 'X' "could not find an Omnius install at $Path" 'Red'
+      Write-Host '      -Path must name the folder that holds tools\discord\watchdog.py.'
+      return 1
+    }
+    $Path = (Resolve-Path $Path).Path
+  }
   $root = $null
   foreach ($cand in @(
       $Path,

@@ -11,7 +11,7 @@ python tools\email\test_email.py           # 86 checks — IMAP/SMTP + Graph con
 python tools\documents\test_documents.py   # 39 checks — PDF text, OCR fallback, schema validation
 python tools\telegram\test_telegram.py     # 104 checks — the invite list, both directions, the reply window
 python tools\discord\desk_audit.py         # every desk: no stalling prompts, hooks wired, self-recovery
-powershell -File update.ps1 -Path <copy>   # the updater, against a scratch clone — see docs\UPDATING.md
+powershell -File tools\update_drills.ps1   # 28 drills — the updater, against instances that are already broken
 powershell -File install.ps1 -CheckOnly    # environment doctor (report-only)
 ```
 
