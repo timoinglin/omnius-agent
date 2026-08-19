@@ -6354,6 +6354,49 @@ try:
     check("gate: cross-project, orchestrator, tool and daybook targets all hold",
           F("alpha.app", "beta.app") is False and F("alpha.app", "orchestrator") is False
           and F("tool.email", "tool.whisper") is False and F("alpha.app", "daybook") is False)
+    # A REPLY IS NEVER GATED. This is the bug that made delegation from the
+    # orchestrator useless: he asked #omnius for one daybook note, the
+    # orchestrator delegated it, daybook WROTE the note and answered - and the
+    # answer was held behind an ok he never saw, then dropped itself an hour
+    # later (2026-08-19, his own machine). The work was done and the fleet
+    # reported nothing. daybook -> orchestrator is not a free pair, so EVERY
+    # chain the orchestrator started ended that way.
+    (wd.ROOT / "daybook").mkdir(parents=True, exist_ok=True)   # the desk must exist
+    wd._desk_id_cache.clear()
+    sent.clear(); spawned.clear()
+    _dmgSend = dmail("orchestrator", {"to": "daybook", "text": "write today's note"},
+                "1700000000030")
+    _dmgSendRc = wd.deliver_desk_mail(dm, "orchestrator", _dmgSend,
+                               json.loads(_dmgSend.read_text(encoding="utf-8")))
+    check("delegation: the orchestrator's own mail goes straight out",
+          _dmgSendRc == "delivered")
+    _dmgEnv = sorted((wd.INBOX / "daybook").glob("*.json"))[-1]
+    _dmgTid = json.loads(_dmgEnv.read_text(encoding="utf-8")).get("thread")
+    check("...carrying the thread id the reply will quote", bool(_dmgTid))
+    sent.clear(); spawned.clear()
+    _dmgReply = dmail("daybook", {"to": "orchestrator", "text": "saved, sealed 20:28",
+                            "thread": _dmgTid}, "1700000000031")
+    _dmgReplyRc = wd.deliver_desk_mail(dm, "daybook", _dmgReply,
+                               json.loads(_dmgReply.read_text(encoding="utf-8")))
+    check("...and the ANSWER comes back without asking anyone for permission",
+          _dmgReplyRc == "delivered" and not wd.pending_gates()
+          and any("saved, sealed" in f.read_text(encoding="utf-8")
+                  for f in (wd.INBOX / "orchestrator").glob("*.json")),
+          "the earlier message on the thread IS the authorisation")
+    check("...and it still costs no hop, so a chain can always unwind",
+          json.loads((wd.THREADS / (_dmgTid + ".json")).read_text(encoding="utf-8"))
+          .get("hopsLeft") == wd._hop_ttl() - 1)
+    # The gate must still bite where it matters: a desk STARTING a conversation
+    # across a boundary is the thing it exists for.
+    sent.clear()
+    _dmgNew = dmail("daybook", {"to": "alpha.app", "text": "unrelated new errand"},
+                "1700000000032")
+    _dmgNewRc = wd.deliver_desk_mail(dm, "daybook", _dmgNew,
+                               json.loads(_dmgNew.read_text(encoding="utf-8")))
+    check("gate: a NEW cross-boundary errand is still held",
+          _dmgNewRc == "held" and len(wd.pending_gates()) == 1)
+    wd.answer_gate("no", dm)
+    sent.clear()
     sent.clear()
     pg = dmail("alpha.app", {"to": "beta.app", "text": "cross the border"}, "1700000000020")
     rg = wd.deliver_desk_mail(dm, "alpha.app", pg, json.loads(pg.read_text(encoding="utf-8")))

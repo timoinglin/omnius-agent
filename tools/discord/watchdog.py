@@ -4793,7 +4793,19 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
         return _refuse_desk_mail(mapping, sender, path, "hops exhausted")
 
     # 8. The cross-project gate (D4) - held mail leaves the outbox entirely.
-    if not gate_approved and _gate_required() and not free_pair(sender, to):
+    #
+    # A REPLY IS NEVER GATED. The gate exists to stop a desk STARTING a
+    # conversation across a boundary; answering someone who wrote to you first
+    # is not starting one - the earlier message on this very thread is the
+    # authorisation, and it was the owner's own instruction that produced it.
+    #
+    # Gating replies made delegation from the orchestrator useless, because
+    # `daybook -> orchestrator` is not a free pair: on 2026-08-19 the owner
+    # asked #omnius for one daybook note, the orchestrator delegated it, daybook
+    # WROTE the note and answered - and the answer sat behind an ok he never saw
+    # and dropped itself an hour later. The work was done and the fleet reported
+    # nothing. Every chain the orchestrator starts ended that way.
+    if not gate_approved and _gate_required() and not is_reply and not free_pair(sender, to):
         return hold_for_gate(mapping, sender, to, led, path, data)
 
     # 9. Deliver.
