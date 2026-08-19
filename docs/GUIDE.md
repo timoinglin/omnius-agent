@@ -57,20 +57,32 @@ Handled by the always-on watchdog itself, never by a model:
 | `!trace [id]` | One chain's, loop's or envelope's whole story — every hop, timestamps, gate holds, budget. Bare `!trace` lists recent ones |
 | `!reload` | Restart the watchdog to pick up pulled code — compile-checked first, refuses rather than kill the bus |
 
-## 4. Permissions: the three fences
+## 4. Permissions: on by default, one exception
 
-Desks run **without local permission prompts** (a dialog on a screen nobody
-watches is a hung desk). Instead:
+**Everything is allowed except `.env`.** You are alone on your own Omnius, so
+the posture is not a sandbox — it is a machine acting with your authority.
+Every desk carries the same profile (`.claude\settings.json`, stamped by
+`tools\discord\sync_permissions.py`): 60+ tools allowed, file edits applied
+without asking (`defaultMode: acceptEdits`), project MCP servers trusted, and
+every installed skill reachable as a slash command.
 
-1. Anything outside the allow-list becomes an **ok/no question in your
-   channel** (with a short code when several are pending). One `ok` answers all
-   of one desk's pending asks — and **teaches the fleet**: that tool never asks
-   again, on any desk. `no` teaches nothing, deliberately.
-2. Anything irreversible — deleting broadly, force-pushing, sending mail as
-   you, spending money — the model must ask **in words** first, allow-list or
-   not.
-3. `.env` is the only home of secrets, deny-listed from reading, excluded from
-   every backup and release.
+Three things still hold:
+
+1. **`.env` is denied** — the file holding your tokens, mail passwords and API
+   keys. A desk that wants something from it has to say which key and why.
+   It is a guardrail, not a cage: a desk has a shell, so `type .env` would
+   work. What actually contains this machine is that only you (and the guests
+   you invite) can talk to a desk at all.
+2. **Irreversible or outward-facing steps are described in words first** —
+   deleting broadly, force-pushing, sending mail as you, spending money —
+   whatever the allow-list says.
+3. **Anything genuinely unlisted still escalates** to an ok/no in your channel,
+   and one `ok` teaches the whole fleet. With the list this wide it is rare.
+
+`AskUserQuestion` is the one tool deliberately denied for a non-security
+reason: it draws a menu in a terminal nobody is sitting at and blocks the turn
+that would have to end for you to answer it. Denied, the desk asks in plain
+text instead — which you *can* answer from a phone.
 
 An ask nobody answers **fails closed**. Details: [PERMISSIONS.md](PERMISSIONS.md).
 

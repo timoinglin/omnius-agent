@@ -515,16 +515,64 @@ def website_status(env=None):
     return out
 
 
+class _EverySkill(frozenset):
+    """A set that CONTAINS any skill name, and lists the installed ones.
+
+    The open default cannot be "every folder under .claude\\skills\\": plenty of
+    skills are not folders at all - `/code-review`, `/simplify`, `/run` and the
+    rest arrive with Claude Code or a plugin, and a folder scan silently made
+    them unavailable. That would have been NARROWER than the explicit list this
+    replaced, which is the opposite of the intent.
+
+    So membership is open (owner mail only - the sender gate is what matters
+    and it is unchanged), while iteration still yields what is installed, so
+    `!config` can show something concrete instead of the word "everything".
+    """
+
+    def __contains__(self, item):
+        return bool(re.fullmatch(r"[a-z0-9_-]+", str(item or "").strip().lower()))
+
+
+def installed_skills():
+    """-> every skill this instance actually has, by folder name.
+
+    The disk is the list. A skill exists because `.claude\\skills\\<name>\\
+    SKILL.md` exists, so a skill added by an update is usable the moment it
+    lands, with nothing to re-declare.
+    """
+    out = set()
+    for base in (ROOT / ".claude" / "skills", ROOT / "daybook" / ".claude" / "skills"):
+        try:
+            for d in base.iterdir():
+                if (d / "SKILL.md").is_file() and re.fullmatch(r"[a-z0-9_-]+", d.name):
+                    out.add(d.name)
+        except OSError:
+            continue
+    return out
+
+
 def slash_skills():
     """-> set of skill names owner mail may fire with `/<name>` (docs\\DELEGATION.md D6).
 
-    `config\\skills.ini`, `[skills] allowed = status, watch`. An AUTHORISATION
-    list, so it fails closed like guests(): missing file, missing key or an
-    empty value = NOTHING passes. Labels are validated `[a-z0-9_-]+`; anything
-    else is reported through problems() and skipped. Guests never pass slashes
-    regardless of this list - the watchdog checks the sender first."""
+    OPEN BY DEFAULT (owner decision 2026-08-19). With no `config\\skills.ini`,
+    every installed skill is available - because the person who installed this
+    IS the owner, and `skills.ini` never shipped, so the closed default meant a
+    fresh instance answered `/goal` with a refusal and no explanation of what to
+    do about it. The gate that matters is WHO is asking, and that one is
+    unchanged and fail-closed: guests and Telegram invitees never pass a slash,
+    whatever this returns (the watchdog checks the sender first).
+
+    Write `[skills] allowed = status, watch` to NARROW it deliberately; the file
+    is now a restriction rather than an enrolment. `allowed = none` (or `off`)
+    closes it entirely. Labels are validated `[a-z0-9_-]+`; anything else is
+    reported through problems() and skipped.
+    """
+    raw = str((load("skills").get("skills") or {}).get("allowed") or "").strip()
+    if not raw:
+        return _EverySkill(installed_skills())
+    if raw.lower() in ("none", "off", "-"):
+        return set()
     out = set()
-    raw = str((load("skills").get("skills") or {}).get("allowed") or "")
     for name in re.split(r"[,\s]+", raw):
         if not name:
             continue
@@ -911,9 +959,17 @@ def describe():
         for label, uid, channel, desk, vis, tok in tg:
             lines.append(f"`{label}` — tg `{uid}` → `#{channel}` · desk `{desk}` · "
                          f"sees `{vis}` · {tok}")
-    passes = sorted(slash_skills())
-    lines.append("**slash pass-through** (`config\\skills.ini`, owner mail only): "
-                 + (", ".join(f"`/{s}`" for s in passes) if passes else "(none - closed)"))
+    _sk = slash_skills()
+    passes = sorted(_sk)
+    if isinstance(_sk, _EverySkill):
+        lines.append("**slash pass-through** (owner mail only): **every skill** — open by "
+                     "default, no `config\\skills.ini` needed. Installed here: "
+                     + (", ".join(f"`/{s}`" for s in passes) or "(none)"))
+    else:
+        lines.append("**slash pass-through** (`config\\skills.ini` NARROWS it, owner mail "
+                     "only): "
+                     + (", ".join(f"`/{s}`" for s in passes) if passes
+                        else "(none — closed by `allowed = none`)"))
     caps = capability_status()
     if any(state != "off" for _n, _p, _k, state in caps):
         lines.append("**AI capabilities** (keys live in `.env`)")

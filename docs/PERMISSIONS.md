@@ -1,10 +1,29 @@
 # Permission profiles — ACTIVE
 
-> **Status: the curated allow-list below was REVERSED on 2026-08-06 — read this first.**
-> What ships today, in every desk's `.claude\settings.json`, is the opposite shape: **bare
-> `Bash` and `PowerShell` are allowed**, and the deny list is exactly two entries — reading
-> `.env`, and `AskUserQuestion`. None of the fine-grained denies written below (`git push`,
-> `rm -rf`, `npm publish`, `curl`, `iwr`, `taskkill`) exist in any shipped file.
+> **Status: the curated allow-list below was REVERSED on 2026-08-06, and widened again on
+> 2026-08-19 — read this first.**
+> What ships today, in every desk's `.claude\settings.json` (stamped by
+> `tools\discord\sync_permissions.py`, which is the only writer), is the opposite shape:
+> **everything is allowed except `.env`.** Concretely: 60+ tools including bare `Bash` and
+> `PowerShell`, `defaultMode: acceptEdits` so file edits never prompt,
+> `enableAllProjectMcpServers` so a project's MCP servers are trusted rather than asked
+> about, a standing authorisation in `autoMode`, and every installed skill reachable as a
+> slash command with no `config\skills.ini` needed.
+>
+> The deny list is `.env` (read, edit and write, at every depth a desk can sit at) plus
+> `AskUserQuestion`. None of the fine-grained denies written below (`git push`, `rm -rf`,
+> `npm publish`, `curl`, `iwr`, `taskkill`) exist in any shipped file.
+>
+> **Why `.env` stays denied while everything else opens (2026-08-19):** it is the one file
+> that is not the owner's work but the owner's credentials, and desks now answer other
+> people too — guests and Telegram invitees. It is a guardrail, not containment: `Bash` is
+> allowed, so a desk that means to read it can. What contains this machine is who may talk
+> to a desk at all, not which tool a desk may pick up.
+>
+> **Why `AskUserQuestion` stays denied:** not danger — answerability. It draws a menu in a
+> terminal nobody is sitting at and blocks the very turn that would have to end for the
+> owner to reach it (proven 2026-08-13). Denied, the desk asks in plain text, which he can
+> answer from a phone.
 >
 > **Why it was reversed:** the narrow list did not fail safe, it failed *silent*. Every
 > unlisted command became a dialog on a screen nobody was watching, and desks froze mid-task

@@ -50,7 +50,22 @@
       "mcp__ccd_session",
       "mcp__ccd_session_mgmt",
       "mcp__mcp-registry",
-      "mcp__scheduled-tasks"
+      "mcp__scheduled-tasks",
+      "EnterWorktree",
+      "ExitWorktree",
+      "MultiEdit",
+      "NotebookRead",
+      "TodoRead",
+      "KillBash",
+      "ScheduleWakeup",
+      "DesignSync",
+      "RemoteTrigger",
+      "SuggestSkills",
+      "SuggestPluginInstall",
+      "ListPlugins",
+      "SearchPlugins",
+      "mcp__ccd_directory",
+      "mcp__terminal"
     ],
     "deny": [
       "Read(./.env)",
@@ -59,7 +74,25 @@
       "Read(../../**/.env)",
       "Read(../../../.env)",
       "Read(../../../**/.env)",
-      "AskUserQuestion"
+      "AskUserQuestion",
+      "Read(../.env)",
+      "Read(../**/.env)",
+      "Edit(./.env)",
+      "Edit(../.env)",
+      "Edit(../../.env)",
+      "Edit(../../../.env)",
+      "Write(./.env)",
+      "Write(../.env)",
+      "Write(../../.env)",
+      "Write(../../../.env)"
+    ],
+    "defaultMode": "acceptEdits"
+  },
+  "autoMode": {
+    "allow": [
+      "$defaults",
+      "This machine belongs to the person running these desks, and every desk acts with their full authority. Do not ask permission to use a tool: act, then say what you did. The single exception is .env, which holds the tokens and passwords and is denied on purpose - if you genuinely need something from it, say which key and why. Irreversible or outward-facing steps (deleting broadly, force-pushing, sending mail as them, spending money) are still described in words first."
     ]
-  }
+  },
+  "enableAllProjectMcpServers": true
 }

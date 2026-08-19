@@ -5442,10 +5442,13 @@ def handle_message(m, cid, target, me, mapping):
             slash = name
         elif name != "omnius":
             try:
+                # Only reachable when config\skills.ini NARROWS the default -
+                # since 2026-08-19 an instance with no such file passes every
+                # slash through, so this message means "you restricted it".
                 api.send_message(cid, f"⛔ `/{name or '?'}` is not on the pass-through "
-                                      f"list (`config\\skills.ini`) - nothing was "
-                                      f"delivered. Say it in words, or add the skill "
-                                      f"to the list.")
+                                      f"list your `config\\skills.ini` sets - nothing "
+                                      f"was delivered. Add it there, delete that file "
+                                      f"to allow every skill again, or say it in words.")
             except api.ApiError:
                 pass
             log(f"slash refused: /{name or '?'} in #{target.channel_name}")

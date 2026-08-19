@@ -55,15 +55,37 @@ ALLOW = [
     # --- background work and scheduling ---
     "TaskCreate", "TaskGet", "TaskList", "TaskOutput", "TaskStop", "TaskUpdate",
     "CronCreate", "CronDelete", "CronList", "Monitor",
-    # --- planning ---
-    "EnterPlanMode", "ExitPlanMode",
+    # --- planning and worktrees ---
+    "EnterPlanMode", "ExitPlanMode", "EnterWorktree", "ExitWorktree",
+    # --- everything else a current Claude Code can surface. Listed even where
+    # this install has never seen the name: one that arrives with a future
+    # release must not stop a desk the first time it is used, which is the whole
+    # point of this file (2026-08-19, owner: add every permission you know of).
+    "MultiEdit", "NotebookRead", "TodoRead", "KillBash", "ScheduleWakeup",
+    "DesignSync", "RemoteTrigger", "SuggestSkills", "SuggestPluginInstall",
+    "ListPlugins", "SearchPlugins",
     # --- MCP servers that ship with Claude Code itself, allowed whole.
     # Servers YOU connect are instance-specific and belong in LEARNED below,
     # not here: their names say what this install is wired to, and this file
     # travels into every fresh release.
     "mcp__claude-in-chrome", "mcp__computer-use", "mcp__Claude_Browser",
     "mcp__visualize", "mcp__ccd_session", "mcp__ccd_session_mgmt",
-    "mcp__mcp-registry", "mcp__scheduled-tasks",
+    "mcp__mcp-registry", "mcp__scheduled-tasks", "mcp__ccd_directory",
+    "mcp__terminal",
+]
+
+# Natural-language standing authorisations for auto mode, stamped onto every
+# desk beside the tool list. "$defaults" keeps whatever Claude Code ships with;
+# the sentence states the posture for the cases a tool NAME cannot express.
+AUTO_ALLOW = [
+    "$defaults",
+    "This machine belongs to the person running these desks, and every desk acts "
+    "with their full authority. Do not ask permission to use a tool: act, then "
+    "say what you did. The single exception is .env, which holds the tokens and "
+    "passwords and is denied on purpose - if you genuinely need something from "
+    "it, say which key and why. Irreversible or outward-facing steps (deleting "
+    "broadly, force-pushing, sending mail as them, spending money) are still "
+    "described in words first.",
 ]
 
 # Learned entries: written when he answers "ok" to a permission request, so a
@@ -81,6 +103,34 @@ ALLOW = [
 # enough - that prompts, he says ok, and it hangs exactly the same way. A deny
 # makes the tool fail, and the desk then asks in plain text, which he CAN answer.
 DENY = ["AskUserQuestion"]
+
+# .env IS THE ONE THING STILL DENIED (owner, 2026-08-19: "the only files you
+# deny are the .env files, all other you allow"). Everything else in this file
+# widens; this is the single exception, and it is worth being precise about what
+# it is and is not:
+#
+#   It IS a guardrail. A desk reaching for the file that holds the bot token,
+#   the mail passwords and the API keys is stopped and has to say so instead -
+#   and desks answer other people now (guests, Telegram invitees), so the
+#   difference between "reads it by habit" and "has to ask" is worth keeping.
+#
+#   It is NOT a boundary. Bash and PowerShell are allowed, so `type .env` still
+#   works: anything with a shell can read any file on the machine. Treating this
+#   as containment would be a lie - the containment is that only the owner and
+#   people he invites can talk to a desk at all.
+#
+# Every depth is listed because desks sit at different depths (root, daybook\,
+# tools\<x>\, projects\<p>\<c>\) and a relative rule that misses is a rule that
+# is not there. Stamped by this script now, so every desk carries the same set
+# instead of whatever its file was hand-written with.
+DENY_ENV = ["Read(./.env)", "Read(./**/.env)",
+            "Read(../.env)", "Read(../**/.env)",
+            "Read(../../.env)", "Read(../../**/.env)",
+            "Read(../../../.env)", "Read(../../../**/.env)",
+            "Edit(./.env)", "Edit(../.env)", "Edit(../../.env)",
+            "Edit(../../../.env)",
+            "Write(./.env)", "Write(../.env)", "Write(../../.env)",
+            "Write(../../../.env)"]
 
 LEARNED = ROOT / "config" / "allow-learned.json"
 
@@ -189,7 +239,30 @@ def main():
         # Learned entries MIGRATE out of the tracked file into settings.local
         # .json - they name his integrations, and this file ships.
         misplaced = [t for t in have if t in extra]
-        undenied = [t for t in DENY if t not in held]
+        # DENY plus the .env rules, at every depth, on every desk. Hand-written
+        # per file they drifted: a project desk sits three levels down and its
+        # file carried rules for two, so the root .env was reachable from it.
+        want_deny = DENY + DENY_ENV
+        undenied = [t for t in want_deny if t not in held]
+        auto = data.setdefault("autoMode", {})
+        auto_have = auto.get("allow") or []
+        auto_missing = [a for a in AUTO_ALLOW if a not in auto_have]
+        # Two more settings that decide whether a desk stops to ask:
+        #
+        # defaultMode = acceptEdits - file edits are applied without a prompt.
+        # NOT bypassPermissions: that one is A/B-proven to hang an INTERACTIVE
+        # spawn (fleet.json roles carry the receipts, 2026-08-01) because Claude
+        # Code shows a confirmation screen that -p skips, and desks here open
+        # real windows. It would also switch off the deny list, taking the .env
+        # rule with it.
+        #
+        # enableAllProjectMcpServers - an MCP server declared in .mcp.json is
+        # trusted rather than asked about, per project, on first use.
+        mode_wrong = perms.get("defaultMode") != "acceptEdits"
+        mcp_wrong = data.get("enableAllProjectMcpServers") is not True
+        # `ask` is the third list Claude Code reads: anything in it prompts
+        # every time, whatever `allow` says. Empty is the posture here.
+        asks = [t for t in (perms.get("ask") or [])]
         lp = p.with_name("settings.local.json")
         try:
             lhave = (json.loads(lp.read_text(encoding="utf-8"))
@@ -197,7 +270,8 @@ def main():
         except (OSError, json.JSONDecodeError):
             lhave = []
         local_missing = [t for t in extra if t not in lhave]
-        if not (missing or stale or undenied or misplaced or local_missing):
+        if not (missing or stale or undenied or misplaced or local_missing
+                or auto_missing or mode_wrong or mcp_wrong or asks):
             continue
         short.append((p, missing + local_missing))
         if check_only:
@@ -207,6 +281,15 @@ def main():
         perms["allow"] = [t for t in have if t not in DENY and t not in extra] + missing
         if undenied:
             perms["deny"] = held + undenied
+        if auto_missing:
+            # Additive like the allow list: an instance may have added a
+            # standing authorisation of its own, and this must not eat it.
+            auto["allow"] = auto_have + auto_missing
+        perms["defaultMode"] = "acceptEdits"
+        data["enableAllProjectMcpServers"] = True
+        if asks:
+            # A tool that always asks is a tool that stops an unattended desk.
+            perms.pop("ask", None)
         p.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n",
                      encoding="utf-8")
         _merge_local(p, extra)

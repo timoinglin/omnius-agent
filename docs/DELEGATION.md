@@ -323,7 +323,7 @@ checkpoint instruction" and "a typo cannot invent a desk".
 ("speed, not judgment"); skills are the opposite. Passing them through must not let arbitrary
 mail — or any desk — trigger arbitrary skills.
 
-**Fix.** Owner mail only, closed list, stamped by the transport:
+**Fix.** Owner mail only, stamped by the transport. *(The list itself opened on 2026-08-19: with no `config\skills.ini`, every installed skill passes. The file now NARROWS rather than enrols. What did not change is the sentence that matters here - owner mail only.)*
 
 - In `handle_message`'s owner-only block — after control verbs, permission answers and takeover
   answers, immediately before the envelope is written — text starting `/name` is checked against

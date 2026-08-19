@@ -95,7 +95,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - A desk hands work to a sibling by **addressing an envelope to it**; the watchdog validates the target, delivers, and mirrors every hop into the recipient's channel — the fleet talking to itself is always on your screen. Fan-out workflows are just envelopes in sequence.
 - **Hop budgets** with free replies stop runaway chains; a **cross-project gate** holds anything that crosses a project boundary for your ok/no, failing closed on silence.
 - **Budgeted work loops**: a desk grinds toward a checkable done-condition across runs — five by default, then it must report what exists and ask. Loops never extend themselves.
-- **Slash pass-through**: `/goal <objective>`, `/status`, `/watch <url>` or any skill you allow-list runs *as that skill* on the desk; the list ships empty on purpose, and guests never pass one.
+- **Slash pass-through**: `/goal <objective>`, `/status`, `/watch <url>` — every installed skill runs *as that skill* on the desk, on by default; narrow it in `config\skills.ini` if you want, and guests never pass one whatever it says.
 
 **Automation**
 - Routines created by talking, managed with `!cron` (list / pause / resume / remove / adopt): intervals, daily times, one-shots, weekday and time-window clamps.
@@ -161,7 +161,7 @@ The brief plants those tensions on purpose. Whether the builders handled them �
 
 ## Security posture, in one paragraph
 
-Desks run with a wide allow-list and **no permission prompts** — a prompt on a screen nobody watches is a hung desk, and Omnius is meant to be used from a phone. Three fences hold instead: anything outside the allow-list becomes an **ok/no question in your channel**; anything irreversible the model must ask about **in words** before doing; and `.env` — the only place secrets live — is deny-listed from reading and excluded from every backup and release. The bot obeys exactly one Discord user: you. Read [docs/PERMISSIONS.md](docs/PERMISSIONS.md) before loosening any of it.
+**Everything is enabled by default except `.env`.** An owner is normally alone on their own Omnius, so a desk acts with your authority rather than inside a sandbox: 60+ tools allowed, file edits applied without asking, project MCP servers trusted, every installed skill reachable as a slash command. A prompt on a screen nobody watches is a hung desk, and this is meant to be used from a phone. What is left: `.env` — the only place secrets live — is denied to the file tools and excluded from every backup and release; anything irreversible or outward-facing is described **in words** first; anything genuinely unlisted still becomes an **ok/no question in your channel**, and one `ok` teaches the whole fleet. The bot obeys exactly one Discord user: you. Read [docs/PERMISSIONS.md](docs/PERMISSIONS.md) before changing any of it.
 
 ## Reading order
 

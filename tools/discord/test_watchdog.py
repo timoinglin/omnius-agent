@@ -4496,7 +4496,8 @@ try:
                and t not in ("mcp__claude-in-chrome", "mcp__computer-use",
                              "mcp__Claude_Browser", "mcp__visualize",
                              "mcp__ccd_session", "mcp__ccd_session_mgmt",
-                             "mcp__mcp-registry", "mcp__scheduled-tasks")],
+                             "mcp__mcp-registry", "mcp__scheduled-tasks",
+                             "mcp__ccd_directory", "mcp__terminal")],
           "an integration he connected belongs in the learned file, not the repo")
 
     check("autostart repairs the allow-list the same way it repairs hook paths",
@@ -6456,7 +6457,27 @@ try:
               any("skills.ini" in p for p in _dcfg.problems()))
         _dcfg.load = lambda name, legacy=None: (
             {} if name == "skills" else _sreal(name, legacy))
-        check("slash config: no file means nothing passes",
+        # OPEN BY DEFAULT (owner, 2026-08-19). skills.ini never shipped, so the
+        # fail-closed default meant a fresh instance answered /goal with a
+        # refusal - and whoever installs this IS the owner. The gate that
+        # matters is WHO asks, and that one is unchanged: guests never pass a
+        # slash whatever this returns.
+        # OPEN means open. A folder scan would have been NARROWER than the
+        # explicit list it replaced: /code-review, /simplify and /run are not
+        # folders under .claude\skills\ at all - they arrive with Claude Code or
+        # a plugin - so scanning silently dropped them.
+        _open = _dcfg.slash_skills()
+        check("slash config: no file passes every skill, folder-backed or not",
+              all(n in _open for n in ("goal", "code-review", "simplify",
+                                       "run", "whatever-ships-next")))
+        check("...and still refuses something that is not a skill name at all",
+              "not a name!" not in _open)
+        check("...while still listing the installed ones for !config",
+              set(_open) == _dcfg.installed_skills() and len(_open) > 0)
+        _dcfg.load = lambda name, legacy=None: (
+            {"skills": {"allowed": "none"}} if name == "skills"
+            else _sreal(name, legacy))
+        check("...and `allowed = none` still closes it deliberately",
               _dcfg.slash_skills() == set())
     finally:
         _dcfg.load = _sreal
@@ -7965,11 +7986,28 @@ try:
                  "tools/fleet/.claude/settings.json",
                  "tools/transcribe/.claude/settings.json",
                  "templates/project/.claude/settings.json"):
-        _pp = json.loads((HERE.parent.parent / _sf2).read_text(encoding="utf-8"))["permissions"]
+        _pj = json.loads((HERE.parent.parent / _sf2).read_text(encoding="utf-8"))
+        _pp = _pj["permissions"]
+        import sync_permissions as _sp2                               # noqa: E402
         check(f"{_sf2}: auto-allows shell (no prompt on a screen nobody watches)",
               "Bash" in _pp["allow"] and "PowerShell" in _pp["allow"])
-        check(f"{_sf2}: still refuses to read .env (the one fence he kept)",
+        check(f"{_sf2}: still refuses .env (the one fence, owner 2026-08-19)",
               any("env" in x.lower() for x in _pp.get("deny", [])))
+        # EVERYTHING ELSE IS ON. The owner is alone on his own instance, so the
+        # posture is authority rather than sandbox - and a desk that stops to
+        # ask is a desk stopped on a screen nobody is watching.
+        check(f"{_sf2}: carries the whole shared allow-list, not a subset",
+              not [t for t in _sp2.ALLOW if t not in _pp["allow"]])
+        check(f"{_sf2}: file edits are applied without asking",
+              _pp.get("defaultMode") == "acceptEdits")
+        check(f"{_sf2}: a project's own MCP servers are trusted, not asked about",
+              _pj.get("enableAllProjectMcpServers") is True)
+        check(f"{_sf2}: nothing sits on the always-ask list",
+              not _pp.get("ask"))
+        check(f"{_sf2}: carries the standing authorisation for auto mode",
+              "$defaults" in (_pj.get("autoMode", {}).get("allow") or []))
+        check(f"{_sf2}: .env is denied for writing too, not only reading",
+              any(x.startswith("Write(") and "env" in x for x in _pp.get("deny", [])))
 
     print(f"\n==== {passed} passed, {failed} failed ====")
 finally:
