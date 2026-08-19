@@ -298,7 +298,12 @@ what they themselves said. Full contract:
   rolls the update back**) → hooks/permissions re-stamped → self-reload.
   Your files never move; everything personal is gitignored. **Changes you made
   to the code are kept**: your commits are replayed on top of the new release,
-  so an instance you have customised still updates. If your edit and the new
+  so an instance you have customised still updates. Two other doors to the same
+  path, for when Discord is not enough — `irm
+  https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 |
+  iex` in any PowerShell, or `update.ps1` at the install; both repair a machine
+  whose watchdog is too old or too broken to update itself
+  ([UPDATING.md](UPDATING.md)). If your edit and the new
   release touch the same lines, the update stops, names those files, and leaves
   the instance exactly as it was. (`git pull` +
   `!reload` at the desk still works.) Zip installs attach themselves to the

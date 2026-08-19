@@ -1,0 +1,195 @@
+# Omnius updater - the one that can always reach a stuck instance.
+#
+#   irm https://raw.githubusercontent.com/timoinglin/omnius-agent/main/update.ps1 | iex
+#   powershell -ExecutionPolicy Bypass -File update.ps1          (at the install)
+#   & ([scriptblock]::Create((irm <url>))) -Path D:\omnius -NoRestart
+#
+# WHY THIS EXISTS. The update logic used to live only inside the watchdog, so a
+# mistake in it stranded every instance at once - twice on 2026-08-19 - and the
+# fix could not reach machines their owners only talk to through Discord. A
+# script fetched from the repo does not have that problem: it is never the
+# broken copy. `!update go` now fetches THIS FILE first and runs it, so the
+# logic that updates you is always the newest one, not the one already in
+# memory.
+#
+# WHAT IT DOES, in order, refusing loudly rather than half-doing:
+#   1. find the install (parameter, or the folder it sits in, or the registered
+#      scheduled task, or the current directory)
+#   2. fetch, then REBASE local work onto the release (autostash) - your commits
+#      and edits survive; a real conflict stops and puts everything back
+#   3. stamp hooks and permissions BEFORE judging - new code raises the bar and
+#      these are what meet it
+#   4. run the suite; NEW failures roll the whole thing back and re-stamp
+#   5. restart the watchdog so the new code is actually running
+#
+# It is safe to run repeatedly, and safe to run while Omnius is running.
+#
+# DESIGN NOTE (from get.ps1, learned 2026-08-11): this is `iex`'d into the
+# user's own session, so it must leave nothing behind - no Set-StrictMode, no
+# session-level $ErrorActionPreference, no cd. Everything lives in one function
+# with local preferences.
+param(
+  [string]$Path,
+  [switch]$NoRestart,      # used by the watchdog: it reloads itself afterwards
+  [switch]$NoTests,        # emergencies only; the release notes say so
+  [switch]$Quiet
+)
+
+function Update-Omnius {
+  param([string]$Path, [bool]$NoRestart, [bool]$NoTests, [bool]$Quiet)
+  $ErrorActionPreference = 'Continue'      # function-local, never the session's
+  $ProgressPreference    = 'SilentlyContinue'
+
+  function Say([string]$tag, [string]$msg, [string]$colour = 'Gray') {
+    if (-not $Quiet -or $tag -in @('X', 'OK')) {
+      Write-Host ("  [{0}] {1}" -f $tag, $msg) -ForegroundColor $colour
+    }
+  }
+
+  Write-Host ''
+  Write-Host '  OMNIUS - update' -ForegroundColor Cyan
+  Write-Host ''
+
+  # --- 1. find the install ----------------------------------------------------
+  # Four ways, because the three that can fail each fail differently: the
+  # parameter (explicit), the folder this file sits in (a local run), the
+  # registered task (an `irm` run on a machine that installed normally), and
+  # the current directory (someone standing in it).
+  $root = $null
+  foreach ($cand in @(
+      $Path,
+      $(if ($PSScriptRoot) { $PSScriptRoot } else { $null }),
+      $(try {
+          $t = Get-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction Stop
+          $wd = ($t.Actions | Select-Object -First 1).WorkingDirectory
+          if ($wd) { $wd } else {
+            $a = ($t.Actions | Select-Object -First 1).Arguments
+            if ($a -match '"([^"]*)\\tools\\discord\\watchdog\.py"') { $Matches[1] }
+          }
+        } catch { $null }),
+      (Get-Location).Path)) {
+    if (-not $cand) { continue }
+    $cand = $cand.Trim('"')
+    if (Test-Path (Join-Path $cand 'tools\discord\watchdog.py')) { $root = (Resolve-Path $cand).Path; break }
+  }
+  if (-not $root) {
+    Say 'X' 'could not find an Omnius install.' 'Red'
+    Write-Host '      Run it from the install folder, or name it:'
+    Write-Host '      & ([scriptblock]::Create((irm <this url>))) -Path C:\path\to\omnius'
+    return 1
+  }
+  Say 'OK' "install: $root" 'Green'
+
+  foreach ($cmd in @('git', 'python')) {
+    if (-not (Get-Command $cmd -ErrorAction SilentlyContinue)) {
+      Say 'X' "$cmd is not on PATH - install it (or rerun install.bat) and try again" 'Red'
+      return 1
+    }
+  }
+  if (-not (Test-Path (Join-Path $root '.git'))) {
+    Say 'X' 'this install is not attached to GitHub - run install.bat once, then update' 'Red'
+    return 1
+  }
+
+  # --- 2. fetch and rebase ----------------------------------------------------
+  $before = (& git -C $root rev-parse --short HEAD 2>$null)
+  Say '..' "at $before - fetching"
+  & git -C $root fetch --quiet origin main 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) { Say 'X' 'could not reach GitHub' 'Red'; return 1 }
+
+  $behind = (& git -C $root rev-list --count HEAD..origin/main 2>$null)
+  if ("$behind".Trim() -eq '0') {
+    Say 'OK' "already current at $before - nothing to do" 'Green'
+    if (-not $NoRestart) { Restart-Watchdog $root }
+    return 0
+  }
+  Say '..' "$("$behind".Trim()) commit(s) behind - rebasing your work onto them"
+
+  # Anything of yours is replayed on top; uncommitted work rides the autostash.
+  $stashBefore = (& git -C $root rev-parse -q --verify refs/stash 2>$null)
+  $out = & git -C $root -c rebase.autoStash=true pull --rebase origin main 2>&1
+  $pullRc = $LASTEXITCODE
+  # An exit code describes the rebase, NOT the tree it left: when the rebase
+  # lands but restoring the autostash conflicts, git exits 0 with merge markers
+  # in the files. Ask the tree.
+  $conflicted = @(& git -C $root diff --name-only --diff-filter=U 2>$null | Where-Object { $_ })
+  if ($pullRc -ne 0 -or $conflicted.Count) {
+    & git -C $root rebase --abort 2>&1 | Out-Null
+    & git -C $root checkout -- . 2>&1 | Out-Null
+    & git -C $root reset --hard $before 2>&1 | Out-Null
+    $stashAfter = (& git -C $root rev-parse -q --verify refs/stash 2>$null)
+    if ($stashAfter -and $stashAfter -ne $stashBefore) { & git -C $root stash pop 2>&1 | Out-Null }
+    Say 'X' 'your local changes and the new release edit the same lines' 'Red'
+    if ($conflicted.Count) { $conflicted | ForEach-Object { Write-Host "      $_" } }
+    Write-Host "      Nothing was lost - still on $before, with your version intact."
+    Write-Host '      Take the new version of a file with `git checkout -- <file>`, or fold'
+    Write-Host '      your change into it, then run this again.'
+    return 1
+  }
+  $after = (& git -C $root rev-parse --short HEAD 2>$null)
+  Say 'OK' "pulled $before -> $after" 'Green'
+
+  # --- 3. stamp BEFORE judging -----------------------------------------------
+  # New code raises the bar (a wider allow-list, a new hook) and these
+  # idempotent stamps are what meet it. Judged first, every such release looked
+  # like the update had broken something and rolled itself back.
+  Stamp-Machine $root
+
+  # --- 4. the suite decides ---------------------------------------------------
+  if ($NoTests) {
+    Say '!' 'suite skipped (-NoTests)' 'Yellow'
+  } else {
+    Say '..' 'running the test suite'
+    $suite = & python (Join-Path $root 'tools\discord\test_watchdog.py') 2>&1
+    if ($LASTEXITCODE -ne 0) {
+      $failed = @($suite | Select-String -Pattern '\[FAIL\]' | Select-Object -First 5)
+      & git -C $root reset --hard $before 2>&1 | Out-Null
+      Stamp-Machine $root        # restore stamps to match the restored code
+      Say 'X' "the new code failed its own suite - rolled back to $before" 'Red'
+      $failed | ForEach-Object { Write-Host "      $_" }
+      Write-Host '      Nothing was reloaded. Report this - a released commit should never do it.'
+      return 1
+    }
+    Say 'OK' ("suite green: " + (($suite | Select-Object -Last 1) -replace '=', '').Trim()) 'Green'
+  }
+
+  # --- 5. run the new code ----------------------------------------------------
+  if ($NoRestart) {
+    Say 'OK' "updated to $after - caller will reload" 'Green'
+  } else {
+    Restart-Watchdog $root
+    Say 'OK' "updated $before -> $after and restarted" 'Green'
+  }
+  return 0
+}
+
+function Stamp-Machine([string]$root) {
+  foreach ($tool in @('fix_hook_paths.py', 'sync_permissions.py')) {
+    $p = Join-Path $root "tools\discord\$tool"
+    if (Test-Path $p) { & python $p 2>&1 | Out-Null }
+  }
+}
+
+function Restart-Watchdog([string]$root) {
+  # A running service keeps the code it was born with, so an update nobody
+  # restarts is an update nobody got.
+  $task = Get-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction SilentlyContinue
+  if ($task) {
+    try {
+      Stop-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction SilentlyContinue
+      Start-Sleep -Seconds 2
+      Start-ScheduledTask -TaskName 'Omnius Watchdog' -ErrorAction Stop
+      Write-Host '  [OK] watchdog restarted on the new code' -ForegroundColor Green
+      return
+    } catch { }
+  }
+  Write-Host '  [!] no Omnius Watchdog task here - start it yourself (start-omnius.bat)' -ForegroundColor Yellow
+}
+
+$rc = Update-Omnius -Path $Path -NoRestart:$NoRestart -NoTests:$NoTests -Quiet:$Quiet
+Write-Host ''
+# `exit` ONLY when this ran as a file. The headline use is
+# `irm <url> | iex`, which runs in the user's own session - and `exit` there
+# closes their PowerShell window, taking the output they were about to read
+# with it. Same reasoning as get.ps1's "leave no trace in the session".
+if ($PSCommandPath) { exit $rc }

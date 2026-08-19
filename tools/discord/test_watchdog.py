@@ -6654,6 +6654,36 @@ try:
             return (0, "Successfully rebased and updated refs/heads/main.\n")
         return (0, "")
 
+    # THE UPDATER UPDATES ITSELF FIRST. All the logic below lives inside the
+    # thing being updated, so a mistake in it strands every instance at once and
+    # the fix cannot reach machines reachable only through Discord - which
+    # happened twice on 2026-08-19. Checking out update.ps1 from origin and
+    # running THAT means the newest published logic does the work.
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    _ran = []
+    _real_run = wd.subprocess.run
+    wd.subprocess.run = lambda argv, **kw: (_ran.append(argv), type(
+        "P", (), {"returncode": 0, "stdout": "  [OK] updated 20e7bfd -> 16e371c\n",
+                  "stderr": ""})())[1]
+    (wd.ROOT / "update.ps1").write_text("# fake updater", encoding="utf-8")
+    try:
+        wd.handle_update("!update go", "CID_OM")
+        check("update go: delegates to the update.ps1 it just fetched",
+              any(c[:2] == ("checkout", "origin/main") for c in _upd_calls)
+              and _ran and "update.ps1" in " ".join(str(x) for x in _ran[-1]),
+              "the logic that updates you must never be the copy already in memory")
+        check("...telling it not to restart - the watchdog reloads itself",
+              _ran and "-NoRestart" in [str(x) for x in _ran[-1]])
+        check("...and still performs the handshake, so a bad boot reverts itself",
+              wd._pending_path().is_file() and _reloaded == ["CID_OM"])
+    finally:
+        wd.subprocess.run = _real_run
+        (wd.ROOT / "update.ps1").unlink(missing_ok=True)
+        wd._pending_path().unlink(missing_ok=True)
+
+    # An instance installed BEFORE update.ps1 existed has none to fetch: the
+    # in-process path is exactly the case that most needs a fallback.
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
     sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
     wd._git = _upd_happy
     wd._update_suite = lambda: (True, "==== 1315 passed, 0 failed ====", frozenset())

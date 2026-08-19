@@ -3833,6 +3833,47 @@ def handle_update(text, cid):
                               f"is replayed on top, and your own files never move — "
                               f"everything personal is gitignored.")
         return
+    # THE UPDATER UPDATES ITSELF FIRST.
+    #
+    # Everything below this line is update logic living inside the thing being
+    # updated - so a mistake in it strands every instance at once, and the fix
+    # cannot reach machines their owner only talks to through Discord. That
+    # happened twice on 2026-08-19. Checking out just update.ps1 from origin and
+    # running THAT means the logic doing the work is always the newest published
+    # version, never the one this process was born with. A bug here now costs
+    # one bad update instead of every future one.
+    #
+    # The in-process path below stays as the fallback for an instance whose
+    # update.ps1 is missing (installed before it existed) - which is exactly
+    # the case that most needs a fallback.
+    _rc, _ = _git("checkout", "origin/main", "--", "update.ps1")
+    updater = ROOT / "update.ps1"
+    if _rc == 0 and updater.is_file():
+        api.send_message(cid, f"⬆ updating `{head}` → origin/main via `update.ps1` "
+                              f"(fetched fresh, so the newest logic runs) …")
+        try:
+            p = subprocess.run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                                "-File", str(updater), "-Path", str(ROOT), "-NoRestart"],
+                               capture_output=True, text=True, timeout=900,
+                               creationflags=NO_WINDOW)
+            tail = "\n".join([ln for ln in (p.stdout or "").splitlines() if ln.strip()][-12:])
+            if p.returncode != 0:
+                api.send_message(cid, f"⛔ update stopped — nothing was reloaded:\n"
+                                      f"```\n{tail[-1200:]}\n```")
+                return
+            _rc, new_full2 = _git("rev-parse", "HEAD")
+            _rc, new2 = _git("rev-parse", "--short", "HEAD")
+            api.send_message(cid, f"```\n{tail[-1200:]}\n```")
+            write_json_atomic(_pending_path(), {
+                "fromCommit": head_full.strip(), "toCommit": new_full2.strip(),
+                "channelId": cid, "startedAt": now_iso(), "startedTs": time.time(),
+                "bootAttempts": 0})
+            log(f"!update: {head} -> {new2.strip()} via update.ps1 - reloading")
+            do_reload(cid, announce=False)
+            return
+        except Exception as e:                                   # noqa: BLE001
+            log(f"update.ps1 failed ({type(e).__name__}: {e}) - falling back to the "
+                f"in-process path")
     # BASELINE first: this instance's failures BEFORE the pull are its own
     # housekeeping, not the update's fault. The gate judges only the delta.
     base_ok, base_tail, base_fails = _update_suite()
