@@ -286,6 +286,12 @@ SPEC = [
     ("omnius", "delegation", "hop_ttl", "OMNIUS_HOP_TTL", "3", "int"),
     ("omnius", "delegation", "loop_budget", "OMNIUS_LOOP_BUDGET", "5", "int"),
     ("omnius", "delegation", "cross_project_requires_ok", "OMNIUS_CROSS_PROJECT_OK", "1", "bool"),
+    # Does THIS instance own the public repo? Off by default, because almost
+    # every instance is somebody's install rather than the source of the
+    # project. It changes one thing only: whether a desk may push. Committing
+    # is right on every instance - !update rebases local commits onto each new
+    # release, so local work survives updates instead of blocking them.
+    ("omnius", "fleet", "maintainer", "OMNIUS_MAINTAINER", "0", "bool"),
     ("notes", "notes", "notes_dir", "NOTES_DIR", "notes", "str"),
     ("notes", "notes", "host", "NOTES_HOST", "127.0.0.1", "str"),
     ("notes", "notes", "port", "PORT", "5111", "int"),

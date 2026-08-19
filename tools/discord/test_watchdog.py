@@ -6521,52 +6521,71 @@ try:
         (("status", "--porcelain"), (0, " M tools/discord/watchdog.py\n")),
     ])
     wd.handle_update("!update go", "CID_OM")
-    check("update go: a dirty tree refuses - a pull must never eat local work",
-          "not updating" in sent[-1][1]
-          and not any(c[:1] == ("pull",) for c in _upd_calls))
-    check("...and NAMES the files, because the point of !update is not needing the desk",
-          "tools/discord/watchdog.py" in sent[-1][1],
-          "'git status at the desk names them' is useless to someone on a phone")
+    check("update go: a dirty tree is NOT refused - autostash carries it through",
+          not any("not updating" in m[1] for m in sent)
+          and any(c[:2] == ("-c", "rebase.autoStash=true") for c in _upd_calls),
+          "every instance but one is somebody's own copy, and they change things")
     sent.clear(); _upd_calls[:] = []
+    # THE CASE THAT USED TO BE A ONE-WAY DOOR: local commits. ff-only refused
+    # them forever, and the owner of a public clone cannot push the change
+    # upstream to get out of it - so their instance could never update again.
     wd._git = _script_git([
         (("rev-parse", "--is-inside-work-tree"), (0, "true")),
         (("fetch",), (0, "")),
         (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
         (("rev-list",), (0, "3\n")),
-        (("status", "--porcelain"), (0, " D projects/.gitkeep\n?? scratch/x\n")),
-    ])
-    wd.handle_update("!update go", "CID_OM")
-    check("the refusal gives the exact restore command for the file it named",
-          "projects/.gitkeep" in sent[-1][1]
-          and "git checkout -- projects/.gitkeep" in sent[-1][1],
-          "this exact case shipped in a release and blocked a colleague's first update")
-    # Most instances are read-only clones of the public repo: no push rights,
-    # and !update pulls --ff-only, so "just commit it" would wedge updates for
-    # good. Everything of theirs is gitignored, which is what makes discarding
-    # the safe default to offer.
-    check("...and it warns against committing rather than suggesting it",
-          "Don't commit" in sent[-1][1] and "fast-forward only" in sent[-1][1])
-    check("...and says why discarding is safe: nothing personal is tracked",
-          "gitignored" in sent[-1][1])
-    check("...and an untracked stray is still not counted as local work",
-          "1 tracked file(s)" in sent[-1][1] and "scratch/x" not in sent[-1][1])
-    sent.clear(); _upd_calls[:] = []
-    wd._git = _script_git([
-        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
-        (("fetch",), (0, "")),
-        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
-        (("rev-list",), (0, "3\n")),
-        (("status", "--porcelain"), (0, "")),
-        (("pull",), (1, "fatal: Not possible to fast-forward, aborting.")),
+        (("-c",), (0, "Successfully rebased and updated refs/heads/main.")),
     ])
     wd._update_suite = lambda: (True, "ok", frozenset())
     wd.handle_update("!update go", "CID_OM")
-    check("a DIVERGED branch names the way back instead of 'resolve at the desk'",
-          "reset --hard origin/main" in sent[-1][1],
-          "a downstream owner cannot push, so a diverged branch never reconciles "
-          "and every later !update fails identically")
-    check("...and states what that costs, so it is a decision and not a leap",
-          "code" in sent[-1][1] and "gitignored" in sent[-1][1])
+    check("local commits are REBASED onto the release, not refused",
+          any(c[:4] == ("-c", "rebase.autoStash=true", "pull", "--rebase")
+              for c in _upd_calls)
+          and not any("reset --hard origin/main" in m[1] for m in sent),
+          "local work must survive an update, not block it")
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-list",), (0, "3\n")),
+        (("-c",), (1, "CONFLICT (content): Merge conflict in tools/discord/api.py")),
+        (("diff", "--name-only"), (0, "tools/discord/api.py\n")),
+        (("rebase", "--abort"), (0, "")),
+        (("stash", "pop"), (1, "No stash entries found.")),
+    ])
+    wd.handle_update("!update go", "CID_OM")
+    check("a real conflict names the files rather than dumping git at him",
+          "tools/discord/api.py" in sent[-1][1])
+    check("...and the tree is put back, so nothing of theirs is lost",
+          any(c[:2] == ("rebase", "--abort") for c in _upd_calls)
+          and "as it was" in sent[-1][1])
+    check("...and it does not reload a half-updated instance",
+          _reloaded == [])
+    # GIT SAID SUCCESS. When the rebase lands but restoring the autostash
+    # conflicts, `pull` exits 0 and leaves merge markers in the tree - proven in
+    # a scratch repo before this shipped. Trusting the exit code would reload
+    # the fleet onto a file full of <<<<<<<.
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-parse", "HEAD"), (0, "aaa1111ffffffffffffffffffffffffffffffff\n")),
+        (("rev-list",), (0, "3\n")),
+        (("rev-parse", "-q", "--verify"), (0, "")),
+        (("-c",), (0, "Successfully rebased and updated refs/heads/main.")),
+        (("diff", "--name-only"), (0, "config/fleet.json\n")),
+        (("rebase", "--abort"), (0, "")),
+        (("checkout",), (0, "")),
+        (("reset", "--hard"), (0, "")),
+        (("stash", "pop"), (0, "")),
+    ])
+    wd.handle_update("!update go", "CID_OM")
+    check("a conflicted tree stops the update even when git exits 0",
+          "config/fleet.json" in sent[-1][1] and _reloaded == []
+          and any(c[:2] == ("reset", "--hard") for c in _upd_calls),
+          "exit codes describe the rebase, not the tree it left behind")
     _seq = {"n": 0}
 
     def _upd_happy(*args, timeout=60):
@@ -6578,18 +6597,19 @@ try:
             return (0, "aaa1111\n" if _seq["n"] == 1 else "eee5555\n")
         if args[:1] == ("rev-list",):
             return (0, "2\n")
-        if args[:1] == ("pull",):
-            return (0, "Fast-forward\n")
+        if args[:1] in (("pull",), ("-c",)):
+            return (0, "Successfully rebased and updated refs/heads/main.\n")
         return (0, "")
 
     sent.clear(); _upd_calls[:] = []; _reloaded[:] = []
     wd._git = _upd_happy
     wd._update_suite = lambda: (True, "==== 1315 passed, 0 failed ====", frozenset())
     wd.handle_update("!update go", "CID_OM")
-    check("update go: a clean tree pulls ff-only, reports old -> new, reloads",
+    check("update go: a clean tree rebases, reports old -> new, reloads",
           any("updated" in s[1] and "eee5555" in s[1] for s in sent)
           and _reloaded == ["CID_OM"]
-          and any(c[:2] == ("pull", "--ff-only") for c in _upd_calls))
+          and any(c[:4] == ("-c", "rebase.autoStash=true", "pull", "--rebase")
+                  for c in _upd_calls))
 
     def _suite_seq(*results):
         # baseline call first, post-pull call second; extras repeat the last
@@ -6737,8 +6757,8 @@ try:
             return (0, ("aaa1111" if _hs2["n"] <= 1 else "eee5555") + "0" * 33 + "\n")
         if args[:1] == ("rev-list",):
             return (0, "2\n")
-        if args[:1] == ("pull",):
-            return (0, "Fast-forward\n")
+        if args[:1] in (("pull",), ("-c",)):
+            return (0, "Successfully rebased and updated refs/heads/main.\n")
         return (0, "")
 
     _pend_at_reload = []
@@ -7748,6 +7768,52 @@ try:
     fo.PROJECTS, fo.TEMPLATE = _real_projects, _real_tmpl
 
     # -------------------------------------------------------------- heartbeat
+    # == who owns the repo ====================================================
+    # Every instance ran the same CLAUDE.md and believed it was the source of
+    # the project: desks committed, tried to push, and hit a wall they could not
+    # reason about. Nothing in the tree tells them apart, so this asks git.
+    print("== repo role ==")
+    import repo_access as _ra
+    _ra_cache, _ra_git, _ra_cfg = _ra.CACHE, _ra._git, _ra.ocfg.CONFIG_DIR
+    try:
+        _ra.CACHE = SAND / "repo-access.json"
+        _ra_dir = SAND / "racfg"; _ra_dir.mkdir(exist_ok=True)
+        _ra.ocfg.CONFIG_DIR = _ra_dir
+        _ra._git = lambda *a, timeout=None: (
+            (0, "true") if a[:1] == ("rev-parse",) else (1, "remote: Permission denied"))
+        push, why = _ra.can_push(refresh=True)
+        check("no write access -> user, and it says what git said",
+              push is False and "Permission denied" in why)
+        check("...and the answer is cached, not re-probed every time",
+              _ra.CACHE.is_file() and _ra.can_push()[0] is False)
+        _ra._git = lambda *a, timeout=None: (0, "")
+        check("write access -> maintainer", _ra.can_push(refresh=True)[0] is True)
+        # get_bool returns its default UNCHANGED when the key is missing, and
+        # the string "0" is truthy - passing it would have made every instance a
+        # maintainer, which is the exact bug this module exists to end.
+        (_ra_dir / "omnius.ini").write_text("[fleet]\n", encoding="utf-8")
+        _ra._git = lambda *a, timeout=None: (1, "denied")
+        check("an ABSENT maintainer key does not read as maintainer",
+              _ra.can_push(refresh=True)[0] is False,
+              "get_bool(..., '0') is truthy - the default must be False")
+        (_ra_dir / "omnius.ini").write_text("[fleet]\nmaintainer = 1\n", encoding="utf-8")
+        check("an explicit maintainer = 1 wins without touching the network",
+              _ra.can_push()[0] is True)
+        _src_ra = (real_root / "tools" / "repo_access.py").read_text(encoding="utf-8")
+        check("the probe can never sit on a credential prompt",
+              "GIT_TERMINAL_PROMPT" in _src_ra and "GCM_INTERACTIVE" in _src_ra
+              and "credential.interactive=never" in _src_ra,
+              "a watchdog blocked on a password dialog nobody sees is worse than "
+              "any wrong answer here")
+        check("it probes with --dry-run, so asking never writes anything",
+              "--dry-run" in _src_ra)
+        check("CLAUDE.md tells desks which instance they are on",
+              "repo_access.py" in (real_root / "CLAUDE.md").read_text(encoding="utf-8"))
+        check("release.ps1 refuses to publish from an instance that cannot push",
+              "repo_access.py" in (real_root / "release.ps1").read_text(encoding="utf-8"))
+    finally:
+        _ra.CACHE, _ra._git, _ra.ocfg.CONFIG_DIR = _ra_cache, _ra_git, _ra_cfg
+
     print("== heartbeat ==")
     from datetime import datetime as _dt
     for f in wd.SESSIONS.glob("*.json"):

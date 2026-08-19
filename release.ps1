@@ -61,6 +61,18 @@ function Fail([string]$msg, [string]$hint = '') {
 # --- 1. preflight --------------------------------------------------------------
 & git rev-parse --is-inside-work-tree *> $null
 if ($LASTEXITCODE -ne 0) { Fail 'not a git repository' }
+# A release is published by the instance that OWNS the repo. Every other install
+# runs this same script, and on one of those it fails deep in - after building a
+# zip - with a push rejection nobody asked for. Ask first, in one line.
+$roleJson = & python (Join-Path $PSScriptRoot 'tools\repo_access.py') --json 2>$null
+if ($LASTEXITCODE -eq 0 -and $roleJson) {
+  try {
+    if (-not (ConvertFrom-Json ([string]$roleJson)).canPush) {
+      Fail 'this instance cannot publish releases - it does not own the remote' `
+           'that is normal: your own commits are kept and replayed by !update. Nothing to fix.'
+    }
+  } catch { }
+}
 $branch = (& git rev-parse --abbrev-ref HEAD).Trim()
 if ($branch -ne 'main') { Fail "on branch '$branch', not main" 'the rolling release ships main only' }
 if (@(& git status --porcelain).Count) {

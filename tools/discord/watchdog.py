@@ -3785,13 +3785,20 @@ def _update_restamp():
 def handle_update(text, cid):
     """!update - fetch and preview what origin/main has; !update go - apply it.
 
-    The whole self-update story in one verb, with every gate the manual pull
-    path has: ff-only (local commits are never merged over silently), a dirty
-    tree refuses (a pull must not eat local work), the suite runs after the
-    pull and a red suite ROLLS BACK, and the reload reuses !reload's
-    compile-check. Personal files never move - they are gitignored, which is
-    the whole design of the update path. A zip install that never attached is
-    told how to, not left confused."""
+    The whole self-update story in one verb: rebase local work onto the new
+    release, run the suite, and a red suite ROLLS BACK; the reload reuses
+    !reload's compile-check. Personal files never move - they are gitignored,
+    which is the whole design of the update path. A zip install that never
+    attached is told how to, not left confused.
+
+    REBASE, not fast-forward (2026-08-19). Every instance but one is somebody's
+    own copy, and they change things: a prompt, an allow-list, a fix they need
+    today. ff-only made each of those a one-way door - that instance could
+    never update again - and the owner of a public clone cannot push the change
+    upstream to get out of it. Rebasing replays their commits on top of each
+    release: local work survives the update instead of blocking it, and a
+    genuine conflict is reported by name with the tree left exactly as it was.
+    """
     go = text.strip().lower().split()[1:2] == ["go"]
     rc, _out = _git("rev-parse", "--is-inside-work-tree")
     if rc != 0:
@@ -3816,39 +3823,9 @@ def handle_update(text, cid):
         more = "" if behind_n <= 8 else f"\n… and {behind_n - 8} more"
         api.send_message(cid, f"⬆ **{behind_n} commit(s) behind** origin/main:\n```\n"
                               f"{lg.strip()}{more}\n```\n`!update go` applies them "
-                              f"(ff-only pull → test suite → reload). Your files are "
-                              f"never touched - everything personal is gitignored.")
-        return
-    _rc, dirty = _git("status", "--porcelain")
-    # Only TRACKED modifications block: an untracked stray (a leftover
-    # .git-old\ from a migration, a scratch file) is not local work a pull
-    # could eat - and if one ever collides with an incoming file, the ff-only
-    # pull fails with its own clear error.
-    dirty_lines = [ln.rstrip() for ln in dirty.splitlines()
-                   if ln.strip() and not ln.startswith("??")]
-    if dirty_lines:
-        # NAME them. "git status at the desk names them" sent a remote owner to a
-        # machine he is not sitting at - and on 2026-08-19 the answer turned out
-        # to be a file OUR OWN packer had dropped, which he could not have
-        # guessed. The whole point of !update is not needing the desk.
-        shown = "\n".join(dirty_lines[:8])
-        more = f"\n… and {len(dirty_lines) - 8} more" if len(dirty_lines) > 8 else ""
-        paths = [ln[3:].strip().strip('"') for ln in dirty_lines][:4]
-        # NOT "commit or stash". Most instances are read-only clones of the
-        # public repo - no push rights - and !update pulls --ff-only, so a local
-        # commit here blocks every future update permanently. Everything of
-        # theirs is gitignored by design, which is exactly what makes discarding
-        # the safe default to offer.
-        api.send_message(cid,
-            f"⛔ not updating: {len(dirty_lines)} tracked file(s) changed locally.\n"
-            f"```\n{shown}{more}\n```\n"
-            f"Nothing of yours lives in tracked files — `.env`, `config\\`, `memory\\`, "
-            f"`projects\\`, your notes and `state\\` are all gitignored — so these are "
-            f"almost always an accidental edit or an install artifact. Discard them and "
-            f"retry:\n```\ngit checkout -- {' '.join(paths)}\n```\n"
-            f"If you changed them on purpose, `git stash` instead. **Don't commit them**: "
-            f"this instance pulls fast-forward only, and a local commit would block every "
-            f"future update.")
+                              f"(rebase → test suite → reload). Anything you changed here "
+                              f"is replayed on top, and your own files never move — "
+                              f"everything personal is gitignored.")
         return
     # BASELINE first: this instance's failures BEFORE the pull are its own
     # housekeeping, not the update's fault. The gate judges only the delta.
@@ -3859,21 +3836,47 @@ def handle_update(text, cid):
                               f"held against the update. Tidy at the desk when "
                               f"convenient: {', '.join(sorted(base_fails)[:3])}"
                               + (" …" if len(base_fails) > 3 else ""))
-    rc, out = _git("pull", "--ff-only", "origin", "main", timeout=180)
-    if rc != 0:
-        # "Resolve at the desk" is a dead end on a read-only clone: the owner of
-        # a downstream instance cannot push, so a diverged branch never
-        # reconciles on its own and every later !update fails the same way.
-        # Name the way out, and say plainly what it costs.
+    # REBASE, not fast-forward. Every instance except the one that owns the
+    # remote is somebody's working copy: they change a prompt, widen an
+    # allow-list, fix something for themselves - and ff-only turned each of
+    # those into "your instance can never update again", which is the opposite
+    # of what a personal tool should do. Rebasing replays their work on top of
+    # each release, so local changes SURVIVE updates instead of blocking them.
+    #
+    # --autostash carries uncommitted work through the same way; git restores
+    # it on abort, so the failure path leaves the tree exactly as it was.
+    _rc, stash_before = _git("rev-parse", "-q", "--verify", "refs/stash")
+    rc, out = _git("-c", "rebase.autoStash=true", "pull", "--rebase",
+                   "origin", "main", timeout=300)
+    # rc IS NOT ENOUGH. When the rebase itself succeeds but restoring the
+    # autostash conflicts, git exits 0 and leaves the tree with merge markers in
+    # it - proven in a scratch repo before this shipped. Reloading on that would
+    # be worse than any refusal, so the tree is asked directly.
+    _rc, unmerged = _git("diff", "--name-only", "--diff-filter=U")
+    files = [f for f in unmerged.splitlines() if f.strip()][:8]
+    if rc != 0 or files:
+        # A real conflict: their edit and an upstream edit touch the same lines,
+        # and nothing but a human can say which wins. Put the instance back
+        # exactly as it was, keeping both versions.
+        _git("rebase", "--abort")               # no-op once the rebase finished
+        _git("checkout", "--", ".")             # drop half-merged content
+        _git("reset", "--hard", head_full.strip() or "HEAD")
+        _rc, stash_after = _git("rev-parse", "-q", "--verify", "refs/stash")
+        if stash_after.strip() and stash_after.strip() != stash_before.strip():
+            # OUR autostash, identified by ref rather than assumed - popping
+            # blind would restore some stash of theirs from last week.
+            _git("stash", "pop")
+        listing = ("```\n" + "\n".join(files) + "\n```\n") if files else ""
         api.send_message(cid,
-            f"⛔ pull refused — this instance has local commits that origin does not:\n"
-            f"```\n{out.strip()[:400]}\n```\n"
-            f"Updates are fast-forward only. If those commits were not deliberate, this "
-            f"puts the instance back on the published line:\n"
-            f"```\ngit reset --hard origin/main\n```\n"
-            f"It discards local **code** changes only — `.env`, `config\\`, `memory\\`, "
-            f"`projects\\`, your notes and `state\\` are gitignored and untouched. Keeping "
-            f"the commits instead means updating by hand from now on.")
+            f"⛔ update stopped: your local changes and the new release both edit the "
+            f"same lines.\n{listing}"
+            f"Nothing was lost — the instance is exactly as it was, still on `{head}`, "
+            f"with your version of those files intact.\n"
+            f"Both sides changed the same lines, so somebody has to choose. If your "
+            f"change was not deliberate, take the new version with "
+            f"`git checkout -- <file>` and `!update go` again; if it was, fold it into "
+            f"the incoming one at the desk first.\n"
+            f"```\n{out.strip()[:300]}\n```")
         return
     _rc, new = _git("rev-parse", "--short", "HEAD")
     new = new.strip()

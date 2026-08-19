@@ -53,7 +53,7 @@ Handled by the always-on watchdog itself, never by a model:
 | `!cron [list\|pause\|resume\|rm\|adopt <id>]` | Routines — and the work-loop ledgers ride along in the same listing |
 | `!config` | Read-only settings dump: values, sources, secrets as set/NOT-SET, guests, slash list |
 | `!screen` / `!desktop <verb>` | Screenshot / desktop control of the machine (see `memory\shared\DESKTOP-CONTROL.md`) |
-| `!update` / `!update go` | Self-update from the repo: preview, then pull → suite (red rolls back) → reload → **the new watchdog reports back healthy, or reverts itself** |
+| `!update` / `!update go` | Self-update from the repo: preview, then **rebase your own commits onto the release** → suite (red rolls back) → reload → **the new watchdog reports back healthy, or reverts itself** |
 | `!trace [id]` | One chain's, loop's or envelope's whole story — every hop, timestamps, gate holds, budget. Bare `!trace` lists recent ones |
 | `!reload` | Restart the watchdog to pick up pulled code — compile-checked first, refuses rather than kill the bus |
 
@@ -276,9 +276,13 @@ what they themselves said. Full contract:
   self-heal: back ≤60 s after a crash, back after every reboot, and no desk
   window opens at boot.
 - **Update:** say **`!update`** in any channel — it fetches, shows you what's
-  new, and `!update go` applies it: ff-only pull → full test suite (**a red
-  suite rolls the update back**) → hooks/permissions re-stamped → self-reload.
-  Your files never move; everything personal is gitignored. (`git pull` +
+  new, and `!update go` applies it: **rebase** → full test suite (**a red suite
+  rolls the update back**) → hooks/permissions re-stamped → self-reload.
+  Your files never move; everything personal is gitignored. **Changes you made
+  to the code are kept**: your commits are replayed on top of the new release,
+  so an instance you have customised still updates. If your edit and the new
+  release touch the same lines, the update stops, names those files, and leaves
+  the instance exactly as it was. (`git pull` +
   `!reload` at the desk still works.) Zip installs attach themselves to the
   repo at install time, so this works on every instance. New config keys
   arrive commented in `config\*.example.ini` — copy what you want.
@@ -301,8 +305,30 @@ what they themselves said. Full contract:
 Friction is a work order: *"Omnius, add a `!weather` command to yourself"*,
 *"make the briefing shorter"*, *"stop asking about X"*. The orchestrator edits
 its own code or skills, runs the 1,300+-check suite, and commits — every
-self-improvement is a reviewable commit that reaches every future instance.
-`!reload` puts watchdog changes live.
+self-improvement is a reviewable commit. `!reload` puts watchdog changes live.
+
+**Your instance is yours to change, and updating will not undo it.** `!update`
+**rebases** your commits onto each new release, so an Omnius you have customised
+keeps its changes and still updates. If your edit and the release touch the same
+lines, the update stops, names those files, and leaves the instance exactly as
+it was — nothing is lost, and nothing is decided behind your back.
+
+The one thing that differs between instances is **pushing**. Ask yours:
+
+```
+python toolsepo_access.py
+```
+
+- **`maintainer`** — this machine's git account has write access to the repo it
+  updates from, so it may push. That is the instance the project is published
+  from; the same person's second machine says the same thing, because the
+  question is asked of git, not of a setting.
+- **`user`** — everybody else, and nothing is wrong with it. Commit as much as
+  you like; your work is replayed on every update. If a change is worth sharing
+  upstream, send it to whoever publishes the repo rather than trying to push.
+
+Desks read this too (`CLAUDE.md`), so a desk on a `user` instance improves the
+code and commits it locally instead of trying to push and hitting a wall.
 
 ## 16. When something looks wrong
 

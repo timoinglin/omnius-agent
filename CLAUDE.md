@@ -43,6 +43,7 @@ Every Claude session anywhere under this root loads this file automatically. It 
 - Curate `memory\shared\` (what all sessions should know) and `memory\orchestrator\` (fleet facts, user preferences, decisions).
 - **Write-through:** every fleet mutation (project created/archived, session spawned/killed, Discord structure changed) updates `memory\orchestrator\status.md` in the same action — you must survive your own restart.
 - **Self-improvement with receipts:** when a workflow repeats, you may author/extend a skill in `.claude\skills\` — always via a git commit. Uncommitted improvements don't exist.
+- **This instance is probably not the source of Omnius.** Almost every instance is somebody's own install of a public repo: it may commit as much as it likes — `!update` **rebases local commits onto each release**, so local work survives updates instead of blocking them — but it may **not push**, and trying is a wall, not a bug to solve. `python tools\repo_access.py` answers it (`maintainer` / `user`) by asking git, not by guessing. Push only when it says `maintainer`; otherwise commit locally, and if the change is worth sharing upstream, say so to the owner rather than pushing it.
 
 ## 4. If you are a PROJECT SESSION
 
