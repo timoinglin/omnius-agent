@@ -247,7 +247,16 @@ if ($Fresh) {
     exit 1
   }
   # Biography: never in a release.
-  $tarArgs += "--exclude=$leaf/projects/*", "--exclude=$leaf/daybook/notes",
+  # Projects go BY NAME, exactly as the -Work path does and for the same reason:
+  # `projects/*` also swallows the tracked `projects\.gitkeep`, so every fresh
+  # install was born with a deleted tracked file - and `!update` refuses to pull
+  # over local changes, so a brand-new machine could never update itself. Found
+  # on a colleague's install 2026-08-19, reproduced by attaching the shipped zip
+  # to its own RELEASE-COMMIT: "1 tracked file(s) changed locally".
+  $relProjects = @(Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'projects') `
+                     -Directory -ErrorAction SilentlyContinue)
+  foreach ($p in $relProjects) { $tarArgs += "--exclude=$leaf/projects/$($p.Name)" }
+  $tarArgs += "--exclude=$leaf/daybook/notes",
               "--exclude=$leaf/media", "--exclude=$leaf/memory",
               "--exclude=$leaf/scratch", "--exclude=$leaf/assets/private"
   # config\: the REAL files name his mail accounts, hosts and machine. Only the

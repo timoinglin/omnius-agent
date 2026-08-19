@@ -1702,12 +1702,41 @@ def recover_bridge(session):
             cid = primary_channel_id(build_map(api.load_schema()), session)
             if cid:
                 api.send_message(cid, f"🛑 `{session}`: mail keeps not being picked up, even "
-                                      f"after replacing its window {fails} times. Something on "
-                                      f"that desk is wedged — `!restart` it, or look at "
-                                      f"`state\\logs\\bridge-{session}.log`.")
+                                      f"after replacing its window {fails} times.{desk_fault(session)}")
         except Exception as e:
             log(f"bridge-recovery alert failed for {session}: {e}")
     return "bridge-replaced" if started else "start-failed"
+
+
+def desk_fault(session):
+    """Why can this desk not take its mail? -> a sentence to append to an alert.
+
+    "Something on that desk is wedged - look at the log" is true and useless to
+    somebody holding a phone. Every cause below is a fact the watchdog already
+    has, and each has a different fix: a desk whose folder was never created
+    will never work no matter how many windows are replaced, and a machine that
+    cannot resolve the CLI has nothing to do with this desk at all.
+    """
+    cwd = cwd_for(session)
+    if not cwd.is_dir():
+        return (f" Its folder `{cwd.name}` does not exist (`{cwd}`) - the channel "
+                f"is mapped to a desk nothing ever created. Either create the "
+                f"project component, or remove/rename the channel.")
+    if not claude_exe():
+        return (" This machine cannot find the `claude` CLI at all, so NO desk "
+                "can start - install Claude Code, then restart the watchdog "
+                "(a running service keeps the PATH it was born with), or set "
+                "`[fleet] claude_path` in `config\\omnius.ini`.")
+    tail = ""
+    try:
+        p = LOGS / f"bridge-{session}.log"
+        lines = [ln.strip() for ln in
+                 p.read_text(encoding="utf-8", errors="replace").splitlines() if ln.strip()]
+        if lines:
+            tail = "\n```\n" + "\n".join(lines[-3:])[:400] + "\n```"
+    except OSError:
+        pass
+    return (f" `!restart` it, or look at `state\\logs\\bridge-{session}.log`.{tail}")
 
 
 def bridge_active(session):
@@ -3795,12 +3824,23 @@ def handle_update(text, cid):
     # .git-old\ from a migration, a scratch file) is not local work a pull
     # could eat - and if one ever collides with an incoming file, the ff-only
     # pull fails with its own clear error.
-    dirty_n = len([ln for ln in dirty.splitlines()
-                   if ln.strip() and not ln.startswith("??")])
-    if dirty_n:
-        api.send_message(cid, f"⛔ not updating: {dirty_n} tracked file(s) changed locally - "
-                              f"`git status` at the desk names them. Commit or stash "
-                              f"first; a pull must never eat local work.")
+    dirty_lines = [ln.rstrip() for ln in dirty.splitlines()
+                   if ln.strip() and not ln.startswith("??")]
+    if dirty_lines:
+        # NAME them. "git status at the desk names them" sent a remote owner to a
+        # machine he is not sitting at - and on 2026-08-19 the answer turned out
+        # to be a file OUR OWN packer had dropped, which he could not have
+        # guessed. The whole point of !update is not needing the desk.
+        shown = "\n".join(dirty_lines[:8])
+        more = f"\n… and {len(dirty_lines) - 8} more" if len(dirty_lines) > 8 else ""
+        gone = [ln[3:].strip() for ln in dirty_lines if ln[:2].strip() == "D"]
+        hint = ("\nThose marked `D` are files that are simply MISSING - nothing "
+                "of yours is in them. Restore and retry:\n"
+                f"```\ngit -C . checkout -- {' '.join(gone[:4])}\n```"
+                if gone else
+                "\nCommit or stash them first; a pull must never eat local work.")
+        api.send_message(cid, f"⛔ not updating: {len(dirty_lines)} tracked file(s) changed "
+                              f"locally.\n```\n{shown}{more}\n```{hint}")
         return
     # BASELINE first: this instance's failures BEFORE the pull are its own
     # housekeeping, not the update's fault. The gate judges only the delta.

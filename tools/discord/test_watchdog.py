@@ -1938,6 +1938,20 @@ try:
         wd.ensure_runner("deliver.desk")
         check("repeated replacement is reported, not repeated silently",
               len(sent) == 1 and "keeps not being picked up" in sent[-1][1])
+        # "Something is wedged, look at the log" is useless to someone holding a
+        # phone - and on 2026-08-19 the real cause was a channel mapped to a desk
+        # folder nobody had ever created, which no number of window replacements
+        # could fix. Every branch below is a fact the watchdog already holds.
+        check("...and the alert says WHY: a desk whose folder does not exist",
+              "does not exist" in wd.desk_fault("no-such-project.plan")
+              and "projects" in wd.desk_fault("no-such-project.plan"))
+        _cx = wd.claude_exe
+        wd.claude_exe = lambda recheck=False: None
+        wd.cwd_for("deliver.desk").mkdir(parents=True, exist_ok=True)
+        check("...or that this machine cannot find the claude CLI at all",
+              "cannot find the `claude` CLI" in wd.desk_fault("deliver.desk"),
+              "no desk can start then, and it has nothing to do with this one")
+        wd.claude_exe = _cx
     finally:
         wd.subprocess.run, wd.start_run = _rk4, _rs4
         wd.build_map, wd.primary_channel_id = _rbm5, _rpc5
@@ -2660,6 +2674,15 @@ try:
     # the notes in the private repo. That silently voided -Work's promise: tar skips
     # the working copy but the bundled .git\ still carries every committed note. The
     # honest fix is not to re-ignore them - it is for -Work to refuse.
+    # A RELEASE MUST INSTALL CLEAN. `--exclude=projects/*` also swallowed the
+    # tracked projects\.gitkeep, so every fresh install was born with a deleted
+    # tracked file - and !update refuses to pull over local changes, so a
+    # brand-new machine could never update itself. Reproduced 2026-08-19 by
+    # attaching the shipped zip to its own RELEASE-COMMIT.
+    check("pack -Fresh: projects are excluded BY NAME, so projects\\.gitkeep travels",
+          "--exclude=$leaf/projects/*" not in pack_src
+          and "$relProjects" in pack_src,
+          "otherwise a fresh install starts dirty and can never !update")
     check("pack -Work: refuses when leave-behind content is TRACKED (tar cannot beat .git\\)",
           "ls-files" in pack_src and "TRACKED IN GIT" in pack_src)
     check("pack -Work: that refusal writes no archive",
@@ -6501,6 +6524,24 @@ try:
     check("update go: a dirty tree refuses - a pull must never eat local work",
           "not updating" in sent[-1][1]
           and not any(c[:1] == ("pull",) for c in _upd_calls))
+    check("...and NAMES the files, because the point of !update is not needing the desk",
+          "tools/discord/watchdog.py" in sent[-1][1],
+          "'git status at the desk names them' is useless to someone on a phone")
+    sent.clear(); _upd_calls[:] = []
+    wd._git = _script_git([
+        (("rev-parse", "--is-inside-work-tree"), (0, "true")),
+        (("fetch",), (0, "")),
+        (("rev-parse", "--short", "HEAD"), (0, "aaa1111\n")),
+        (("rev-list",), (0, "3\n")),
+        (("status", "--porcelain"), (0, " D projects/.gitkeep\n?? scratch/x\n")),
+    ])
+    wd.handle_update("!update go", "CID_OM")
+    check("a MISSING tracked file gets the restore command, not a lecture about stashing",
+          "projects/.gitkeep" in sent[-1][1] and "checkout --" in sent[-1][1]
+          and "stash" not in sent[-1][1],
+          "this exact case shipped in a release and blocked a colleague's first update")
+    check("...and an untracked stray is still not counted as local work",
+          "1 tracked file(s)" in sent[-1][1] and "scratch/x" not in sent[-1][1])
     _seq = {"n": 0}
 
     def _upd_happy(*args, timeout=60):
