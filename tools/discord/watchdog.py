@@ -2644,7 +2644,13 @@ def ensure_telegram_bridge():
     if now - _telegram_checked < TELEGRAM_CHECK_SECONDS:
         return
     _telegram_checked = now
-    if not (ocfg.ini_path("telegram").is_file() and TELEGRAM_BRIDGE.is_file()):
+    # SOMEBODY INVITED, not merely a file on disk. install.ps1 copies every
+    # config\*.example.* into its real name, so telegram.ini exists on EVERY
+    # fresh install - and keying off existence started an idle bridge, and an
+    # "idle, no token" problem line in -Action status, on machines whose owner
+    # had never heard of Telegram (found 2026-08-19 while asking why the
+    # skills example still ships).
+    if not TELEGRAM_BRIDGE.is_file() or not ocfg.telegram_chats():
         return                                  # nobody invited: nothing to run
 
     # THE BRIDGE'S OWN LOCK, not just our lease. A bridge started by hand, or by

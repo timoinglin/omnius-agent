@@ -2808,10 +2808,23 @@ try:
         check("nobody invited: no bridge process is started", not _spawned,
               "a feature nobody configured must cost nothing")
 
+        # A FILE IS NOT AN INVITE. install.ps1 copies every config example into
+        # its real name, so telegram.ini exists on EVERY fresh install - keying
+        # off existence ran an idle bridge, and reported a missing token, on
+        # machines whose owner had never heard of Telegram.
         (_tgdir / "telegram.ini").write_text("[telegram]\n", encoding="utf-8")
         wd._telegram_checked = 0
         wd.ensure_telegram_bridge()
-        check("writing config\\telegram.ini starts the bridge - no task, no restart",
+        check("the shipped example on its own starts nothing",
+              not _spawned,
+              "every fresh install has that file; none of them asked for Telegram")
+
+        (_tgdir / "telegram.ini").write_text(
+            "[telegram]\n[chat.someone]\ntelegram_username = someone_h\n"
+            "discord_channel = general\n", encoding="utf-8")
+        wd._telegram_checked = 0
+        wd.ensure_telegram_bridge()
+        check("inviting somebody starts the bridge - no task, no restart",
               len(_spawned) == 1 and str(wd.TELEGRAM_BRIDGE) in _spawned[-1])
         check("...and the lease records the child pid, so a restart adopts it",
               json.loads(wd.TELEGRAM_LEASE.read_text(encoding="utf-8"))["pid"] == 1)

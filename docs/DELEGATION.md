@@ -342,8 +342,9 @@ mail — or any desk — trigger arbitrary skills.
   its argument; its outcome is your reply. If the skill does not exist on this desk, say so in your
   reply.* Skills are per-folder, so existence is desk-local; the in-reply error is the honest
   surface.
-- **`config\skills.ini`** (+ shipped `skills.example.ini`) is an authorisation list and fails
-  closed like `guests.ini`: missing file or empty list = nothing passes; labels validated
+- **`config\skills.ini`** (+ shipped `skills.example.ini`) NARROWS the pass-through. *(As
+  designed it failed closed like `guests.ini`; opened 2026-08-19 - missing file or empty
+  value now means every skill passes, `allowed = none` closes it.)* Labels validated
   `[a-z0-9_-]+`; unreadable → empty, reported via `problems()`; surfaced in `!config` as
   `pass-through skills: (none)`. Deliberately **not** `sync_permissions.ALLOW` — that list is
   harness tool permissions, a different layer with a different blast radius.

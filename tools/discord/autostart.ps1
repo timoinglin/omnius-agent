@@ -461,7 +461,16 @@ if ($legacyTg) {
   }
 }
 
+# Someone actually INVITED, not merely a config file present: install.ps1
+# creates config\telegram.ini on every fresh install from the shipped example,
+# so testing for the file reported a missing token to owners who never asked
+# for Telegram at all.
+$tgInvited = $false
 if (Test-Path (Join-Path $Root 'config\telegram.ini')) {
+  & python -c "import sys;sys.path.insert(0,r'$Root\tools');import omnius_config as o;sys.exit(0 if o.telegram_chats() else 1)" *> $null
+  $tgInvited = ($LASTEXITCODE -eq 0)
+}
+if ($tgInvited) {
   $tg = Test-Live @{ Live = 'file:state\telegram\beacon.json:900' }
   $bf = Join-Path $Root 'state\telegram\beacon.json'
   $tgState = 'unknown'

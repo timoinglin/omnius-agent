@@ -145,19 +145,25 @@ steps, check in when the budget runs out."* The desk opens a **counted loop**:
 - `!cron` lists open loops with their run counts; a desk closes its loop the
   moment the done-command goes green.
 
-## 8. Slash commands from Discord *(new — off until you enable it)*
+## 8. Slash commands from Discord — on by default
 
-Copy `config\skills.example.ini` → `config\skills.ini` and uncomment:
+Type `/goal <objective>`, `/status`, `/watch <url>` in any desk channel and that
+desk runs **that skill**, with the rest of the message as its argument — no
+improvisation. Nothing to switch on: since 2026-08-19 every skill passes,
+including the ones that are not folders here (`/code-review`, `/simplify`,
+`/run`).
+
+To take some of that away, `config\skills.ini` NARROWS it:
 
 ```ini
 [skills]
-allowed = status, watch, goal
+allowed = status, watch, goal   # only these
+# allowed = none                # no slash commands at all
 ```
 
-Then `/watch <url>` or `/status` typed in a channel runs **that skill** on the
-desk — no improvisation. Unlisted slashes deliver nothing and tell you so;
-guests' slashes are always plain words; the empty list means the feature is
-off. Live within a minute of editing, shown in `!config`.
+A slash outside a list you set delivers nothing and says so. Guests' slashes
+are always plain words, whatever the file says — the gate that matters is who
+is asking. Live within a minute of editing, shown in `!config`.
 
 Skills worth allowing, all shipped: `goal` (hand over an objective — it gets
 decomposed into checkable done-conditions and reported against them with
