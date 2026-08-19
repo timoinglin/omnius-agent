@@ -6504,7 +6504,8 @@ try:
     print("== !update ==")
     _real_git, _real_us, _real_dr = wd._git, wd._update_suite, wd.do_reload
     _real_restamp = wd._update_restamp
-    wd._update_restamp = lambda: None
+    _stamped = []
+    wd._update_restamp = lambda: _stamped.append("stamp")
     _reloaded = []
     wd.do_reload = lambda cid, announce=True: _reloaded.append(cid)
     _upd_calls = []
@@ -6666,6 +6667,26 @@ try:
           and _reloaded == [])
     check("update go: ...and the broken check is NAMED in the rollback",
           any("the new thing broke" in s[1] for s in sent))
+    check("update go: ...and the machine is re-stamped on the RESTORED code",
+          len(_stamped) >= 2,
+          "stamps written by the version we just threw away are drift")
+    # THE ORDER IS THE POINT. New code can raise the bar the machine is measured
+    # against - a wider allow-list, a new hook - and the stamps that meet it are
+    # idempotent. Judged before stamping, every such release read as "the update
+    # BROKE a check" on any machine with local desks and rolled itself back:
+    # 2026-08-19, the owner's second machine could not update at all, and the
+    # failing check was "every desk carries the full shared allow-list".
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    _stamped.clear()
+    _order = []
+    wd._update_restamp = lambda: _order.append("stamp")
+    wd._update_suite = lambda: (_order.append("suite"),
+                                (True, "==== all green ====", frozenset()))[1]
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: the machine is stamped BEFORE the suite judges it",
+          _order[:3] == ["suite", "stamp", "suite"],
+          f"got {_order} - baseline, then stamp, then judge")
+    wd._update_restamp = lambda: _stamped.append("stamp")
     # pre-existing LOCAL failures are the machine's housekeeping, not the
     # update's fault - the gate judges the delta (proven live 2026-08-15:
     # a second instance's untidy memory blocked its first !update go)

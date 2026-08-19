@@ -3887,10 +3887,23 @@ def handle_update(text, cid):
     _rc, new = _git("rev-parse", "--short", "HEAD")
     new = new.strip()
     _rc, new_full = _git("rev-parse", "HEAD")
+    # STAMP BEFORE JUDGING. New code can raise the bar the machine is measured
+    # against - a wider allow-list, a new hook - and the stamps that meet it are
+    # the same idempotent ones install runs. Judged first, every such release
+    # looked like "the update BROKE a check" on any machine with local desks
+    # (projects\ is gitignored, so its desks never travel) and rolled itself
+    # back. 2026-08-19: the owner's second machine could not take an update at
+    # all, and the failing check was literally "every desk carries the full
+    # shared allow-list" - a thing the next line fixes.
+    _update_restamp()
     ok, tail, post_fails = _update_suite()
     new_fails = sorted(post_fails - base_fails)
     if new_fails:
         _git("reset", "--hard", head)
+        # Restamp on the RESTORED code too: the stamps above were written by the
+        # version we just threw away, and a machine left half-stamped by a
+        # rejected update is exactly the drift this whole path exists to avoid.
+        _update_restamp()
         log(f"!update: {len(new_fails)} NEW failure(s) after {head} -> {new} - rolled back")
         api.send_message(cid, f"⛔ pulled `{head}` → `{new}` and the update BROKE "
                               f"{len(new_fails)} check(s) that were green before - "
@@ -3899,7 +3912,7 @@ def handle_update(text, cid):
                               + ("\n…" if len(new_fails) > 5 else "") + "\n```\n"
                               f"Nothing was reloaded; investigate at the desk.")
         return
-    _update_restamp()
+    # (already stamped above, before the suite - kept idempotent, not repeated)
     # O2: the handoff. The new watchdog must confirm it took over (healthy
     # beacon + a Discord exchange) or boot-counting reverts to head_full on
     # its own. Written BEFORE the re-exec, or a crash in the gap would leave
