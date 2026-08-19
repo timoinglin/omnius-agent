@@ -54,7 +54,7 @@ flush left and it never arises.
 | `notes.ini` | the notes web server — folder, port, bind address |
 | `fleet.json` | which model and effort each desk runs with |
 | `guests.ini` | people who are **not you** and may write to one desk (see `guests.example.ini`) |
-| `skills.ini` | **only to NARROW** which slash commands your Discord mail may fire (see `skills.example.ini`) — with no file, every installed skill is available |
+| `skills.ini` | **create it only to NARROW** which slash commands your Discord mail may fire — with no file (the normal case) every skill passes. `[skills]` then `allowed = status, watch` restricts to those; `allowed = none` turns slash commands off |
 | `websites.ini` | sites your desks log into: url, user, and the **name** of the `.env` key holding the password (see `websites.example.ini` and `docs\WEB.md`) — never the password itself |
 | `email.ini` | mail accounts (see `email.example.ini`) — IMAP/SMTP **and** Microsoft Graph; one Discord channel per account |
 | `ai.ini` | which provider (and which `.env` key) powers image, video, speech and OCR — each stays off until it has both (see `ai.example.ini`) |

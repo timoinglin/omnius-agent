@@ -342,9 +342,11 @@ mail — or any desk — trigger arbitrary skills.
   its argument; its outcome is your reply. If the skill does not exist on this desk, say so in your
   reply.* Skills are per-folder, so existence is desk-local; the in-reply error is the honest
   surface.
-- **`config\skills.ini`** (+ shipped `skills.example.ini`) NARROWS the pass-through. *(As
+- **`config\skills.ini`** NARROWS the pass-through, and does not normally exist. *(As
   designed it failed closed like `guests.ini`; opened 2026-08-19 - missing file or empty
-  value now means every skill passes, `allowed = none` closes it.)* Labels validated
+  value now means every skill passes, `allowed = none` closes it. The example was deleted
+  with the same change: install.ps1 copies every example into a real config file, so it
+  put an inert skills.ini on every machine.)* Labels validated
   `[a-z0-9_-]+`; unreadable → empty, reported via `problems()`; surfaced in `!config` as
   `pass-through skills: (none)`. Deliberately **not** `sync_permissions.ALLOW` — that list is
   harness tool permissions, a different layer with a different blast radius.
@@ -368,8 +370,8 @@ is invisible to `!config` and the validators):
 ```
 
 Env overrides: `OMNIUS_HOP_TTL`, `OMNIUS_LOOP_BUDGET`, `OMNIUS_CROSS_PROJECT_OK` — env beats file
-beats default, as everywhere. `config\skills.example.ini` ships (the `.gitignore` already
-un-ignores `config/*.example.ini`); `config\README.md` gains its table row. New state dirs
+beats default, as everywhere. `config\README.md` gains its table row (the `skills.example.ini`
+this phase shipped was retired 2026-08-19 when the list opened). New state dirs
 (`state\gate\`, `state\watchdog\threads\`, `state\watchdog\loops\`) join the suite's sandbox
 redirect block — the block's own comment warns that a path added late writes into real state.
 

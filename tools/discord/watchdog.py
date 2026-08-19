@@ -2649,7 +2649,7 @@ def ensure_telegram_bridge():
     # fresh install - and keying off existence started an idle bridge, and an
     # "idle, no token" problem line in -Action status, on machines whose owner
     # had never heard of Telegram (found 2026-08-19 while asking why the
-    # skills example still ships).
+    # skills example still shipped - it no longer does, for the same reason).
     if not TELEGRAM_BRIDGE.is_file() or not ocfg.telegram_chats():
         return                                  # nobody invited: nothing to run
 
