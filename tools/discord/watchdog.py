@@ -1450,6 +1450,8 @@ def close_native_sessions(session, force=False):
 
 
 BRIDGE_DELIVER_SECONDS = 90     # a live bridge gets this long to get mail into a turn
+BRIDGE_QUIET_SECONDS = 45       # ...unless it is still printing (bridges\<id>.out)
+BRIDGE_WORK_CEILING = 900       # but no desk gets more than 15 min on that excuse
 
 
 def turn_stalled(session):
@@ -1600,7 +1602,34 @@ def bridge_not_delivering(session):
     if _run_failures.get(session, 0) >= RUN_FAILURES_BEFORE_ALERT:
         return False
     held = min(oldest, time.time() - bridge_started_at(session))
-    return held >= BRIDGE_DELIVER_SECONDS
+    if held < BRIDGE_DELIVER_SECONDS:
+        return False
+    # STILL PRINTING IS STILL WORKING. Resuming a long conversation compacts it
+    # first: minutes of progress bar, no turn started, so the 90s rule shot the
+    # window mid-compaction and opened a fresh one - which then had nothing to
+    # compact and worked, hiding the cause (2026-08-19, his screenshot: killed
+    # at 1m21s, 59%). A wedged session prints nothing; the bridge stamps
+    # state\bridges\<id>.out every 5s while bytes flow, so the difference is
+    # observable instead of guessed.
+    #
+    # Bounded, because a spinner is also output: past BRIDGE_WORK_CEILING the
+    # original rule applies again and the desk gets its remedy.
+    if held < BRIDGE_WORK_CEILING and time.time() - bridge_output_at(session) < BRIDGE_QUIET_SECONDS:
+        return False
+    return True
+
+
+def bridge_output_at(session):
+    """-> epoch of the desk's last console output, or 0 if it has never spoken.
+
+    0 means "no evidence of work", which is the safe reading: an old bridge
+    that predates this stamp keeps the original 90-second behaviour rather than
+    becoming unkillable.
+    """
+    try:
+        return float((BRIDGES / f"{session}.out").read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0.0
 
 
 def bridge_started_at(session):

@@ -1862,6 +1862,29 @@ try:
     _os0.utime(_env_d, (_old_d, _old_d))
     check("mail still unstarted past the deadline means the bridge is NOT delivering",
           wd.bridge_not_delivering("deliver.desk") is True)
+    # A DESK THAT IS STILL PRINTING IS STILL WORKING. Resuming a long
+    # conversation compacts it first - minutes of progress bar, no turn started
+    # - so the 90-second rule shot the window MID-COMPACTION and opened a fresh
+    # one, which had nothing to compact and worked, hiding the cause
+    # (2026-08-19, his screenshot: killed at 1m21s, 59%).
+    (wd.BRIDGES / "deliver.desk.out").write_text(str(int(_bt.time())), encoding="utf-8")
+    check("...but a desk still printing (compacting) is left alone",
+          wd.bridge_not_delivering("deliver.desk") is False,
+          "a wedged session prints nothing; a compacting one prints constantly")
+    _quiet = _bt.time() - (wd.BRIDGE_QUIET_SECONDS + 10)
+    (wd.BRIDGES / "deliver.desk.out").write_text(str(int(_quiet)), encoding="utf-8")
+    check("...and one that went QUIET past the deadline is not",
+          wd.bridge_not_delivering("deliver.desk") is True)
+    # Bounded: a spinner is output too, so the excuse cannot run forever.
+    (wd.BRIDGES / "deliver.desk.out").write_text(str(int(_bt.time())), encoding="utf-8")
+    _bridge_aged(wd.BRIDGE_WORK_CEILING + 60)
+    _vold = _bt.time() - (wd.BRIDGE_WORK_CEILING + 60)
+    _os0.utime(_env_d, (_vold, _vold))
+    check("...and past the work ceiling even a printing desk gets its remedy",
+          wd.bridge_not_delivering("deliver.desk") is True)
+    (wd.BRIDGES / "deliver.desk.out").unlink(missing_ok=True)
+    _bridge_aged(3600)
+    _os0.utime(_env_d, (_old_d, _old_d))
     # A running turn is delivery - slow is not the same as broken. The stamp
     # must have a LIVE owner to count (turn_busy, 2026-08-11), so stub one:
     # a genuinely running turn always has a claimed session behind it.

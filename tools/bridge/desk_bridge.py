@@ -79,6 +79,7 @@ HUMAN_QUIET_SECONDS = 4.0    # never type into a line the owner is still writing
 NUDGE = "/omnius"            # what the bus types; the skill does the rest
 NUDGE_COOLDOWN = 20.0        # after a nudge that actually STARTED a turn
 NUDGE_RETRY = 4.0            # after a nudge that vanished (session not ready)
+OUTPUT_STAMP_SECONDS = 5.0   # how often the desk says "still printing" (see _note_output)
 BOOT_ALLOWANCE = 9.0         # claude needs this long before it can read a keystroke
 # Measured on the first real takeover (2026-08-03): the bridge typed the nudge
 # the same second it launched claude, into a session that did not exist yet,
@@ -222,6 +223,7 @@ class Bridge:
         # can relaunch once WITHOUT the flag instead of dying as if the desk
         # had closed normally.
         self.saw_continue_refusal = False
+        self._last_out_stamp = 0.0    # throttles the progress touch
         self._refusal_tail = ""      # the marker may straddle two reads too
 
     @staticmethod
@@ -308,6 +310,30 @@ class Bridge:
         else:
             self._refusal_tail = joined[-(len(self.CONTINUE_REFUSED) - 1):]
 
+    def _note_output(self):
+        """Touch `state\\bridges\\<id>.out` while the desk is producing output.
+
+        THE PROOF OF LIFE THE WATCHDOG WAS MISSING. It replaces a desk's window
+        when mail waits 90s with no turn started - the right rule for a session
+        that is wedged, and the wrong one for a session that is BUSY BOOTING.
+        Resuming a long conversation compacts it first, which prints a progress
+        bar for minutes and starts no turn, so the window was shot mid-compaction
+        and replaced (2026-08-19, his screenshot: 1m21s in, 59%, killed).
+
+        A wedged session prints nothing; a compacting one prints constantly. So
+        the byte stream itself is the signal, and it costs one throttled touch -
+        no parsing of a message whose wording will change with the next CLI.
+        """
+        now = time.time()
+        if now - self._last_out_stamp < OUTPUT_STAMP_SECONDS:
+            return
+        self._last_out_stamp = now
+        try:
+            BRIDGES.mkdir(parents=True, exist_ok=True)
+            (BRIDGES / f"{self.session}.out").write_text(str(int(now)), encoding="utf-8")
+        except OSError:
+            pass
+
     def pump_out(self):
         """ConPTY -> this console. Passthrough, minus the app's title grab."""
         out = sys.stdout
@@ -320,6 +346,7 @@ class Bridge:
                 break
             if data:
                 self._scan_refusal(data)
+                self._note_output()
                 try:
                     out.write(self._rename(data))
                     out.flush()
@@ -444,6 +471,7 @@ class Bridge:
 
     def withdraw(self):
         try:
+            (BRIDGES / f"{self.session}.out").unlink(missing_ok=True)
             (BRIDGES / f"{self.session}.json").unlink(missing_ok=True)
         except OSError:
             pass
