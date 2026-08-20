@@ -4649,8 +4649,24 @@ def _save_thread(led):
     write_json_atomic(_thread_path(led["id"]), led)
 
 
+def _storm_cap(led):
+    """How many messages one chain may carry before it is called a storm.
+
+    Scaled by the desks actually involved, because breadth is legitimate: a
+    four-desk project doing ONE honest round - a brief out to three siblings and
+    three answers home - is eight messages, and the old flat cap of twelve
+    closed such chains in the middle of real work. Depth is what the hop budget
+    bounds; this bounds volume, and volume grows with participants.
+    """
+    people = {d for edge in (led.get("edges") or []) for d in edge}
+    return max(_hop_ttl() * 4, 6 * max(2, len(people)))
+
+
 def _new_thread(sender, origin, stem):
     led = {"id": f"t-{stem}-{sender}", "origin": origin, "hopsLeft": _hop_ttl(),
+           # depth: how far each desk sits from the one that started the chain.
+           # The starter is 0; the budget bounds the deepest, not the busiest.
+           "depth": {sender: 0},
            "deliveries": [], "edges": [], "lastDeliveredTo": None,
            "startedAt": now_iso(), "lastAt": now_iso(), "closed": None}
     _save_thread(led)
@@ -4804,21 +4820,43 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
         return "duplicate"
 
     # 6. Storm backstop: bounds every pathological shape, including the reply
-    #    ping-pong that hop-free replies would otherwise permit.
-    if len(led.get("deliveries") or []) >= _hop_ttl() * 4:
+    #    ping-pong that hop-free replies would otherwise permit. Scaled by how
+    #    many desks are actually in the chain, because a four-desk project doing
+    #    one honest round of fan-out and replies is ~8 messages and the flat cap
+    #    of 12 closed it mid-conversation.
+    if len(led.get("deliveries") or []) >= _storm_cap(led):
         _close_thread(led, "storm")
         return _refuse_desk_mail(mapping, sender, path,
                                  f"chain `{led['id']}` hit its message cap")
 
-    # 7. Hops. A reply - reversing a recorded edge - is FREE, so a chain can
-    #    always unwind to its starter. Only NEW edges spend budget.
+    # 7. Hops = DEPTH, not volume. A reply is free (it reverses a recorded
+    #    edge), and so is breadth: one desk asking three siblings is normal
+    #    coordination, not a runaway.
+    #
+    #    Counting every forward message made a four-desk project trip the limit
+    #    constantly - orchestrator → server, server → tenant, server → web and
+    #    the budget of 3 was gone, mid-task, with the owner told to "re-instruct
+    #    to continue" for doing nothing wrong (2026-08-19: "I get it very
+    #    often, why?"). The shape worth bounding is a chain travelling FURTHER
+    #    from the person who started it - A→B→C→D→E, each desk handing off
+    #    again - because that is what runs away unattended. Depth bounds that
+    #    exactly, and breadth stays as cheap as it should be.
     is_reply = [to, sender] in (led.get("edges") or [])
-    if not is_reply and led.get("hopsLeft", 0) <= 0:
+    depth = dict(led.get("depth") or {})
+    next_depth = depth.get(sender, 0) + 1
+    # Deeper means: a desk this chain has never involved, further out than the
+    # chain has ever reached. A sibling at a level already in use is breadth,
+    # and writing again to a desk already involved is a conversation.
+    deeper = (not is_reply) and to not in depth \
+        and next_depth > max(depth.values() or [0])
+    if deeper and next_depth > _hop_ttl():
         _close_thread(led, "hops")
         _thread_notice(mapping, led, sender,
-                       f"⛔ delegation chain `{led['id']}` hit its hop limit "
-                       f"({_hop_ttl()}) at `{sender}` → `{to}` - re-instruct to "
-                       f"continue (fresh mail starts a fresh chain)")
+                       f"⛔ delegation chain `{led['id']}` is already "
+                       f"{_hop_ttl()} desks deep and `{sender}` → `{to}` would go "
+                       f"further - re-instruct to continue (fresh mail starts a "
+                       f"fresh chain). Asking a desk you have already involved is "
+                       f"free; handing off to a new one is what counts.")
         return _refuse_desk_mail(mapping, sender, path, "hops exhausted")
 
     # 8. The cross-project gate (D4) - held mail leaves the outbox entirely.
@@ -4838,7 +4876,14 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
         return hold_for_gate(mapping, sender, to, led, path, data)
 
     # 9. Deliver.
-    hops_after = led.get("hopsLeft", 0) - (0 if is_reply else 1)
+    # Depth is the budget now, so what a desk sees as "hops left" is how
+    # much FURTHER this chain may travel - not how many messages remain.
+    if deeper:
+        depth[to] = next_depth
+    elif to not in depth:
+        depth[to] = min(next_depth, depth.get(to, next_depth))
+    depth.setdefault(sender, max(0, next_depth - 1))
+    hops_after = max(0, _hop_ttl() - max(depth.values() or [0]))
     files = [{"path": str(p), "name": Path(str(p)).name, "type": None}
              for p in (data.get("files") or [])]
     env = {"id": env_id, "from": sender, "channel": None, "channelId": None,
@@ -4848,8 +4893,9 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
     box = INBOX / to
     box.mkdir(parents=True, exist_ok=True)
     write_json_atomic(box / f"{env_id}.json", env)
+    led["depth"] = depth
+    led["hopsLeft"] = hops_after
     if not is_reply:
-        led["hopsLeft"] = hops_after
         led.setdefault("edges", []).append([sender, to])
     # Enriched since O1: the ledger is the chain's story, so each delivery
     # records who, whom, when and whether it travelled free. !trace reads

@@ -6268,30 +6268,47 @@ try:
                                json.loads(p_dup.read_text(encoding="utf-8"))) == "duplicate"
           and not p_dup.exists()
           and len(list((wd.INBOX / "alpha.web").glob("*.json"))) == _web_before)
-    # a new edge through the FLUSH branch spends the last hop
+    # BREADTH IS FREE, DEPTH IS THE BUDGET (2026-08-19). Counting every
+    # forward message made a four-desk project trip the limit constantly -
+    # orchestrator -> server, server -> tenant, server -> web and a budget of
+    # three was gone mid-task, with the owner told to "re-instruct to continue"
+    # for doing nothing wrong ("I get it very often, why?"). What runs away
+    # unattended is a chain travelling FURTHER from the person who started it;
+    # one desk asking three siblings is coordination. So depth is counted, and
+    # volume is left to the storm cap.
     dmail("alpha.app", {"to": "alpha.api", "text": "and the api half", "thread": t1},
           "1700000000012")
     wd.flush_outboxes(dm)
     _apibox = sorted((wd.INBOX / "alpha.api").glob("*.json"))
     env3 = json.loads(_apibox[-1].read_text(encoding="utf-8")) if _apibox else {}
-    check("hops: each forward hop decrements the thread ledger (flush branch)",
-          env3.get("id") == "dm-alpha.app-1700000000012" and env3.get("hops") == 0)
-    # a reply is still free at zero hops - unwinding is never starved
+    check("hops: a second sibling at the same depth is FREE (fan-out is not a runaway)",
+          env3.get("id") == "dm-alpha.app-1700000000012" and env3.get("hops") == 1,
+          f"hops={env3.get('hops')}")
+    check("...and the ledger records how deep each desk sits",
+          (wd._load_thread(t1).get("depth") or {}).get("alpha.api") == 1
+          and (wd._load_thread(t1).get("depth") or {}).get("alpha.app") == 0)
+    # a reply is still free, always - unwinding is never starved
     p4a = dmail("alpha.web", {"to": "alpha.app", "text": "still unwinding", "thread": t1},
                 "1700000000013")
-    check("hops: a reply is free even at zero hops left",
+    check("hops: a reply is free at any depth",
           wd.deliver_desk_mail(dm, "alpha.web", p4a,
                                json.loads(p4a.read_text(encoding="utf-8"))) == "delivered")
-    # ...but a NEW edge at zero closes the chain and checkpoints the human
+    # ...but going DEEPER than the budget closes the chain and checkpoints him.
+    (wd.ROOT / "projects" / "alpha" / "db").mkdir(parents=True, exist_ok=True)
+    wd._desk_id_cache.clear()
+    wd._hop_ttl = lambda: 1        # budget: one level out from the starter
     sent.clear()
-    p4b = dmail("alpha.api", {"to": "alpha.web", "text": "one more", "thread": t1},
-                "1700000000014")
+    p4b = dmail("alpha.api", {"to": "alpha.db", "text": "one level too far",
+                              "thread": t1}, "1700000000014")
     r4b = wd.deliver_desk_mail(dm, "alpha.api", p4b, json.loads(p4b.read_text(encoding="utf-8")))
     led1 = wd._load_thread(t1)
-    check("hops: an exhausted chain is refused and closed",
-          r4b == "refused" and led1 and led1.get("closed") == "hops")
+    check("hops: a chain one desk deeper than the budget is refused and closed",
+          r4b == "refused" and led1 and led1.get("closed") == "hops",
+          f"r={r4b} closed={led1 and led1.get('closed')}")
     check("hops: the owner sees a checkpoint in the origin channel",
-          any("hop limit" in s[1] and s[0] == "id-alpha-app" for s in sent))
+          any("desks deep" in s[1] and s[0] == "id-alpha-app" for s in sent))
+    check("...and it says what is still free, so he can act on it",
+          any("is free" in s[1] for s in sent))
     # closed chains refuse further mail by id
     p4c = dmail("alpha.app", {"to": "alpha.web", "text": "zombie", "thread": t1},
                 "1700000000015")
@@ -6300,26 +6317,33 @@ try:
                                json.loads(p4c.read_text(encoding="utf-8"))) == "refused")
     check("threads: the ledger is a FILE and survives a restart",
           wd._thread_path(t1).exists() and wd._load_thread(t1).get("closed") == "hops")
-    # the storm backstop: hop-free replies cannot ping-pong forever
-    wd._hop_ttl = lambda: 1          # cap = 4 deliveries
+    # The storm backstop still bounds volume - now scaled by the desks actually
+    # involved, because a four-desk round of fan-out and replies is ~8 messages
+    # and a flat cap of twelve closed real conversations mid-flight.
+    wd._hop_ttl = lambda: 1
     ps1 = dmail("alpha.app", {"to": "alpha.web", "text": "storm seed"}, "1700000000030")
     wd.deliver_desk_mail(dm, "alpha.app", ps1, json.loads(ps1.read_text(encoding="utf-8")))
     t2 = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
                     .read_text(encoding="utf-8")).get("thread")
     _storm = None
-    for i in range(4):
+    for i in range(16):
         psn = dmail("alpha.web", {"to": "alpha.app", "text": f"pong {i}", "thread": t2},
-                    f"170000000004{i}")
+                    f"17000000000{60 + i}")
         _storm = wd.deliver_desk_mail(dm, "alpha.web", psn,
                                       json.loads(psn.read_text(encoding="utf-8")))
-    check("threads: the deliveries backstop stops a ping-pong storm",
+        if _storm == "refused":
+            break
+    check("threads: the deliveries backstop still stops a ping-pong storm",
           _storm == "refused" and wd._load_thread(t2).get("closed") == "storm",
           f"last={_storm}")
+    check("...and the cap grows with the desks involved, not with nothing",
+          wd._storm_cap({"edges": [["a.b", "a.c"], ["a.c", "a.d"], ["a.d", "a.e"]]})
+          > wd._storm_cap({"edges": [["a.b", "a.c"]]}))
     wd._hop_ttl = lambda: 2
-    # The reviewer's invariant, pinned by name: replies are DIRECTIONAL. A
-    # repeated forward along an already-recorded edge is NOT a reply - only a
-    # true reversal travels free; same-direction traffic always spends budget,
-    # so "replies are free" can never become free forwarding.
+    # DIRECTIONAL still: a repeated forward along an existing edge is NOT a
+    # reply. Only a true reversal travels free - and since a reply now also
+    # skips the cross-project gate, misreading same-direction traffic as one
+    # would hand a desk permanent free passage across a boundary.
     pf1 = dmail("alpha.app", {"to": "alpha.web", "text": "fwd once"}, "1700000000050")
     wd.deliver_desk_mail(dm, "alpha.app", pf1, json.loads(pf1.read_text(encoding="utf-8")))
     t3 = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
@@ -6328,13 +6352,12 @@ try:
                 "1700000000051")
     r_f2 = wd.deliver_desk_mail(dm, "alpha.app", pf2,
                                 json.loads(pf2.read_text(encoding="utf-8")))
-    env_f2 = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
-                        .read_text(encoding="utf-8"))
-    check("hops: a repeated forward along an existing edge is NOT a reply - it still costs",
-          r_f2 == "delivered" and env_f2.get("hops") == 0
-          and wd._load_thread(t3).get("hopsLeft") == 0,
-          f"r={r_f2} hops={env_f2.get('hops')}")
-
+    _led3 = wd._load_thread(t3)
+    check("hops: a repeated forward is never classified as a reply",
+          r_f2 == "delivered"
+          and [d for d in _led3["deliveries"] if d["id"].endswith("1700000000051")][0]
+              ["reply"] is False,
+          f"r={r_f2}")
     print("== fleet senders (desk mail classification) ==")
     check("a desk id in 'from' is not a person", wd.is_human_sender("alpha.web") is False)
     check("a '-job' sender is fleet mail too (transcribe-job predates this)",

@@ -119,9 +119,14 @@ legwork:
 
 What guards it, so it can't run away:
 
-- **Hop budget** (default 3, `config\omnius.ini [delegation]`): forward hops
-  spend it, replies travel free, and an exhausted chain stops and asks you to
-  re-instruct. A message cap catches ping-pong.
+- **Depth budget** (default 3, `config\omnius.ini [delegation]`): a chain may
+  travel three desks out from the one that started it. **Breadth is free** —
+  one desk briefing three siblings costs nothing, because what runs away
+  unattended is a chain handing off further and further, not a desk
+  coordinating its own team. Replies are free at any depth, so an answer can
+  always come home. Go deeper than the budget and the chain stops and asks you
+  to re-instruct; a message cap (scaled to the desks involved) catches
+  ping-pong.
 - **The cross-project gate:** mail between desks of *one* project flows freely;
   anything crossing a project boundary (or aimed at the orchestrator or a tool
   desk) is **held** and you get one ok/no with a code. Unanswered = dropped

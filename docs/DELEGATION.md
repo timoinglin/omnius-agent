@@ -145,7 +145,7 @@ before `resolve_outbox_target`:
    reply to its chain) → else a new ledger with `hopsLeft = hop_ttl`. A closed ledger refuses.
 5. **Dedupe.** `dm-<sender>-<stem>` already in the ledger's `deliveries` → the outbox file is
    deleted silently (the delivery already happened; this is the restart window).
-6. **Storm backstop.** `deliveries ≥ hop_ttl × 4` → close `"storm"`, refuse. Catches every
+6. **Storm backstop.** `deliveries ≥ max(hop_ttl × 4, 6 × desks-involved)` → close `"storm"`, refuse. Catches every
    pathological shape, including the reply ping-pong that free replies would otherwise permit.
 7. **Hop accounting.** A **reply** — reversing an edge already recorded in the ledger — is
    **free**, so an A→B→C chain can always unwind to its starter. Only **new** edges spend budget;
@@ -364,7 +364,7 @@ is invisible to `!config` and the validators):
 ```ini
 # config\omnius.ini
 [delegation]
-# hop_ttl = 3                    ; forward hops a chain may spend (replies are free)
+# hop_ttl = 3                    ; how many desks DEEP a chain may travel (breadth and replies are free)
 # loop_budget = 5                ; scheduled continuation runs before a loop must checkpoint
 # cross_project_requires_ok = 1  ; hold cross-project desk mail for an ok in Discord (fail closed)
 ```
@@ -385,7 +385,7 @@ redirect block — the block's own comment warns that a path added late writes i
 | 2 | Reserved name or illegal shape as target | `.refused`, distinct reason | sender's channel |
 | 3 | Self-addressed desk mail | `.refused`; points at `schedule.py --loop` | sender's channel |
 | 4 | New edge with hops exhausted | chain closed `"hops"`; checkpoint so the human can re-instruct | origin channel |
-| 5 | Delivery storm (≥ `hop_ttl × 4` per thread) | chain closed `"storm"`; refusal | origin/sender channel |
+| 5 | Delivery storm (≥ `max(hop_ttl × 4, 6 × desks)` per thread) | chain closed `"storm"`; refusal | origin/sender channel |
 | 6 | Target exists but runs cannot start | envelope waits; the existing `_unrunnable` backoff + owner alert covers it; desk mail never trips the deaf-desk pager | target's channel |
 | 7 | Gate unanswered | fail closed after 60 m: held file `.refused`; sender desk not woken (its honest last word was "queued") | the ask's channel |
 | 8 | `ok` after gate timeout | matches nothing; existing "nothing is waiting" reply | same channel |
