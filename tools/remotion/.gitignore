@@ -1,0 +1,5 @@
+# Renders are build artifacts, not source.
+out/
+
+node_modules/
+.remotion/

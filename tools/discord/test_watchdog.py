@@ -324,6 +324,21 @@ try:
         msg("999999999999999999", "hi"), "C", T("fleet-status", None), me,
         {"CID_O": T("orchestrator", "orchestrator")}) == "unmapped")
     check("unmapped channel -> owner gets a redirect", bool(sent) and "#orchestrator" in sent[-1][1])
+    # RENAMING A CHANNEL IN DISCORD UNMAPS IT - routing is by channel NAME, so
+    # #web renamed to #frontend points at a component folder that does not
+    # exist. Until 2026-08-20 such a message was dropped in silence (the
+    # channel was not in the map at all), which from his side is the fleet
+    # ignoring him in his own project.
+    sent.clear()
+    _rn = wd.handle_message(msg("999999999999999999", "are you there?"), "C",
+                            T("frontend", None, "📁 demo-app"), me,
+                            {"CID_O": T("orchestrator", "orchestrator")})
+    check("a renamed project channel answers instead of swallowing the message",
+          _rn == "unmapped" and bool(sent))
+    check("...and says WHY, with the folder it looked for",
+          "frontend" in sent[-1][1] and "projects" in sent[-1][1])
+    check("...and does not call a project channel a read-only status channel",
+          "read-only" not in sent[-1][1])
     # An IDLE terminal on the desk (claim alive, no busy stamp) does NOT block
     # the run: an idle terminal cannot be woken externally, so the run continues
     # the same conversation. Only a terminal MID-TURN (busy stamp) holds it off.

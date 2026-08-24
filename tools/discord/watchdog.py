@@ -894,7 +894,13 @@ def build_map(schema):
                     session = None
         elif cat.startswith(arch_prefix):
             session = None  # archived: ignore
-        if session or (cat == orch_cat):
+        # Channels in a FLEET category are mapped even when they answer to no
+        # desk, so the owner gets told instead of ignored. Renaming #web to
+        # #frontend in Discord unmaps it (routing is by name, and the folder is
+        # still `web`), and until 2026-08-20 the message was dropped in silence
+        # - `if not target: continue`. A channel outside the fleet's categories
+        # stays unmapped and unmentioned, which is right: it is not ours.
+        if session or cat == orch_cat or cat.startswith(proj_prefix):
             mapping[c["id"]] = Target(session, name, cat)
     return mapping
 
@@ -5568,6 +5574,29 @@ def handle_message(m, cid, target, me, mapping):
             return "unmapped"
         # Don't leave the owner talking to a wall: point at the live channels.
         talk = sorted({f"#{t.channel_name}" for t in mapping.values() if t.session})
+        # A project channel with no desk is a DIFFERENT problem from a status
+        # channel, and needs a different sentence: routing is by channel name,
+        # so renaming one in Discord (or creating one by hand) points it at a
+        # component folder that does not exist. Saying "read-only status
+        # channel" there would be a lie and a dead end.
+        cat = target.category_name or ""
+        if cat.startswith(api.load_schema()["prefixes"]["project"]):
+            project = cat[len(api.load_schema()["prefixes"]["project"]):].strip()
+            try:
+                comps = ", ".join(f"#{c}" for c in api.project_components(project)) or "(none yet)"
+            except Exception:                                    # noqa: BLE001
+                comps = "(could not list them)"
+            try:
+                api.send_message(cid,
+                    f"🔇 `#{target.channel_name}` answers to no desk: routing is by "
+                    f"channel NAME, and there is no folder "
+                    f"`projects\\{project}\\{target.channel_name}\\`. Either rename the "
+                    f"channel back to a component, or ask me to create that component. "
+                    f"This project's desks are: {comps}")
+            except api.ApiError:
+                pass
+            log(f"note: message in #{target.channel_name} ({cat}) - no matching component")
+            return "unmapped"
         try:
             api.send_message(cid, f"\U0001f507 #{target.channel_name} is a read-only status channel - "
                                   f"nobody listens here. Talk to me in: {', '.join(talk)}")
