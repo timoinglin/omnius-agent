@@ -2862,8 +2862,33 @@ try:
     else:
         check("no .git here - a fresh instance, nothing to check", True)
 
+    print("== the release ships the TOOL, never a video ==")
+    # 2026-08-24: a `git add -A` swept a trailer written on this machine into a
+    # public commit - src\, the config, and the desk wiring. His answer was the
+    # whole rule: "no video should be public, the repo is for new users and
+    # fresh install". Two halves, because a release is packed from the
+    # FILESYSTEM: git must not track it, and -Fresh must not pack it.
+    _pk = (real_root / "pack.ps1").read_text(encoding="utf-8")
+    _gi = (real_root / ".gitignore").read_text(encoding="utf-8")
+    _tracked = subprocess.run(["git", "ls-files", "tools/remotion"],
+                              capture_output=True, text=True, cwd=str(real_root)).stdout.split()
+    check("git tracks the remotion TOOL and nothing anyone rendered with it",
+          sorted(_tracked) == ["tools/remotion/README.md",
+                               "tools/remotion/package-lock.json",
+                               "tools/remotion/package.json"],
+          f"tracked: {sorted(_tracked)}")
+    check("...and .gitignore keeps it that way, so `git add -A` cannot repeat it",
+          "tools/remotion/*" in _gi and "!tools/remotion/README.md" in _gi)
+    for _leftover in ("src", "out"):
+        check(f"the release does not pack tools/remotion/{_leftover}",
+              f'--exclude=$leaf/tools/remotion/{_leftover}"' in _pk,
+              "-Fresh packs the filesystem: untracking alone does not stop it")
+    check("the shipped README documents the tool, not one machine's trailer",
+          "PedazoDeManco" not in (real_root / "tools" / "remotion" / "README.md").read_text(encoding="utf-8")
+          and "PedazoDeManco" not in (real_root / "tools" / "remotion" / "package.json").read_text(encoding="utf-8"))
+
     print("== pack -Work ==")
-    pack_src = (real_root / "pack.ps1").read_text(encoding="utf-8")
+    pack_src = _pk
     check("pack: -Work switch exists", "[switch]$Work" in pack_src)
     check("pack: work archive is named distinctly (never overwrites the full one)",
           "'work-'" in pack_src)

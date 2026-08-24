@@ -259,6 +259,18 @@ if ($Fresh) {
   $tarArgs += "--exclude=$leaf/daybook/notes",
               "--exclude=$leaf/media", "--exclude=$leaf/memory",
               "--exclude=$leaf/scratch", "--exclude=$leaf/assets/private"
+  # tools\remotion ships the TOOL - the README and the pinned package.json.
+  # What you WRITE with it is yours: compositions under src\ and the mp4s in
+  # out\ are content, and a stranger's fresh install has no business carrying
+  # one machine's trailer. Git stopped tracking these on 2026-08-24; this line
+  # is the other half, because -Fresh packs the FILESYSTEM and would otherwise
+  # ship what git no longer does. The owner's own transport (-Work, and the
+  # plain backup) keeps them - they are his work.
+  $tarArgs += "--exclude=$leaf/tools/remotion/src",
+              "--exclude=$leaf/tools/remotion/out",
+              "--exclude=$leaf/tools/remotion/.claude",
+              "--exclude=$leaf/tools/remotion/remotion.config.ts",
+              "--exclude=$leaf/tools/remotion/tsconfig.json"
   # config\: the REAL files name his mail accounts, hosts and machine. Only the
   # *.example.* templates and the README are product. fleet.json was on this
   # list until 2026-08-14 and should not have been - its desks map is keyed by

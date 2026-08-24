@@ -1,13 +1,11 @@
 {
   "name": "remotion",
   "version": "1.0.0",
-  "description": "Shared Remotion capability for Omnius. Installed by root install.bat; node_modules is recreated per machine (not in git, not in the zip). See README.md for the render contract.",
+  "description": "Shared Remotion capability for Omnius. Installed by root install.bat; node_modules is recreated per machine (not in git, not in the zip). Your compositions under src/ are yours and are gitignored - the repo ships the tool, never a video. See README.md for the render contract.",
   "main": "src/index.ts",
   "scripts": {
     "studio": "remotion studio",
-    "compositions": "remotion compositions",
-    "render": "remotion render PedazoDeManco out/pedazo-de-manco.mp4 --concurrency 4",
-    "still": "remotion still PedazoDeManco out/frame.png --frame 130"
+    "compositions": "remotion compositions"
   },
   "keywords": [],
   "author": "",

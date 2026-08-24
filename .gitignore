@@ -29,6 +29,18 @@ RELEASE-COMMIT
 projects/*
 !projects/.gitkeep
 
+# --- tools\remotion: the TOOL ships, your videos never do (2026-08-24) -----
+# install.bat npm-installs remotion into this folder; what the repo carries is
+# the README, the pinned package.json/lock and nothing else. Compositions and
+# renders are the owner's content: a trailer written on this machine has no
+# business on a stranger's fresh install. This block exists because a `git add
+# -A` swept one into a public commit - his answer was the whole question:
+# "no video should be public, the repo is for new users and fresh install".
+tools/remotion/*
+!tools/remotion/README.md
+!tools/remotion/package.json
+!tools/remotion/package-lock.json
+
 # --- daybook notes: personal, and no longer in git (2026-08-14) ------------
 # Tracked from 2026-07-31 for per-edit history, back when the repo doubled as
 # a backup. It does not any more - his words: "repo is no longer for backups,

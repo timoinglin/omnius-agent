@@ -15,7 +15,8 @@ Everything below is the default the tooling already enforces — you only pass t
 composition id and the output path.
 
 - **1920x1080**, **H.264 mp4**, **CRF 16**
-- **30 fps** — `PedazoDeManco` is `FPS * DURATION_SECONDS` = 300 frames = exactly 10.000s
+- **30 fps** — derive `durationInFrames` as `FPS * DURATION_SECONDS`, so a piece stays
+  exactly as long as you meant it and switching to 60 fps changes nothing else
 - Output goes to **`out\`**, which is **gitignored** — a render is a build
   artifact, not source
 - Renders are **silent but not audio-less**: Remotion muxes a silent AAC track.
@@ -30,13 +31,11 @@ they never have to be repeated on the command line.
 From **this folder** (`W:\omnius\tools\remotion`):
 
 ```
-npm run render                 # PedazoDeManco -> out\pedazo-de-manco.mp4
-npm run compositions           # list what is registered, with fps/size/duration
-npm run still                  # one PNG - the fast way to iterate on looks
 npm run studio                 # interactive preview in a browser
+npm run compositions           # list what is registered, with fps/size/duration
 ```
 
-Or drive the CLI directly for anything non-default:
+Rendering names the composition, so it is a CLI call rather than a script:
 
 ```
 npx remotion render <CompositionId> out\<name>.mp4 --concurrency 4
@@ -73,9 +72,15 @@ remotion.config.ts     render defaults (entry point, codec, CRF)
 src\index.ts           registerRoot
 src\Root.tsx           <Composition> registry - fps and duration live here
 src\scene\timing.ts    the beat map, in seconds, + interpolate/decay helpers
-src\scene\*.tsx        the pieces of the current composition
+src\scene\*.tsx        the pieces of a composition
 out\                   renders (gitignored)
 ```
+
+**Only this README and the pinned `package.json` are in git.** Everything
+above it is yours: what you write here is your video, and a fresh install
+should arrive with the tool, not with somebody else's trailer. The root
+`.gitignore` enforces that, so a stray `git add -A` cannot publish your
+compositions the way it did once (2026-08-24).
 
 `node_modules` stays out of git **and** out of the zip — root `install.bat`
 recreates it per machine (needs Node + network, ~240 MB). Verified against a
@@ -101,22 +106,3 @@ real `pack.ps1` archive, 2026-07-25. Never vendor it, never commit it.
   out\<file>.mp4` for duration/codec, then pull a frame back *out of the mp4*
   with `npx remotion ffmpeg -ss <t> -i ... -frames:v 1 out\check.png`.
 
-## Compositions
-
-### `PedazoDeManco` — 1920x1080, 30 fps, 10.000s
-
-A trailer beat: tension -> title hit -> punchline. Built 2026-08-22 as the first
-real use of this tool.
-
-```
-0.0-2.5s   god rays, drifting dust, "ALGUNOS NACEN PARA LA GLORIA"
-2.5-4.0s   dust converges on centre, hairline of light charges, frame darkens
-4.0s       HIT - flash, shockwave rings, screen shake, title slams in
-4.0-6.7s   gold settles, specular sweeps the metal, embers rise
-6.7-9.0s   "BASADA EN HECHOS REALES" stamps in
-9.0-10.0s  fade to black
-```
-
-Everything is procedural — no image, font or audio assets. Grain is an inlined
-SVG turbulence tile translated per frame; the metal is a `background-clip: text`
-gradient over an extruded shadow stack.
