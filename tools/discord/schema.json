@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "_comment": "Day-one Discord structure + project template. Consumed by Phase 2/3 automation: find-or-create by exact name, safe to re-apply anytime (idempotent). Rules & per-instance setup: docs/DISCORD.md",
+  "_comment": "Day-one Discord structure + project template. Consumed by Phase 2/3 automation: find by PIN, then by name, else create - idempotent, safe to re-apply anytime, and a channel renamed in Discord is recognised as the one it already is instead of being recreated under its old name beside it. A channel carrying namedAfter:agent is named from config\\omnius.ini ([omnius] name); the literal beside it is only the DEFAULT. Rules & per-instance setup: docs/DISCORD.md",
   "prefixes": {
     "project": "📁 ",
     "archived": "🗄 "

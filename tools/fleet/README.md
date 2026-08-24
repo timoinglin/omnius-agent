@@ -14,7 +14,11 @@ Created 2026-07-31 on the same reasoning that gave the daybook its own desk:
 
 **Read.** That is the whole job.
 
-- `state\sessions\*.json` — one claim per desk (`pid`, `watcherPid`, `lastSeenAt`)
+- `state\sessions\*.json` — one claim per desk (`role`, `cwd`, `machine`, `pid`,
+  `startedAt`, `lastSeenAt`), written **once** at check-in: no heartbeat, no `watcherPid`
+- `state\watchdog\runs\<id>.json` — the watchdog's active-run lease for a desk
+  (pid-validated): a desk with no claim at all can still be working
+- `state\turns\<id>.busy` — a person's terminal is mid-turn on that desk
 - `state\watchdog\beacon.json` — last pass that reached **every** channel
 - `state\watchdog\lock.json` — the watchdog's own pid
 - `state\watchdog\spawning\*.json` — spawns in flight
@@ -32,29 +36,39 @@ Created 2026-07-31 on the same reasoning that gave the daybook its own desk:
 
 ## The one thing to get right
 
-**A live claim does not mean a listening session.** The heartbeat in
-`lastSeenAt` is written by `inbox_watch.py`, a *separate process*: it keeps
-ticking while the session itself is frozen on a permission dialog. On
-2026-07-31 a desk sat stalled for three hours while every signal read healthy.
+**A live claim does not mean a live desk — though not for the reason this file
+used to give.** There is no heartbeat and no watcher process: `inbox_watch.py
+<id> --once` writes the claim with a real pid and exits, and `lastSeenAt` is
+stamped once at check-in, never ticked. (A sidecar ticking it while the desk
+itself hung is the lie that made a dead desk read as alive all evening —
+deleted 2026-08-01; see the superseded banner in `docs\RELIABILITY.md`.) A
+claim therefore means *a terminal opened this desk*, nothing more. On
+2026-07-31 a desk sat stalled for three hours while every signal read healthy:
+the lesson stands, the mechanism named here does not — never report health
+from claim data alone.
 
-So report **listening**, not merely alive:
+Report what the code can actually distinguish (`watchdog.session_alive()` is
+the claim pid on this machine **or** an active run lease):
 
 | state | how to tell |
 |---|---|
-| `listening` | claim fresh **and** an `inbox_watch <id>` process alive |
+| `busy` | a live run lease in `state\watchdog\runs\<id>.json`, or a `state\turns\<id>.busy` stamp (a person's terminal mid-turn) |
 | `stalled` | the desk's newest outbox file is `*-perm-timeout.json` — it is waiting at a dialog nobody can see |
-| `alive, not listening` | session pid alive, no watcher process |
-| `dead` | no live pid (claim is prunable, root `CLAUDE.md` §6) |
+| `open` | a claim whose pid is alive on this machine: a terminal is sitting on the desk. Idle is normal — reachability is the watchdog's job, not the desk's |
+| `dead` | no live pid and no lease (claim is prunable, root `CLAUDE.md` §6) — and still reachable, because the watchdog starts a run for it |
 
 Detecting a **duplicated desk**: count process trees, not claims — a claim file
 holds one pid, so a second session on the same desk is invisible in `state\`.
 
 ```
-Get-CimInstance Win32_Process | Where-Object CommandLine -like '*inbox_watch*<id>*'
+Get-CimInstance Win32_Process | Where-Object CommandLine -like '*claude*'
 ```
 
-More than one root means two sessions are sharing a desk and racing on the same
-envelopes.
+Compare that against `state\sessions\*.json` (one claim pid per desk) and
+`state\watchdog\runs\*.json` (the runs the watchdog owns): a `claude` process
+matching neither is a second brain somebody opened by hand, racing on the same
+envelopes. There is no `inbox_watch` process to count — the check-in exits
+immediately (2026-08-01).
 
 ## Style
 

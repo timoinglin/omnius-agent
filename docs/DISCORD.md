@@ -49,7 +49,7 @@ Project categories appear only when projects are stamped (§3); nothing exists "
   stamps `#jarvis` or `#maikel` instead. The install folder, the repo and the `/omnius`
   skill keep their name regardless - those are machinery, not identity.
 - **Prefixes:** project category = `📁 <project>` · archived = `🗄 <project>` (renamed in place, channels locked).
-- **Topics are the durable map:** every session channel's topic = `{path} | {machine} | {started}`. If `state\` is ever lost, the bridge re-derives the whole mapping from topics — treat them as **data, not decoration**.
+- **Topics are the durable map for a human:** every session channel's topic = `{path} | {machine} | {started}`, written when the channel is created. Nothing routes by them — the desk behind a channel is its pin, above — but if `state\` is lost the pins go with it, the map falls back to channel names for one round, and the topic is what tells you which folder an unmapped channel wanted. Treat them as **data, not decoration**.
 - **One channel = one session** (`#app` ↔ `projects\x\app`). `#general` is relayed by Omnius — no extra session.
 
 ## 3. How it grows — a project is stamped

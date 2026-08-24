@@ -7,7 +7,7 @@ Updated: *(fresh instance — nothing has happened yet)*. **Current state and op
 ## Where we are
 
 - **Fresh instance.** The Discord layer, the bus, desks, the bridge and the daybook are all built and travel with the code — see `topics\discord-fleet.md` for how they work and `docs\ARCHITECTURE.md` for why.
-- **Nothing is proven on THIS machine yet.** First things worth doing, in order: `install.bat` (prerequisites, `.env`, hook paths), `start-omnius.bat`, then write a message in `#omnius` and confirm a desk answers.
+- **Nothing is proven on THIS machine yet.** First things worth doing, in order: `install.bat` (prerequisites, `.env`, hook paths, and what to call this agent — `config\omnius.ini` `[omnius] name`; only the address changes, the folder and the `/omnius` skill keep theirs), `start-omnius.bat`, then write a message in the agent's own channel (`#omnius` unless it was named something else) and confirm a desk answers.
 - **Suites:** `tools\discord\test_watchdog.py`, `daybook\test_storage.py`, `tools\email\test_email.py`, `tools\documents\test_documents.py`, `tools\telegram\test_telegram.py` — all five should pass before you trust anything else. They print their own counts.
 - **Shared tools that ship with this install** (`tools\<name>\`, each with a README — read it, don't guess): `whisper` (speech→text, local), `documents` (PDF text + OCR), `transcribe` (recordings → transcript + frames + summary, its own desk), `email` (IMAP/SMTP **and** Microsoft Graph), `playwright` (headless browsing + `weblogin`), `remotion` (video rendering), `telegram` (invite people who have no Discord account - one bot, one channel each — `config\telegram.ini`, off until you write it). **Behind a login: the Claude Chrome extension first (nothing scripted), or `weblogin.py` for a site registered in `config\websites.ini` — the TOOL reads the password from `.env`, never a desk. 6-digit codes are relayed through Discord. `docs\WEB.md`.**
 
@@ -31,7 +31,7 @@ Updated: *(fresh instance — nothing has happened yet)*. **Current state and op
 
 1. Get `install.bat` clean on this machine (Python 3.10+, git, Claude Code; `pywinpty` and `psutil` are required, not optional).
 2. Discord setup (`tools\discord\setup.ps1`) — bot, server, `.env`.
-3. Prove the loop end to end: message in `#omnius` → a desk opens → it answers.
+3. Prove the loop end to end: message in the agent's own channel (`#omnius` unless install was told another name) → a desk opens → it answers.
 4. Reboot once and confirm the watchdog and daybook come back on their own, and that **no desk window opens at boot**.
 
 ## Loose ends worth remembering

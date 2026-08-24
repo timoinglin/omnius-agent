@@ -130,5 +130,5 @@ The owner saw `🔐 permission needed — orchestrator / Bash / [object Object]`
 
 - A **`deny` can never escalate** — it fails hard. That is why the tightened work profile leaves things *unlisted* rather than denied: denying broad shells like `powershell` would re-create the silent stall the escalation exists to prevent.
 - A deny **with a working route left open** is the only safe shape. Example: `Bash(firebase deploy:*)` is denied in `<component>` while `npm run deploy:hosting` still works.
-- **`Bash(taskkill:*)` is denied to the orchestrator on purpose.** Killing a session is the user's action: `!kill` in that component's own channel, `!killall` from `#omnius`, or closing the tab.
+- **`Bash(taskkill:*)` is denied to the orchestrator on purpose.** Killing a session is the user's action: `!kill` in that component's own channel, `!killall` from the orchestrator's own channel (`#omnius` by default, whatever it has been renamed to since), or closing the tab.
 - **A stalled session looks healthy.** See `lessons.md` — the heartbeat is written by a separate process and keeps stamping while the session is frozen on a dialog.

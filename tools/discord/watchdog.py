@@ -901,14 +901,15 @@ def build_map(schema):
         if cat == orch_cat:
             if name in ("omnius", "orchestrator", agent_slug()):
                 # Renamed to #omnius 2026-07-31 (it is the persona, inside the
-                # 🎛 ORCHESTRATOR category). BOTH names are accepted on purpose:
-                # a running watchdog maps by channel name, so renaming while it
-                # holds old code would unmap the channel and cut the owner off
-                # entirely. Accepting both makes the rename a non-event.
-                # A third is accepted since 2026-08-24: the name the owner gave
-                # this agent at install (#jarvis, #maikel). This branch only ever
-                # runs for a channel nobody has pinned yet - after that the id
-                # decides and the name is his to change.
+                # 🎛 ORCHESTRATOR category). BOTH names were accepted because a
+                # watchdog of that era mapped by channel NAME, so renaming while
+                # it held old code unmapped the channel and cut the owner off
+                # entirely - accepting both made that rename a non-event. A
+                # third is accepted since 2026-08-24: the name he gave this
+                # agent at install (#jarvis, #maikel). None of it is load-
+                # bearing any more - this branch only runs for a channel nobody
+                # has pinned yet, and after that the id decides and the name is
+                # his to change.
                 session = "orchestrator"
             elif name == "daybook":
                 # Its own desk (user decision 2026-07-31): capturing notes should
@@ -959,10 +960,11 @@ def build_map(schema):
             session = None  # archived: ignore
         # Channels in a FLEET category are mapped even when they answer to no
         # desk, so the owner gets told instead of ignored. Renaming #web to
-        # #frontend in Discord unmaps it (routing is by name, and the folder is
-        # still `web`), and until 2026-08-20 the message was dropped in silence
-        # - `if not target: continue`. A channel outside the fleet's categories
-        # stays unmapped and unmentioned, which is right: it is not ours.
+        # #frontend unmaps it only while the channel is UNPINNED (a wiped
+        # state\, a new PC - the name rules above run for nothing else), and
+        # until 2026-08-20 the message was dropped in silence: `if not target:
+        # continue`. A channel outside the fleet's categories stays unmapped
+        # and unmentioned, which is right: it is not ours.
         # First sighting of a channel this instance derived by name: remember
         # the id, so the owner may rename it from now on. A desk's home channel
         # is pinned under the desk id (that is what primary_channel_id asks

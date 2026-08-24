@@ -11,6 +11,11 @@ Library: imported by watchdog.py. CLI: the admin surface for sessions -
     python tools\\discord\\api.py react --channel app --message <id> --emoji eyes
     python tools\\discord\\api.py pin --channel app --message <id>
 
+`--channel` takes a channel id, a DESK (`orchestrator`, `recipe-app.app`,
+`tool.email`), or the channel's name. The desk form is the one that survives:
+he may rename #omnius to #maikel in the Discord app whenever he likes, and
+routing - this CLI included - follows the pinned channel id, not the name.
+
 Reads root .env itself (DISCORD_BOT_TOKEN, DISCORD_GUILD_ID, ...) - callers
 never see the token. Design: docs/ARCHITECTURE.md par. 3.4, docs/DISCORD.md.
 """
@@ -355,10 +360,31 @@ def find_channel(channels, name, ch_type=CHANNEL_TEXT, parent_id=None):
 
 
 def resolve_channel(name_or_id, category=None):
-    """Channel by id, or by name (optionally within a category name)."""
+    """Channel by id, by DESK, or by name (optionally within a category name).
+
+    The desk lookup is what keeps this CLI working after a rename: `--channel
+    omnius` must not start failing the day he calls the channel #maikel, and
+    `--channel recipe-app.app` should reach that desk whatever its channel is
+    called today. Pins first, the literal name second (DISCORD.md par. 2).
+    """
     if re.fullmatch(r"\d{15,22}", str(name_or_id)):
         return {"id": str(name_or_id)}
     chans = guild_channels()
+    want = str(name_or_id).lstrip("#")
+    if not category:
+        pins = channel_pins()
+        # A desk id ("orchestrator", "recipe-app.app", "tool.email"), or the
+        # name a schema channel was created with ("alerts", and "omnius" for a
+        # door now called something else - agent_slug() resolves that name to
+        # the same pin key).
+        keys = [want] + [k for k in pins if k.endswith("#" + want)]
+        if want == agent_slug():
+            keys.insert(0, "orchestrator")
+        for k in keys:
+            cid = str((pins.get(k) or {}).get("id") or "")
+            ch = next((c for c in chans if str(c["id"]) == cid), None) if cid else None
+            if ch:
+                return ch
     parent_id = None
     if category:
         cat = find_channel(chans, category, CHANNEL_CATEGORY)

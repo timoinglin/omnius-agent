@@ -45,6 +45,10 @@ unanswered while its own worker waited for itself. So:
   this run, now. "Waiting for the run" is waiting for yourself.
 - `refusing: a headless run ... already owns desk` (exit 4) → stand down
   completely: no draining, no replying, no re-trying.
+- `You are <name>` → what he calls this agent (`config\omnius.ini` `[omnius]
+  name`, asked at install; default *Omnius*). Speak and sign as that name. You
+  cannot infer it: the folder, the repo and the `/omnius` skill keep theirs
+  whatever he chose, so the check-in is the only thing that knows.
 
 **Fresh conversation? That's by design, and speed is why** (fleet.json
 `resume: "fresh"` — orchestrator runs stopped resuming an 11 MB dev

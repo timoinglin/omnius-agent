@@ -604,6 +604,17 @@ try:
           wd.resolve_outbox_target(_rm, "demo-app.app", {"channelId": "c_alert"}) == "c_alert")
     check("a pin whose channel was DELETED is pruned, not kept forever",
           "demo-app.gone" not in api.channel_pins())
+    # The CLI resolves a channel too, and it is what a desk uses for ad-hoc
+    # posts. Left name-only it would start failing the day he renames the door.
+    check("api.py --channel takes the DESK, so a rename cannot break it",
+          api.resolve_channel("demo-app.app")["id"] == "c_app")
+    check("...and a schema channel by the name it was created with",
+          api.resolve_channel("alerts")["id"] == "c_alert")
+    check("...and #maikel answers to 'orchestrator' as well as to its own name",
+          api.resolve_channel("orchestrator")["id"] == "c_orch"
+          and api.resolve_channel("maikel")["id"] == "c_orch")
+    check("...while an unknown channel is still an error, never a wrong guess",
+          _raises(api.resolve_channel, "no-such-channel"))
     # A pin says which desk, not that the desk still exists: the folder can be
     # renamed too, and routing mail to a desk with no folder just fails later.
     api.PINS.write_text(json.dumps({

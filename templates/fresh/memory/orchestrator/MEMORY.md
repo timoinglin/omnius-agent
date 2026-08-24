@@ -12,6 +12,7 @@ These three ship with a fresh instance because they are how Omnius WORKS —
 hard-won rules a new instance would otherwise re-learn the same painful way:
 
 - [Discord & the fleet](topics/discord-fleet.md) — channel→desk map, control commands, the bus pattern, one-desk-per-folder.
+- [Naming](topics/naming.md) — channels route by id (rename freely); the agent's name is a setting.
 - [Permissions](topics/permissions.md) — the autonomy dial, `fleet.json` posture, escalation and what is actually true about it.
 - [Lessons](topics/lessons.md) — **read before "fixing" anything that looks wrong.** Several entries exist to stop a future session undoing a deliberate choice.
 

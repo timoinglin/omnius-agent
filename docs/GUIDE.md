@@ -56,7 +56,7 @@ Handled by the always-on watchdog itself, never by a model:
 | `!kill` / `!restart [model] [effort]` | Kill / restart **this channel's** desk; `!restart sonnet low` also persists the model dial |
 | `!model [reset\|<model>] [effort]` | Show or set this desk's model + effort, with provenance |
 | `!stop` | Cancel this desk: kill the run, park its queued mail in `state\dropped\` (kept, not deleted) |
-| `!killall` | Everything down (only accepted in `#omnius`) |
+| `!killall` | Everything down (only in the agent's own channel — `#omnius` by default, or whatever you renamed it to) |
 | `!cron [list\|pause\|resume\|rm\|adopt <id>]` | Routines — and the work-loop ledgers ride along in the same listing |
 | `!config` | Read-only settings dump: values, sources, secrets as set/NOT-SET, guests, slash list |
 | `!screen` / `!desktop <verb>` | Screenshot / desktop control of the machine (see `memory\shared\DESKTOP-CONTROL.md`) |

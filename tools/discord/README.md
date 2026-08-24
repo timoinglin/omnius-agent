@@ -13,10 +13,20 @@ Home of everything Discord (design: `docs\ARCHITECTURE.md` §3.4 · blueprint: `
   `python tools\discord\api.py --help` for the surface.
 - **`gateway.py`** — Discord Gateway websocket client, stdlib only (no deps). Pushes
   messages to the watchdog instead of making it poll (below). Never the authority.
-- **`inbox_watch.py`** — session-side watcher + claim keeper: run as a background task by
-  `/omnius`; heartbeats `state\sessions\<id>.json`, exits when envelopes arrive.
+- **`inbox_watch.py`** — the desk check-in: writes the claim `state\sessions\<id>.json`
+  (real pid, real times), prints every waiting envelope oldest-first, and **exits**. No
+  watch mode and no heartbeat — a sidecar stamping `lastSeenAt` while the session itself
+  hung is the lie that cost the evening of 2026-08-01; pid liveness is the whole signal.
+  It also prints **"You are `<name>`"** (`config\omnius.ini`, `[omnius] name`), because a
+  desk cannot infer that from a folder and a skill that both say `omnius`.
 - **`schema.json`** — machine-readable day-one server structure + project template;
-  `api.py ensure` / the watchdog stamp it idempotently (find-or-create by exact name).
+  `api.py ensure` / the watchdog stamp it idempotently — find by **pin**, then by name,
+  else create, so a channel renamed in Discord is recognised as the one it already is
+  instead of being recreated under its old name beside it. The orchestrator's entry
+  carries `"namedAfter": "agent"`: the `"omnius"` literal next to it is only the DEFAULT,
+  and `config\omnius.ini` `[omnius] name` wins. A literal rather than a `{placeholder}`
+  on purpose — an older watchdog still in memory reads this file too, and would stamp the
+  placeholder verbatim (it did, eleven times on a live server, 2026-08-24).
 - **`setup.ps1`** — guided per-instance Discord configuration: called by the root
   launchers/installer when `.env` lacks the Discord values; validates token + server live.
 - **`autostart.ps1`** — owns the Task Scheduler jobs that keep the watchdog and the

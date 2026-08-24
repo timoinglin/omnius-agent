@@ -125,7 +125,7 @@ mechanical). The opening set:
 | 4 | Start a second watchdog by hand | the lock makes it exit(3) immediately |
 | 5 | Hand-write a `.busy` stamp and leave it | BUSY_SILENT release after 15 min of conversation silence; desk never permanently deaf |
 | 6 | `!update go` with a hand-dirtied tracked file | refuses, names the count, nothing pulled |
-| 7 | Delete `state\` wholesale while running | regenerates; channel topics rebuild the map; open chains are lost and SAY so (expected loss — document it) |
+| 7 | Delete `state\` wholesale while running | regenerates — but the channel→desk **pins** go with it (`state\watchdog\channels.json`), so the map re-derives from channel **names** for one round and pins the fleet again: any channel that had been renamed comes back **unmapped and says so** (a project channel names the folder it expected). Topics are written, never read, so they rebuild nothing. Open chains are lost and SAY so (expected loss — document it) |
 | 8 | Ask a desk to delegate to itself, to a ghost desk, and 10 hops deep | three distinct refusals, all already suite-covered — confirm live |
 | 9 | Two owners' messages racing one desk (rapid fire) | one run drains both in order; acks make the sequencing visible |
 | 10 | Fill the loop budget, then keep saying "continue" in fresh messages | each fresh instruction opens a NEW loop with a NEW budget — confirm this is legible, not surprising |

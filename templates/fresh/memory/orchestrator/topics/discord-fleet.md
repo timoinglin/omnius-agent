@@ -9,16 +9,15 @@ The only always-on piece is the **watchdog** (`tools\discord\`, **Gateway websoc
 
 ## Per-instance bot setup
 
-A bot is created **per instance** and invited with either Administrator (`8`) or the minimal permission integer **`126032`**. **Message Content Intent must be on** or the watchdog sees empty messages. Default is one server per instance; a shared fleet server stays a Phase 5 candidate.
-`tools\discord\setup.ps1` guides this and is called by install/start/wakeup whenever `.env` lacks Discord values; declining leaves the instance in local mode.
+A bot is created **per instance**, one server each. **Message Content Intent must be on** or the watchdog sees empty messages. `tools\discord\setup.ps1` guides the rest and is called by install/start/wakeup whenever `.env` lacks Discord values; declining leaves local mode. Permission integers and the portal walkthrough: `docs\DISCORD.md` par. 4.
 
 ## Channel → desk map
 
-Read from `watchdog.build_map()` — **not** from the schema, which is only part of the story.
+Read from `watchdog.build_map()` — **not** from the schema, which is only part of the story. The map is keyed by channel **id**, so the names below decide a desk exactly **once** and are his to change afterwards — see `naming.md`.
 
 | Channel | Desk |
 |---|---|
-| `#omnius` *or* `#orchestrator` | `orchestrator` (both names accepted deliberately) |
+| `#<agent>` (`#omnius` by default) *or* `#orchestrator` | `orchestrator` — the door is named after the agent (`naming.md`); all three names are accepted |
 | `#daybook` | `daybook` |
 | `#fleet-status` | `tool.fleet` |
 | `#transcribe` | `tool.transcribe` |
@@ -29,11 +28,10 @@ Read from `watchdog.build_map()` — **not** from the schema, which is only part
 
 - **⚠ TRAP: `!kill` in a project's `#general` stops the ORCHESTRATOR**, not the project — use the component's own channel.
 - `#daybook` and `#fleet-status` have their **own desks** (2026-07-31) so notes and status never queue behind the orchestrator.
-- **The door is `#omnius`** (renamed from `#orchestrator` 2026-07-31; id `<channel-id>` unchanged).
-- `!killall` accepts **both** names on purpose: the watchdog maps by channel *name*, so a rename under old code would have unmapped the channel and cut the owner off.
-- **Discord permits duplicate channel names** — check before any rename, or you get two rather than an error.
+- **The door is whatever channel is pinned to `orchestrator`**, created as `#<agent-name>` and free to rename afterwards (`naming.md`). Under the old name-mapping a rename cut him off.
+- **Discord permits duplicate channel names** — check before creating one, or you get two rather than an error.
 - **The watchdog rebuilds its channel map on a timer inside the poll loop** (`MAP_REFRESH_SECONDS`), not only at startup. Renames, additions and deletions are picked up automatically and a deleted channel does not strand the beacon.
-- **⚠ But that refresh re-reads the GUILD, not the CODE.** Adding a *new* `#channel → session` branch to `build_map()` needs a **`!reload`** — a running watchdog imported the old function at startup and keeps it forever. **Symptom to recognise: a desk's replies land in `.refused` while everything about the channel looks correct** — the channel exists, the category is right, the desk writes a correct outbox file, and the watchdog renames it *"belongs to another session"* because its map still says `session=None`.
+- **⚠ But that refresh re-reads the GUILD, not the CODE.** Adding a *new* `#channel → session` branch to `build_map()` needs a **`!reload`** — a running watchdog imported the old function at startup and keeps it forever. **Symptom: a desk's replies land in `.refused` while everything about the channel looks correct** — the watchdog rejects them as *"belongs to another session"* because its map still says `session=None`.
 - Prefer restarting the **`Omnius Watchdog` scheduled task** over killing a pid — `service_runner.py` supervises it, so it comes back on its own, and the lock validates pid liveness so the replacement prunes a stale lock rather than exiting 3.
 
 ## Control commands — THIRTEEN (the source of truth is `CONTROL_COMMANDS`)
@@ -53,7 +51,7 @@ Answered by the watchdog itself: **instant, no desk spawn, no tokens.**
 - `!model` — this desk's model/effort. `!model sonnet [low]` · `!model effort low` · `!model reset`. Bare shows **what the live run is on**, what the config says, **where each value came from**, and flags when the two have diverged. Writes `desks.<id>` in `fleet.json`, so it **travels and persists**. Both are pinned at launch, so a change lands on the NEXT run — `!restart` (or `!restart sonnet low`) cuts over, keeping the conversation.
 - `!config` — which capabilities have both a provider and a key.
 - `!screen` / `!desktop` — desktop verbs (screenshot etc.).
-- `!killall` — every session; `#omnius` only.
+- `!killall` — every session; the orchestrator's **own** channel only, resolved by pin rather than by name (every project `#general` maps to the orchestrator too).
 
 **This list said "five, not four" while ten existed.** Add new verbs here in the
 same commit, or delete the list and point at the code.
@@ -90,12 +88,12 @@ python <root>\tools\discord\inbox_watch.py <id> --ack <envelope-id> [more]
 - **Write that file with the `Write` tool, and never `Remove-Item` an envelope.** Both rules are permission-prompt scars from 2026-08-02: a shell-built JSON reply matches no allow rule and froze two desks for 40 minutes each, and a shell delete prompted on *every* Discord message until the owner gave up answering. `--ack` and `Write` are pre-approved everywhere.
 - A session receives **every** queued envelope, oldest first — never only the latest. `--ack` each **as** it is handled, and when a later message contradicts an earlier one, the later wins: say so rather than silently doing both.
 - **Whichever desk does the work owns the `--ack`.** A missed ack means the next run re-handles the envelope — harmless for a question, bad for a destructive verb (proved 2026-08-02: "delete <project>" ran twice).
-- The claim records the **`claude` pid**, not the watcher's, and `session_alive()` falls back to `pid_alive(pid) or pid_alive(watcherPid)`. A dead watcher on a live session still resolves *alive*, so envelopes queue rather than spawning a second brain. **Do not "fix" that.**
+- The claim records the **`claude` pid** and nothing else — no `watcherPid`, no heartbeat (both deleted 2026-08-01). `session_alive()` is that pid on this machine **or** an active run lease (`state\watchdog\runs\<id>.json`), so a desk with no terminal is still reachable and a claim with a dead pid is prunable. **Do not re-add a heartbeat:** a sidecar stamping `lastSeenAt` while the desk itself hung is the lie that cost the evening of 2026-08-01.
 - With a live claim the watchdog **delivers**; spawn-on-message only fires when no session holds the desk.
 
 ## Pinned documentation
 
-**One pin per channel, each documenting itself** (user's design) — not one board listing every channel. `#omnius` carries the general how-to, `#daybook` explains what that channel is for, `#fleet-status` covers its own commands, and `#alerts` (added 2026-08-01) covers the approval format, the ~3-minute window, and what to do about a desk that stalled. **All four channels now document themselves.**
+**One pin per channel, each documenting itself** (user's design) — not one board listing every channel. the main door carries the general how-to, `#daybook` explains what that channel is for, `#fleet-status` covers its own commands, and `#alerts` (added 2026-08-01) covers the approval format, the ~3-minute window, and what to do about a desk that stalled. **All four channels now document themselves.**
 
 Rebuild by **deleting and reposting, never editing** — the emblem thumbnail is an upload and does not survive a PATCH cleanly. Embed cap is 6,000 chars total.
 

@@ -9,8 +9,13 @@ Two facts drive everything below:
   A fresh instance therefore *always* reports "Discord not set up" on first run.
   **That is correct behaviour, not a bug** — you are expected to set up the bot
   for *this* instance. It caught the author out once; that is why this note exists.
-- **`state\` never travels either.** Claims, the bus, logs and the watchdog lock
-  are machine-local and rebuild themselves. An empty `state\` on day one is normal.
+- **`state\` never travels either.** Claims, the bus, logs, the watchdog lock and the
+  channel→desk **pins** (`state\watchdog\channels.json`) are machine-local and rebuild
+  themselves. An empty `state\` on day one is normal — with one thing worth knowing: with
+  no pins the map is derived from channel **names** for one round and pinned again, so a
+  channel you had renamed in Discord on the old PC comes back **unmapped**. It says so out
+  loud (a project channel even names the folder it expected); rename it back to re-pin it,
+  after which you can rename it freely again.
 
 ---
 
@@ -84,7 +89,9 @@ The guided flow (`tools\discord\setup.ps1`) opens the developer portal and
    python tools\discord\api.py ensure
    ```
 
-   Creates `🎛 ORCHESTRATOR` with `#orchestrator #daybook #fleet-status #alerts`.
+   Creates `🎛 ORCHESTRATOR` with `#omnius #daybook #fleet-status #transcribe #alerts`.
+   The first one is named after the agent, so it is `#jarvis` if that is what you
+   answered at install (`config\omnius.ini`, `[omnius] name`).
 
 6. Optional branding: `python tools\discord\api.py set-avatar`
 
@@ -103,8 +110,9 @@ Task Scheduler is the Phase 4 answer for true always-on.
 
 ## 5. Confirm the round trip
 
-Post `Hello` in `#orchestrator` from the owner account. Expect a session to spawn
-and answer. Then `!status` for a fleet view.
+Post `Hello` in your agent's channel — `#omnius`, or whatever you called it at install
+— from the owner account. Expect a session to spawn and answer. Then `!status` for a
+fleet view.
 
 `wakeup-omnius.bat` summons the orchestrator at the desktop.
 
