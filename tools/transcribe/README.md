@@ -146,6 +146,33 @@ headroom on `--model medium` rather than on finishing sooner — product and
 tool names are what get asked about weeks later, and that is exactly where the
 bigger model earns its keep. Both are already flags; nothing needs rebuilding.
 
+**This machine already IS that bigger machine (measured 2026-08-20): 31 GB RAM,
+16 cores, and `medium` (1.5 GB) + `large-v3` (2.9 GB) both already in the HF
+cache — no download wait.** The 3.8 GB ceiling above is history, not a live
+constraint: a job that still passes `--workers 3 --model small` is leaving most
+of the box idle.
+
+The defaults in `run.py` were deliberately **not** changed. `small` stays the
+default for "I need it now"; the bigger model is a per-job choice for when he
+says he can wait — which he does say, and when he does, `medium` is the answer.
+
+**Measured 2026-08-20 on this box: `large-v3`, 3 workers, 2h 54m 42s of Spanish
+room audio → 39.1 min. That is 4.5× realtime.** Not `medium` — he asked for the
+best model and `large-v3` was already cached, so that is the number we have.
+
+Two lessons, and the second one cost him something:
+
+1. The old 1.4× figure was the *laptop's* number for `small`. This machine is
+   roughly **3× faster per model tier** than that line suggests, and it runs the
+   biggest model faster than the laptop ran the smallest one. Quote 4.5× for
+   `large-v3` until something better is measured; `medium` and `small` on this
+   box are still unmeasured and will be *faster*, not slower.
+2. **The desk predicted 4–6 hours and delivered in 39 minutes**, having reasoned
+   "large-v3 is ~4× slower than small" from the stale baseline. He was told a
+   long job was starting and may have planned around it. An estimate built by
+   stacking one guess on another guess is not an estimate — say "I don't know
+   yet, I'll measure it on this run" instead, which costs nothing and is true.
+
 Do not expect help from an integrated GPU or an NPU: faster-whisper runs on
 CTranslate2, whose accelerated path is CUDA. On AMD integrated graphics it
 stays on the CPU.
