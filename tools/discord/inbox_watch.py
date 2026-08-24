@@ -56,7 +56,10 @@ def _schema_channel(session):
         for cat in schema.get("initial", {}).get("categories", []):
             for ch in cat.get("channels", []):
                 if ch.get("session") == session and ch.get("name"):
-                    return ch["name"]
+                    # The orchestrator's channel is named after the agent
+                    # (config\omnius.ini [omnius] name); the schema carries
+                    # only the default.
+                    return api.resolve_spec_name(ch)
     except (OSError, ValueError, AttributeError, TypeError):
         pass
     return None
@@ -295,6 +298,20 @@ def main():
         print(f"YOU ARE THE ACTIVE HEADLESS RUN (pid {session_pid}) on desk '{sid}'.\n"
               f"The envelopes below are YOURS to answer, in this run, now. Never wait\n"
               f"for or defer to 'the run handling this desk' - that run is you.")
+
+    # WHAT HE CALLS YOU. A desk cannot infer this: the folder, the repo and the
+    # skill all say "omnius" whatever name he chose at install, and signing off
+    # as the wrong one is the first thing he notices (his ask, 2026-08-24 - the
+    # name lives in config\omnius.ini, [omnius] name). Stated here because the
+    # check-in is the one thing EVERY run does, terminal or headless.
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        import omnius_config as _ocfg
+        agent = _ocfg.agent_name()
+    except Exception:                        # noqa: BLE001 - never block a drain
+        agent = "Omnius"
+    print(f"You are {agent} (the name he gave this agent; the folder and the "
+          f"/omnius skill keep theirs).")
 
     claim = {"role": role, "project": project, "component": component,
              # api.MACHINE reads root .env first, then COMPUTERNAME. Resolving it

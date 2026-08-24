@@ -47,6 +47,10 @@ try:
     wd.SESSIONS, wd.INBOX, wd.OUTBOX, wd.MEDIA, wd.LOGS = (
         SAND / "sessions", SAND / "inbox", SAND / "outbox", SAND / "media", SAND / "logs")
     wd.WD_STATE, wd.RUNS = SAND / "watchdog", SAND / "watchdog" / "runs"
+    # Channel pins live in api, not wd, and build_map WRITES them - left alone,
+    # the suite would pin fake ids like "c_orch" over the real fleet.
+    api.PINS = SAND / "watchdog" / "channels.json"
+    api._bust_pins()
     # Redirect EVERY state path up front. Setting one of these later means the
     # tests that run before it write into the real state\ directory.
     wd.TRANSCRIPTS, wd.PERMS = SAND / "transcripts", SAND / "permissions"
@@ -556,14 +560,200 @@ try:
     check("ensure_trusted idempotent", wd.ensure_trusted(SAND / "projects" / "demo-app"))
     check("other config keys preserved", "projects" in cfg)
 
+    print("== renaming a channel in Discord (pins) ==")
+    # The owner asked for this on 2026-08-24: "i want to be able to change a
+    # channel name once already created, including #omnius to whatever i want
+    # e.g. #maikel". Routing used to be by NAME inside a category, so a rename
+    # made the desk deaf AND the next structure stamp recreated the old name
+    # beside it. A channel id is what the channel IS; the name is a label.
+    _pin_save, _guild_save = api.PINS, api.guild_channels
+    api.PINS = SAND / "watchdog" / "pins-rename.json"
+    api.PINS.parent.mkdir(parents=True, exist_ok=True)
+    api.PINS.write_text(json.dumps({
+        "orchestrator": {"id": "c_orch", "session": "orchestrator"},
+        "\U0001f39b ORCHESTRATOR#alerts": {"id": "c_alert", "session": None},
+        "demo-app.app": {"id": "c_app", "session": "demo-app.app"},
+        "demo-app.gone": {"id": "c_deleted", "session": "demo-app.gone"},
+    }), encoding="utf-8")
+    api._bust_pins()
+    # Every one of these has been renamed by hand in the Discord app, and the
+    # project category comes FIRST so #general (which also maps to the
+    # orchestrator) would win any dict-order fallback.
+    api.guild_channels = lambda: [
+        {"id": "cat_p", "type": 4, "name": "\U0001f4c1 demo-app", "position": 0},
+        {"id": "c_gen", "type": 0, "name": "general", "parent_id": "cat_p", "position": 0},
+        {"id": "c_app", "type": 0, "name": "frontend", "parent_id": "cat_p", "position": 1},
+        {"id": "cat_o", "type": 4, "name": "\U0001f39b ORCHESTRATOR", "position": 1},
+        {"id": "c_orch", "type": 0, "name": "maikel", "parent_id": "cat_o", "position": 0},
+        {"id": "c_alert", "type": 0, "name": "sirens", "parent_id": "cat_o", "position": 1},
+    ]
+    _rm = wd.build_map(api.load_schema())
+    check("#omnius renamed to #maikel still routes to the orchestrator",
+          _rm["c_orch"].session == "orchestrator")
+    check("a renamed PROJECT channel still routes to its desk",
+          _rm["c_app"].session == "demo-app.app")
+    check("...and the map reports the CURRENT name, not the old one",
+          _rm["c_app"].channel_name == "frontend")
+    check("the orchestrator answers in his own renamed channel, not a project #general",
+          wd.primary_channel_id(_rm, "orchestrator") == "c_orch")
+    check("a renamed #alerts is still the broadcast channel",
+          wd.fleet_channel_id(_rm, "alerts") == "c_alert")
+    check("...so a permission ask still falls back to it",
+          wd.resolve_outbox_target(_rm, "tool.email", {"fallback": "alerts"}) == "c_alert")
+    check("...and a desk may still post there without being refused",
+          wd.resolve_outbox_target(_rm, "demo-app.app", {"channelId": "c_alert"}) == "c_alert")
+    check("a pin whose channel was DELETED is pruned, not kept forever",
+          "demo-app.gone" not in api.channel_pins())
+    # A pin says which desk, not that the desk still exists: the folder can be
+    # renamed too, and routing mail to a desk with no folder just fails later.
+    api.PINS.write_text(json.dumps({
+        "demo-app.nosuch": {"id": "c_app", "session": "demo-app.nosuch"}}), encoding="utf-8")
+    api._bust_pins()
+    _rm2 = wd.build_map(api.load_schema())
+    check("a pin to a component folder that is gone unmaps - and says so",
+          _rm2["c_app"].session is None and "c_app" in _rm2)
+    # Nobody has pinned anything yet: that is every install that predates this,
+    # so names must still resolve - and what they resolve to gets pinned, which
+    # is the whole migration.
+    api.PINS.write_text("{}", encoding="utf-8")
+    api._bust_pins()
+    api.guild_channels = lambda: [
+        {"id": "cat_o", "type": 4, "name": "\U0001f39b ORCHESTRATOR", "position": 0},
+        {"id": "c_o2", "type": 0, "name": "omnius", "parent_id": "cat_o", "position": 0},
+        {"id": "c_a2", "type": 0, "name": "alerts", "parent_id": "cat_o", "position": 1},
+    ]
+    _rm3 = wd.build_map(api.load_schema())
+    check("an unpinned #omnius still routes by name", _rm3["c_o2"].session == "orchestrator")
+    _after = api.channel_pins()
+    check("...and is pinned on sight, so it may be renamed from now on",
+          _after.get("orchestrator", {}).get("id") == "c_o2")
+    check("...as is a session-less schema channel, keyed by category",
+          any(k.endswith("#alerts") and v.get("id") == "c_a2" for k, v in _after.items()))
+    # Every project #general relays to the orchestrator. On a fresh install it
+    # may well be seen FIRST - and a relay that claims the orchestrator pin
+    # would answer him in some project instead of his own channel, for good.
+    api.PINS.write_text("{}", encoding="utf-8")
+    api._bust_pins()
+    api.guild_channels = lambda: [
+        {"id": "cat_p", "type": 4, "name": "📁 demo-app", "position": 0},
+        {"id": "c_g3", "type": 0, "name": "general", "parent_id": "cat_p", "position": 0},
+        {"id": "cat_o", "type": 4, "name": "🎛 ORCHESTRATOR", "position": 1},
+        {"id": "c_o3", "type": 0, "name": "omnius", "parent_id": "cat_o", "position": 0},
+    ]
+    _rm4 = wd.build_map(api.load_schema())
+    check("a project #general relays to the orchestrator but never becomes his channel",
+          _rm4["c_g3"].session == "orchestrator"
+          and api.channel_pins().get("orchestrator", {}).get("id") == "c_o3")
+    check("...and he is answered in his own channel, whatever the listing order",
+          wd.primary_channel_id(_rm4, "orchestrator") == "c_o3")
+    # Same trap one level down: a ONE-component project answers in #general as a
+    # convenience (2026-08-01), but the desk still lives in its own channel and
+    # must reply there.
+    (SAND / "projects" / "solo" / "web").mkdir(parents=True, exist_ok=True)
+    api.PINS.write_text("{}", encoding="utf-8")
+    api._bust_pins()
+    api.guild_channels = lambda: [
+        {"id": "cat_s", "type": 4, "name": "📁 solo", "position": 0},
+        {"id": "c_sg", "type": 0, "name": "general", "parent_id": "cat_s", "position": 0},
+        {"id": "c_sw", "type": 0, "name": "web", "parent_id": "cat_s", "position": 1},
+    ]
+    _rm5 = wd.build_map(api.load_schema())
+    check("a one-component #general still opens the door to its desk",
+          _rm5["c_sg"].session == "solo.web")
+    check("...but the desk answers in its own channel, not in #general",
+          wd.primary_channel_id(_rm5, "solo.web") == "c_sw")
+    # ensure_structure find-or-creates by name. Without the pin it would look
+    # for #omnius, not find it, and helpfully create a second one.
+    api.PINS.write_text(json.dumps({
+        "orchestrator": {"id": "c_orch", "session": "orchestrator"}}), encoding="utf-8")
+    api._bust_pins()
+    api.guild_channels = lambda: [
+        {"id": "cat_o", "type": 4, "name": "\U0001f39b ORCHESTRATOR", "position": 0},
+        {"id": "c_orch", "type": 0, "name": "maikel", "parent_id": "cat_o", "position": 0},
+    ]
+    created_chans.clear()
+    api.ensure_structure(log=lambda *a: None)
+    check("stamping does NOT recreate #omnius next to the renamed one",
+          "omnius" not in [n for n, _ in created_chans])
+    check("...while channels that really are missing are still created",
+          "daybook" in [n for n, _ in created_chans])
+    api.PINS, api.guild_channels = _pin_save, _guild_save
+    api._bust_pins()
+
+    print("== naming the agent ==")
+    # His ask, 2026-08-24: "i want to include the agent name to a config file,
+    # how he will be addressed to (omnius, jarvis, maikel, etc)" - and the
+    # installer asks for it. Only the ADDRESS moves: the install folder and the
+    # /omnius skill stay put, because they are machinery, not identity.
+    import omnius_config as _oc2                                  # noqa: E402
+    _name_save = _oc2.agent_name
+    try:
+        _oc2.agent_name = lambda env=None: "Omnius"
+        check("unnamed, the agent is Omnius", _oc2.agent_slug() == "omnius")
+        _oc2.agent_name = lambda env=None: "Jarvis"
+        check("a configured name becomes the channel name", _oc2.agent_slug() == "jarvis")
+        check("...which is what a namedAfter:agent channel resolves to",
+              api.resolve_spec_name({"name": "omnius", "namedAfter": "agent"}) == "jarvis")
+        check("...while any other channel keeps the name the schema gives it",
+              api.resolve_spec_name({"name": "daybook"}) == "daybook")
+        check("...and the terminal tab wears it too",
+              wd.tab_title("orchestrator") == "\U0001f39b Jarvis")
+        _oc2.agent_name = lambda env=None: "Doctor Who 9000!"
+        check("a name with spaces and punctuation is still a legal channel name",
+              _oc2.agent_slug() == "doctor-who-9000")
+        # A name is a config value, and a config value may not take the fleet
+        # down (omnius_config rule 3): anything unusable falls back.
+        _oc2.agent_name = lambda env=None: "\U0001f916"
+        check("a name with nothing usable in it falls back to omnius",
+              _oc2.agent_slug() == "omnius")
+        # Stamping: a fresh install with a name gets THAT channel, once.
+        _oc2.agent_name = lambda env=None: "Maikel"
+        _guild_save2 = api.guild_channels
+        api.PINS = SAND / "watchdog" / "pins-name.json"
+        api.PINS.write_text("{}", encoding="utf-8")
+        api._bust_pins()
+        api.guild_channels = lambda: [
+            {"id": "cat_o", "type": 4, "name": "\U0001f39b ORCHESTRATOR", "position": 0}]
+        created_chans.clear()
+        api.ensure_structure(log=lambda *a: None)
+        check("a fresh install stamps #maikel, not #omnius",
+              "maikel" in [n for n, _ in created_chans]
+              and "omnius" not in [n for n, _ in created_chans])
+        check("...and it is pinned to the orchestrator, so it may be renamed later",
+              api.channel_pins().get("orchestrator", {}).get("session") == "orchestrator")
+        api.PINS.write_text("{}", encoding="utf-8")
+        api._bust_pins()
+        api.guild_channels = lambda: [
+            {"id": "cat_o", "type": 4, "name": "\U0001f39b ORCHESTRATOR", "position": 0},
+            {"id": "c_mk", "type": 0, "name": "maikel", "parent_id": "cat_o", "position": 0}]
+        check("#maikel routes to the orchestrator even before it is pinned",
+              wd.build_map(api.load_schema())["c_mk"].session == "orchestrator")
+        api.guild_channels = _guild_save2
+        api.PINS = _pin_save
+        api._bust_pins()
+    finally:
+        _oc2.agent_name = _name_save
+    check("the name is in SPEC, so !config lists it with its source",
+          any(sc == "omnius" and k == "name" for _n, sc, k, _e, _d, _t in _oc2.SPEC))
+
     print("== #omnius rename (transition-safe) ==")
     _wsrc = (HERE / "watchdog.py").read_text(encoding="utf-8")
-    check("build_map accepts BOTH #omnius and #orchestrator",
-          'name in ("omnius", "orchestrator")' in _wsrc)
-    check("!killall accepts either name", 'not in ("omnius", "orchestrator")' in _wsrc)
+    check("build_map accepts #omnius, #orchestrator AND the configured name",
+          'name in ("omnius", "orchestrator", agent_slug())' in _wsrc)
     _sch = json.loads((HERE / "schema.json").read_text(encoding="utf-8"))
     _names = [c["name"] for cat in _sch["initial"]["categories"] for c in cat["channels"]]
     check("schema stamps #omnius, not #orchestrator", "omnius" in _names and "orchestrator" not in _names)
+    # ...but only as a DEFAULT. The name is a literal on purpose: an instance
+    # that has pulled this file and not reloaded its watchdog yet reads it with
+    # the OLD code, and a {placeholder} would be stamped verbatim - eleven
+    # #agent channels on a live server, one a minute (2026-08-24).
+    check("...and it is the agent name that decides, via namedAfter",
+          any(c.get("session") == "orchestrator" and c.get("namedAfter") == "agent"
+              for cat in _sch["initial"]["categories"] for c in cat["channels"]))
+    check("...with no placeholder left anywhere in the schema",
+          "{agent}" not in (HERE / "schema.json").read_text(encoding="utf-8"))
+    check("...and an unresolved placeholder can never become a channel anyway",
+          '"{" not in want and "}" not in want' in (HERE / "api.py").read_text(encoding="utf-8"))
     check("schema gives #daybook its own session",
           any(c["name"] == "daybook" and c.get("session") == "daybook"
               for cat in _sch["initial"]["categories"] for c in cat["channels"]))
@@ -4761,6 +4951,22 @@ try:
           any(s == "omnius" and k == "language" for _n, s, k, _e, _d, _t in _oc.SPEC))
     check("...and skipping is allowed (this one is optional, unlike backups)",
           "no name or language given" in _inst0)
+
+    # == and what to CALL it (2026-08-24) ====================================
+    check("install asks what the user wants to call the agent",
+          "What do you want to call it?" in _inst0)
+    check("...and writes it to config, not only to prose",
+          "'omnius' 'name'" in _inst0)
+    check("...BEFORE the channels are stamped, so the channel is right first time",
+          _inst0.index("What do you want to call it?")
+          < _inst0.index("creating categories and channels"))
+    check("...and says the install folder keeps its own name either way",
+          "stay \"omnius\"" in _inst0)
+    check("...while a second run does not ask again",
+          "the agent answers to $agentSet" in _inst0)
+    _ex = (real_root / "config" / "omnius.example.ini").read_text(encoding="utf-8")
+    check("the example config documents the name, since install builds from it",
+          "# name = " in _ex)
 
     # == backup folder: the one unset setting that is a FAULT =================
     # Every instance backs itself up (2026-08-10). The repo is the system; a

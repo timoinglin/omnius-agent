@@ -1121,6 +1121,46 @@ if (-not $discordOk -and -not $CheckOnly) {
   $discordOk = ($LASTEXITCODE -eq 0)
 }
 
+# --- what do you want to call it? --------------------------------------------
+# His ask, 2026-08-24: "i want that at installation the installer asks how the
+# user wants to name the agent (only the installation folder stays omnius)".
+# The folder, the repo and the /omnius skill keep their name - those are
+# machinery, and renaming them would break every path and every doc. This is
+# the name it ANSWERS to: its channel, the terminal tab, how it signs.
+#
+# Asked BEFORE the channels are stamped, so #jarvis is created once instead of
+# being created as #omnius and renamed after. Changing it later is safe anyway
+# - routing is by channel id, not by name.
+$agentIni = Join-Path $PSScriptRoot 'config\omnius.ini'
+$agentSet = ''
+if (Test-Path $agentIni) {
+  $m = [regex]::Match((Get-Content $agentIni -Raw), '(?m)^\s*name\s*=\s*(.+?)\s*$')
+  if ($m.Success) { $agentSet = $m.Groups[1].Value.Trim().Trim('"').Trim("'").Trim() }
+}
+if ($agentSet) {
+  Write-Status 'OK' "the agent answers to $agentSet"
+} elseif ($CheckOnly) {
+  Write-Status 'i' 'agent name not set - it answers to Omnius'
+} else {
+  Write-Host ''
+  Write-Host '  What do you want to call it?' -ForegroundColor Cyan
+  Write-Host '  This is the name it answers to: its own Discord channel, the terminal'
+  Write-Host '  tab, how it signs off. The folder and the commands stay "omnius"'
+  Write-Host '  either way, and you can change this any time in config\omnius.ini.'
+  Write-Host '  Enter = Omnius' -ForegroundColor Gray
+  $agent = (Read-Host '  agent name').Trim().Trim('"').Trim("'").Trim()
+  if ($agent) {
+    $agentSlug = (($agent.ToLower() -replace '[^a-z0-9-]+', '-').Trim('-'))
+    if (-not $agentSlug) { $agentSlug = 'omnius' }
+    try {
+      Set-IniValue $agentIni 'omnius' 'name' $agent
+      Write-Status 'OK' "it answers to $agent - its channel will be #$agentSlug"
+    } catch { Write-Status '!' "could not write config\omnius.ini: $_" }
+  } else {
+    Write-Status 'i' 'keeping Omnius'
+  }
+}
+
 # Stamp the categories and channels HERE, rather than leaving it to whenever the
 # watchdog next boots. Install must finish with a server you can actually talk
 # in - "installed, now run a command" is not installed. Idempotent find-or-

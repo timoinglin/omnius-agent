@@ -1,6 +1,6 @@
 # Discord Blueprint — server schema & setup
 
-> What the Discord side of Omnius looks like: the day-one structure, how it grows, naming and topic conventions, and the per-instance setup checklist. Machine-readable structure: [`tools\discord\schema.json`](../tools/discord/schema.json) — automation stamps it **idempotently** (find-or-create by exact name); this doc explains the rules. Design context: [ARCHITECTURE.md](ARCHITECTURE.md) §3.4, §4, §7.
+> What the Discord side of Omnius looks like: the day-one structure, how it grows, naming and topic conventions, and the per-instance setup checklist. Machine-readable structure: [`tools\discord\schema.json`](../tools/discord/schema.json) — automation stamps it **idempotently** (find-by-pin, then by name, else create); this doc explains the rules. Design context: [ARCHITECTURE.md](ARCHITECTURE.md) §3.4, §4, §7.
 
 ## 1. Day one — a fresh instance
 
@@ -9,7 +9,8 @@ Stamped from `tools\discord\schema.json` — that file is the source of truth, t
 ```
 Discord Server "Omnius"          (private: you + the bot, nobody else)
 ├── 🎛 ORCHESTRATOR
-│   ├── #omnius           ← the main door: talk to Omnius (#orchestrator also accepted)
+│   ├── #omnius           ← the main door: talk to Omnius. Named after the agent, so it is
+│   │                        #jarvis if you called it Jarvis (#orchestrator also accepted)
 │   ├── #daybook          ← quick capture → daybook: notes, tasks, voice notes (transcribed)
 │   ├── #fleet-status     ← bot-maintained pinned overview — mute it, don't post
 │   ├── #transcribe       ← drop a recording, get transcript + frames + summary back
@@ -22,7 +23,7 @@ Project categories appear only when projects are stamped (§3); nothing exists "
 
 | Channel | Who answers | Behavior |
 |---|---|---|
-| `#omnius` | `orchestrator` | any message wakes it; full fleet control from the phone. `#orchestrator` is accepted as the same door |
+| `#omnius` | `orchestrator` | any message wakes it; full fleet control from the phone. Named after the agent (`[omnius] name`); `#orchestrator` and the old name are accepted as the same door, and renaming it in Discord changes nothing |
 | `#daybook` | the **`daybook` desk** | text/voice → note or task in `daybook\` (voice transcribed first). The orchestrator never posts here — its outbox to this channel is refused by design |
 | `#fleet-status` | `tool.fleet` | one embed, edited in place by the watchdog itself; treat as read-only |
 | `#transcribe` | `tool.transcribe` | recordings become detached zero-token jobs; the result comes back here |
@@ -32,6 +33,21 @@ Project categories appear only when projects are stamped (§3); nothing exists "
 ## 2. Conventions
 
 - **Names:** kebab-case, lowercase (Discord renders category names uppercase on its own).
+- **Rename any channel you like, in the Discord app, whenever you like.** Routing is by
+  **channel id**, not by name: the first time a channel is created or recognised, the desk
+  behind it is pinned to its id in `state\watchdog\channels.json`, and the name becomes a
+  label. Rename `#web` to `#frontend` and its desk still answers; rename `#omnius` to
+  `#maikel` and it is still the main door; the structure stamp will not recreate the old
+  name beside it. (Before 2026-08-24 routing was by name, and a rename made the desk deaf.)
+  Deleting a channel is *not* a rename - the pin is dropped and the next stamp recreates it.
+  The pins are machine-local and are **not** in the backup zip (`state\` never is), so a
+  workspace restored onto a new PC matches by name again for one round: a channel you had
+  renamed says out loud that it is unmapped - a project channel even names the folder
+  it expected - instead of going quiet, and renaming it back re-pins it.
+- **The orchestrator's channel is named after the agent.** `#omnius` is only the default:
+  set `[omnius] name` in `config\omnius.ini` (install asks for it) and a fresh instance
+  stamps `#jarvis` or `#maikel` instead. The install folder, the repo and the `/omnius`
+  skill keep their name regardless - those are machinery, not identity.
 - **Prefixes:** project category = `📁 <project>` · archived = `🗄 <project>` (renamed in place, channels locked).
 - **Topics are the durable map:** every session channel's topic = `{path} | {machine} | {started}`. If `state\` is ever lost, the bridge re-derives the whole mapping from topics — treat them as **data, not decoration**.
 - **One channel = one session** (`#app` ↔ `projects\x\app`). `#general` is relayed by Omnius — no extra session.

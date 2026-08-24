@@ -272,6 +272,7 @@ def secret(body, key="password_env", env=None):
 # dump in another. (name, section, key, env_var, default, kind)
 
 SPEC = [
+    ("omnius", "omnius", "name", "OMNIUS_NAME", "Omnius", "str"),
     ("omnius", "omnius", "machine_name", "MACHINE_NAME", "", "str"),
     ("omnius", "omnius", "language", "OMNIUS_LANGUAGE", "", "str"),
     ("omnius", "omnius", "heartbeat_minutes", "HEARTBEAT_MINUTES", "30", "int"),
@@ -824,6 +825,31 @@ def browser_device_id(env=None):
     anyway.
     """
     return get(load("omnius"), "browser", "device_id", "OMNIUS_BROWSER_DEVICE_ID", "", env).strip()
+
+
+def agent_name(env=None):
+    r"""What this instance is CALLED: "Omnius", "Jarvis", "Maikel"...
+
+    His ask, 2026-08-24: "i want to include the agent name to a config file,
+    how he will be addressed to". Only the ADDRESS changes. The install
+    folder stays `omnius` and so does the `/omnius` skill every run is
+    started with - those are machinery, and renaming them would break every
+    path and every doc for a cosmetic gain.
+
+    Consumed by: the orchestrator's channel name, the terminal tab title,
+    and the desks themselves (root CLAUDE.md par. 3). Changing it later is
+    safe because Discord routing is by channel ID, not by name.
+    """
+    raw = get(load("omnius"), "omnius", "name", "OMNIUS_NAME", "", env)
+    # One line, printable, short enough for a Discord channel name.
+    raw = "".join(c for c in raw if c.isprintable()).strip()[:32].strip()
+    return raw or "Omnius"
+
+
+def agent_slug(env=None):
+    """agent_name() as a Discord channel name: lowercase, kebab, no emoji."""
+    slug = re.sub(r"[^a-z0-9-]+", "-", agent_name(env).lower()).strip("-")
+    return slug or "omnius"
 
 
 def backup_folder(env=None):

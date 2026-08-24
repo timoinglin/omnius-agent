@@ -13,9 +13,10 @@
         "channels": [
           {
             "name": "omnius",
+            "namedAfter": "agent",
             "session": "orchestrator",
             "topic": "{path} | {machine} | {started}",
-            "purpose": "main door - talk to Omnius; any message wakes/spawns it on demand. Named for the persona; the category is 🎛 ORCHESTRATOR."
+            "purpose": "main door - talk to the agent; any message wakes/spawns it on demand. namedAfter:agent means the name above is only the DEFAULT - config\\omnius.ini ([omnius] name) wins when set. A literal is kept here on purpose: an older watchdog that has not reloaded yet reads this file too, and it would stamp a placeholder verbatim. Rename the channel freely afterwards - routing is by channel id."
           },
           {
             "name": "daybook",

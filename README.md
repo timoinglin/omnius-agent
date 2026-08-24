@@ -84,6 +84,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - Push delivery over Discord's Gateway websocket, with a REST sweep as the authority behind it — a dropped frame costs latency, never a message.
 - **Thirteen instant control commands**, handled by the watchdog itself: `!status` `!model` `!restart` `!stop` `!kill` `!killall` `!cron` `!config` `!screen` `!desktop` `!reload` `!update` `!trace`.
 - **Guests**: give a client or collaborator write access to exactly the channels you list — one project's or several — and nothing else. They're answered in their own language.
+- **Call it what you want.** The installer asks for a name — Omnius, Jarvis, whatever — and that becomes its channel and how it signs off. Rename any channel in the Discord app whenever you like: routing follows the channel *id*, so nothing goes deaf.
 
 **Running the fleet**
 - Create, archive and reopen whole projects by asking. Desks spawn on demand, one per component, each with its own Discord channel.

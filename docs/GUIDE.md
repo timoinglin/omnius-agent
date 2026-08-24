@@ -19,6 +19,13 @@
   mail arrives.
 - **You are the only authority.** The bot obeys exactly one Discord account.
   Guests you invite are confined to the channels you name.
+- **The names are yours.** What you call the agent is a setting
+  (`config\omnius.ini`, `[omnius] name` - the installer asks; `#omnius` is
+  just the default), and **any channel can be renamed in Discord at any time**
+  without breaking anything. Routing follows the channel *id*, so `#omnius`
+  renamed to `#maikel` is still the main door and `#web` renamed to
+  `#frontend` still reaches the same desk. Only the install folder, the repo
+  and the `/omnius` command keep the name - they are plumbing, not identity.
 
 ## 2. Talking to desks
 
@@ -376,6 +383,7 @@ It reports and never edits: exit 0 means every desk is green, exit 1 names the d
 | Everything is quiet | The watchdog exits on purpose if it can't reach Discord and the task revives it — check `state\logs\watchdog.log` at the machine |
 | A permission ask timed out | Re-send the instruction; the ask re-arms. Answers only count while the 🔐 ask is open |
 | A run did work but said nothing | The turn-end guard posts *"changed files but reported nothing"* with the file names — the work is on disk, ask the desk to report |
+| A renamed channel is not answered | Only after `state\` was wiped or the workspace moved to a new PC — the desk pin is machine-local. The channel says so; rename it back and it re-pins itself |
 | You want the paper trail | Per-desk transcripts (`state\transcripts\`), per-run logs (`state\logs\runs\`), and the chat itself — already threaded per project |
 
 **The one rule that keeps the fleet sane:** one desk, one brain. Never point

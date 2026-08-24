@@ -316,6 +316,36 @@ def guild_channels():
     return api("GET", f"/guilds/{GUILD}/channels")
 
 
+def agent_slug():
+    """The owner's name for this agent, as a channel name (config\\omnius.ini
+    `[omnius] name`). Lazy import + never raises: a config file may not stop
+    the fleet from stamping its structure."""
+    try:
+        sys.path.insert(0, str(ROOT / "tools"))
+        import omnius_config as ocfg
+        return ocfg.agent_slug()
+    except Exception:                             # noqa: BLE001
+        return "omnius"
+
+
+def resolve_spec_name(ch_spec):
+    """The channel name a schema spec asks for, once the owner has had a say.
+
+    `"namedAfter": "agent"` means "call this whatever he calls the agent"
+    (config\\omnius.ini `[omnius] name`) - the "name" beside it is the default.
+
+    NOT a {placeholder} in the name itself, which was the obvious design and
+    the wrong one: schema.json is read by whatever watchdog is CURRENTLY in
+    memory, and an instance that has pulled the new file but not reloaded yet
+    would stamp the placeholder verbatim. On 2026-08-24 that created eleven
+    #agent channels on a live server, one a minute, before anyone noticed."""
+    if isinstance(ch_spec, str):                  # a plain name, nothing to resolve
+        return ch_spec
+    if (ch_spec or {}).get("namedAfter") == "agent":
+        return agent_slug()
+    return (ch_spec or {}).get("name", "")
+
+
 def find_channel(channels, name, ch_type=CHANNEL_TEXT, parent_id=None):
     for c in channels:
         if c["type"] == ch_type and c["name"] == name:
@@ -512,11 +542,112 @@ def config_channels(spec, log=print):
     return out
 
 
+### --- channel pins: the desk a channel belongs to, keyed by ID ---------------
+#
+# Discord routing used to be by channel NAME inside a category, which made a
+# rename in the Discord app a silent amputation: #web renamed to #frontend
+# looked for a `frontend` component, found none, and the desk went deaf - while
+# the next structure stamp helpfully recreated an empty #web beside it.
+#
+# A name is a label a person changes; an id is what the thing IS. So the first
+# time a channel is created or recognised, the desk behind it is PINNED to its
+# id here. After that the name is decoration: call it #maikel if you like.
+#
+# Machine-local (state\, gitignored) because ids belong to one guild, and
+# rebuilt from names automatically on any instance that has none yet.
+
+PINS = ROOT / "state" / "watchdog" / "channels.json"
+
+
+def _bust_pins():
+    """Forget the cache after we write - a same-second write can land inside
+    the same mtime tick, and a stale pin routes mail to the wrong desk."""
+    global _pins_cache
+    _pins_cache = (None, {})
+
+
+_pins_cache = (None, {})    # (mtime_ns, pins) - this is read per envelope
+
+
+def channel_pins():
+    """-> {key: {"id": str, "session": str|None}}. Never raises."""
+    global _pins_cache
+    try:
+        stamp = PINS.stat().st_mtime_ns
+    except OSError:
+        return {}
+    if _pins_cache[0] == stamp:
+        return _pins_cache[1]
+    try:
+        d = json.loads(PINS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    d = d if isinstance(d, dict) else {}
+    _pins_cache = (stamp, d)
+    return d
+
+
+def pin_channel(key, channel_id, session=None):
+    """Remember which desk this channel id serves. Idempotent, best effort."""
+    if not key or not channel_id:
+        return
+    pins = channel_pins()
+    now = {"id": str(channel_id), "session": session}
+    if pins.get(key) == now:
+        return
+    pins[key] = now
+    try:
+        PINS.parent.mkdir(parents=True, exist_ok=True)
+        tmp = PINS.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(pins, indent=2, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(PINS)
+        _bust_pins()
+    except OSError:
+        pass
+
+
+def unpin_missing(chans):
+    """Drop pins whose channel no longer exists - a deleted channel is not a
+    rename, and a stale pin would stop the stamper from recreating it."""
+    live = {str(c["id"]) for c in chans}
+    pins = channel_pins()
+    keep = {k: v for k, v in pins.items() if str(v.get("id")) in live}
+    if len(keep) != len(pins):
+        try:
+            PINS.write_text(json.dumps(keep, indent=2, ensure_ascii=False), encoding="utf-8")
+            _bust_pins()
+        except OSError:
+            pass
+    return keep
+
+
+def pinned_channel(key, chans):
+    """-> the live channel dict this key is pinned to, or None."""
+    pin = channel_pins().get(key) or {}
+    if not pin.get("id"):
+        return None
+    return next((c for c in chans if str(c["id"]) == str(pin["id"])), None)
+
+
+def spec_key(cat_name, ch_spec):
+    """The identity of a channel spec, independent of what it is called now.
+
+    The session where there is one (that IS the identity); otherwise the name
+    it was first created with, scoped by category.
+    """
+    return ch_spec.get("session") or f"{cat_name}#{ch_spec['name']}"
+
+
 def ensure_structure(log=print):
-    """Stamp schema.json idempotently: find-or-create by exact name (DISCORD.md)."""
+    """Stamp schema.json idempotently: find by PIN, then by name, else create.
+
+    The pin comes first so a channel the owner renamed in Discord is recognised
+    as the one it already is, instead of being recreated under its old name
+    beside itself (DISCORD.md par. 2)."""
     require_config()
     schema = load_schema()
     chans = guild_channels()
+    unpin_missing(chans)   # a deleted channel is not a rename
     started = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     for cat_spec in schema["initial"]["categories"]:
         cat = find_channel(chans, cat_spec["name"], CHANNEL_CATEGORY)
@@ -529,14 +660,25 @@ def ensure_structure(log=print):
         specs = list(cat_spec["channels"])
         specs += config_channels(cat_spec.get("channelsFrom"), log=log)
         for ch_spec in specs:
-            ch = find_channel(chans, ch_spec["name"], CHANNEL_TEXT, cat["id"])
-            if not ch:
+            # Pin first: a channel the owner renamed is still the same
+            # channel, and recreating the old name beside it is the
+            # unhelpful half of find-or-create.
+            key = spec_key(cat_spec["name"], ch_spec)
+            want = resolve_spec_name(ch_spec)
+            ch = pinned_channel(key, chans) or find_channel(
+                chans, want, CHANNEL_TEXT, cat["id"])
+            if not ch and "{" not in want and "}" not in want:
+                # The brace guard is the scar from the eleven #agent channels
+                # (see resolve_spec_name): an unresolved placeholder must
+                # never become a real channel, whatever put it there.
                 topic = (ch_spec.get("topic", "")
                          .replace("{path}", ".").replace("{machine}", MACHINE)
                          .replace("{started}", started))
-                ch = create_text_channel(ch_spec["name"], cat["id"], topic)
+                ch = create_text_channel(want, cat["id"], topic)
                 chans.append(ch)
-                log(f"created channel: #{ch_spec['name']}")
+                log(f"created channel: #{want}")
+            if ch:
+                pin_channel(key, ch["id"], ch_spec.get("session"))
     return chans
 
 
@@ -577,7 +719,11 @@ def ensure_project(project, log=print):
         else:
             specs.append(ch_spec)
     for ch_spec in specs:
-        ch = find_channel(chans, ch_spec["name"], CHANNEL_TEXT, cat["id"])
+        key = spec_key(cat_name, ch_spec) if ch_spec.get("session") else (
+            f"{project}.{ch_spec['name']}" if ch_spec["name"] != "general"
+            else f"{cat_name}#general")
+        ch = pinned_channel(key, chans) or find_channel(
+            chans, ch_spec["name"], CHANNEL_TEXT, cat["id"])
         if not ch:
             path = f"projects\\{project}" + (f"\\{ch_spec['name']}" if ch_spec["name"] != "general" else "")
             topic = (ch_spec.get("topic", "")
@@ -586,6 +732,8 @@ def ensure_project(project, log=print):
             ch = create_text_channel(ch_spec["name"], cat["id"], topic)
             chans.append(ch)
             log(f"created channel: #{ch_spec['name']}")
+        pin_channel(key, ch["id"],
+                    None if ch_spec["name"] == "general" else f"{project}.{ch_spec['name']}")
     return comps
 
 

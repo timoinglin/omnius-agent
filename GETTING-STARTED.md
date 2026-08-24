@@ -169,6 +169,7 @@ half-finished setup. It will:
 - install **Playwright** and offer its browser (~150MB, asked for — see *Browsing*)
 - vendor the **`/watch`** video skill and set up **Remotion** for video rendering
 - create **`.env`** and **`config\*.ini`** from their examples — *never overwriting yours*
+- ask **what you want to call it** — Omnius, Jarvis, Maikel, anything. That name becomes its own channel and how it signs off (the folder and the commands stay `omnius`); press Enter to keep Omnius
 - write each desk's hooks for **this** machine *(the single most important step on a clone or a moved install — until it runs, no desk reports its turns)*
 - create the Discord channels
 - register the **watchdog** as an auto-starting background task
@@ -234,6 +235,9 @@ Each channel is a different worker with its own memory. Talking in a channel
 
 **`#omnius`** — the main door. General questions, anything you are not sure
 where to put, and running the fleet. This is the one you will use most.
+*(Named after your agent: if you called it Jarvis at install, this is*
+*`#jarvis`. Rename any channel in Discord whenever you like — nothing*
+*breaks, because each channel is matched by its id and not by its name.)*
 
 **`#daybook`** — quick capture. Notes, tasks, voice notes *(spoken in any
 language — they are transcribed on your machine, not in the cloud)*. Anything

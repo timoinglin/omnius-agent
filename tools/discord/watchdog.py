@@ -822,6 +822,27 @@ class Target:
         self.category_name = category_name
 
 
+def agent_name():
+    """The owner's name for this agent (config\\omnius.ini `[omnius] name`).
+
+    "omnius" is the install folder and the skill; THIS is what he calls it.
+    Read live rather than cached at import, so `!reload` is not needed to
+    change it - and never fatal, because a config file may not take the
+    fleet down (omnius_config rule 3)."""
+    try:
+        return ocfg.agent_name()
+    except Exception:                                    # noqa: BLE001
+        return "Omnius"
+
+
+def agent_slug():
+    """agent_name() as a channel name - what #omnius is called here."""
+    try:
+        return ocfg.agent_slug()
+    except Exception:                                    # noqa: BLE001
+        return "omnius"
+
+
 def build_map(schema):
     """channel_id -> Target, derived from live guild structure + schema prefixes."""
     orch_cat = schema["initial"]["categories"][0]["name"]
@@ -836,20 +857,58 @@ def build_map(schema):
                     for c in schema["initial"]["categories"] if c.get("session")}
     chans = api.guild_channels()
     cats = {c["id"]: c["name"] for c in chans if c["type"] == api.CHANNEL_CATEGORY}
+    # Which desk a channel serves is remembered by channel ID (api.pin_channel).
+    # Everything below this line derives it from the NAME instead - which was
+    # the whole bug: renaming #web to #frontend in the Discord app made the
+    # desk deaf, and #omnius could never be called anything else. So the pin
+    # wins where there is one, names are consulted only for channels nobody
+    # has pinned yet, and what they derive gets pinned on the spot. That is
+    # also the migration: the first refresh after an update pins the fleet as
+    # it stands today, and from then on names are cosmetic.
+    pins = api.unpin_missing(chans)
+    by_id = {str(v.get("id")): v.get("session") for v in pins.values() if v.get("id")}
+    # Session-less schema channels (#alerts) carry no desk to key on, so they
+    # are pinned as "<category>#<name>" - the key ensure_structure uses too.
+    static = {cc["name"]: {ch["name"] for ch in cc.get("channels", [])}
+              for cc in schema["initial"]["categories"]}
     mapping = {}
     for c in chans:
         if c["type"] != api.CHANNEL_TEXT:
             continue
         cat = cats.get(c.get("parent_id"), "")
         name = c["name"]
+        pinned = by_id.get(str(c["id"]))
+        if pinned:
+            session = pinned
+            if "." in pinned and not pinned.startswith("tool."):
+                # A pin says which desk, not that the desk still exists:
+                # the component folder can be renamed or removed too.
+                project, _, comp = pinned.partition(".")
+                if not (ROOT / "projects" / project / comp).is_dir():
+                    log(f"warn: #{name} in {cat} is pinned to {pinned} but "
+                        f"projects{chr(92)}{project}{chr(92)}{comp} is gone - unmapped")
+                    session = None
+            # Pinned means "ours" even when unmapped: say so, never drop it.
+            mapping[c["id"]] = Target(session, name, cat)
+            continue
         session = None
+        # Is this the desk's OWN channel, or one that merely relays to it?
+        # Only a home channel may claim the desk's pin - otherwise a project
+        # #general (which relays to the orchestrator) could take the
+        # "orchestrator" pin purely by being listed first, and he would be
+        # answered in some project's channel instead of his own.
+        home = True
         if cat == orch_cat:
-            if name in ("omnius", "orchestrator"):
+            if name in ("omnius", "orchestrator", agent_slug()):
                 # Renamed to #omnius 2026-07-31 (it is the persona, inside the
                 # 🎛 ORCHESTRATOR category). BOTH names are accepted on purpose:
                 # a running watchdog maps by channel name, so renaming while it
                 # holds old code would unmap the channel and cut the owner off
                 # entirely. Accepting both makes the rename a non-event.
+                # A third is accepted since 2026-08-24: the name the owner gave
+                # this agent at install (#jarvis, #maikel). This branch only ever
+                # runs for a channel nobody has pinned yet - after that the id
+                # decides and the name is his to change.
                 session = "orchestrator"
             elif name == "daybook":
                 # Its own desk (user decision 2026-07-31): capturing notes should
@@ -887,6 +946,10 @@ def build_map(schema):
                 except Exception:
                     comps = []
                 session = f"{project}.{comps[0]}" if len(comps) == 1 else "orchestrator"
+                # #general is a DOOR, never a home: a one-component project
+                # answers here as a convenience, but its desk still lives in
+                # (and replies to) its own channel.
+                home = False
             else:
                 session = f"{project}.{name}"
                 if not (ROOT / "projects" / project / name).is_dir():
@@ -900,6 +963,21 @@ def build_map(schema):
         # still `web`), and until 2026-08-20 the message was dropped in silence
         # - `if not target: continue`. A channel outside the fleet's categories
         # stays unmapped and unmentioned, which is right: it is not ours.
+        # First sighting of a channel this instance derived by name: remember
+        # the id, so the owner may rename it from now on. A desk's home channel
+        # is pinned under the desk id (that is what primary_channel_id asks
+        # for); everything else - relays, extra channels of one desk, the
+        # session-less ones - under "<category>#<name>", which routes just as
+        # well and cannot displace a home.
+        if session:
+            key = session if (home and session not in pins) else f"{cat}#{name}"
+        elif name in static.get(cat, ()):
+            key = f"{cat}#{name}"
+        else:
+            key = None
+        if key and key not in pins:
+            api.pin_channel(key, c["id"], session)
+            pins[key] = {"id": str(c["id"]), "session": session}
         if session or cat == orch_cat or cat.startswith(proj_prefix):
             mapping[c["id"]] = Target(session, name, cat)
     return mapping
@@ -988,15 +1066,21 @@ def cwd_for(session):
 
 
 def primary_channel_id(mapping, session):
+    # The pin is the answer where there is one: it was written when the
+    # channel was created and survives every rename the owner makes. The
+    # name rules below are the fallback for channels nobody pinned yet.
+    pinned = str((api.channel_pins().get(session) or {}).get("id") or "")
+    if pinned and pinned in mapping and mapping[pinned].session == session:
+        return pinned
     # Dot-less ids exist (orchestrator, daybook); split(".", 1)[1] raises IndexError
     # on them, which would have crashed the watchdog the first time a daybook
     # session needed its primary channel.
     if session == "orchestrator":
-        # #omnius first, #orchestrator while the rename is pending. This must be
+        # The configured name first, then #omnius/#orchestrator. This must be
         # explicit: EVERY project's #general also maps to the orchestrator, so the
         # any-channel fallback below could otherwise answer the owner in some
         # project's channel instead of his own.
-        wants = ["omnius", "orchestrator"]
+        wants = [agent_slug(), "omnius", "orchestrator"]
     elif "." not in session:
         wants = [session]
     else:
@@ -1009,6 +1093,27 @@ def primary_channel_id(mapping, session):
         if t.session == session:
             return cid
     return None
+
+
+def fleet_channel_id(mapping, name, session=None):
+    """Id of a fleet channel by IDENTITY first, by name second.
+
+    `name` is what the channel was CREATED as (schema); the owner may have
+    renamed it since, which is the whole reason the pin is asked first.
+    Session-less channels (#alerts) are pinned as "<category>#<name>"."""
+    pins = api.channel_pins()
+    keys = ([session] if session else []) + sorted(
+        k for k, v in pins.items()
+        if k.endswith("#" + name) and (v or {}).get("session") in (None, session))
+    for k in keys:
+        cid = str((pins.get(k) or {}).get("id") or "")
+        if cid and cid in mapping:
+            return cid
+    if session:
+        cid = next((c for c, t in mapping.items() if t.session == session), None)
+        if cid:
+            return cid
+    return next((c for c, t in mapping.items() if t.channel_name == name), None)
 
 
 # --- claims / sessions --------------------------------------------------------
@@ -1152,7 +1257,7 @@ def tab_title(session, ascii_only=False):
     ascii_only strips emoji for the cmd.exe fallback (cp1252 title mangling)."""
     sep = " - " if ascii_only else " · "
     if session == "orchestrator":
-        title = "🎛 Omnius"
+        title = f"🎛 {agent_name()}"
     elif session == "daybook":
         title = "📓 Daybook"
     elif session.startswith("tool."):
@@ -2982,9 +3087,8 @@ def broadcast_channel_id(name="alerts"):
     from the fire loop.
     """
     try:
-        for cid, t in build_map(api.load_schema()).items():
-            if t.channel_name == name:
-                return cid
+        return fleet_channel_id(build_map(api.load_schema()), name,
+                                "tool.fleet" if name == "fleet-status" else None)
     except Exception as e:                                       # noqa: BLE001
         log(f"broadcast channel {name} lookup failed: {type(e).__name__}: {e}")
     return None
@@ -3470,7 +3574,7 @@ def fleet_board(mapping):
     if _board_file is None:
         _board_file = WD_STATE / "board.json"
 
-    cid = next((c for c, t in mapping.items() if t.channel_name == "fleet-status"), None)
+    cid = fleet_channel_id(mapping, "fleet-status", "tool.fleet")
     if not cid:
         return
     counts, rows = child_counts(), []
@@ -4407,8 +4511,16 @@ def handle_control(text, cid, target, mapping):
                               f"{_model_when(session)}{warn}")
 
     elif cmd == "!killall":
-        if target.channel_name not in ("omnius", "orchestrator"):
-            api.send_message(cid, "!killall only works in #omnius")
+        # By identity, not by name: every project #general also maps to the
+        # orchestrator, and the owner may have renamed his own channel.
+        home = primary_channel_id(mapping, "orchestrator")
+        # No map to judge by (or no orchestrator channel in it): fall back to
+        # what the target says. Refusing on a lookup failure would take the
+        # fleet stop away exactly when things are already going wrong.
+        ok = (cid == home) if home else (target.session == "orchestrator")
+        if not ok:
+            where = f"#{mapping[home].channel_name}" if home in mapping else f"#{agent_slug()}"
+            api.send_message(cid, f"!killall only works in {where}")
             return
         results = [kill_session(f.stem) for f in sorted(SESSIONS.glob("*.json"))]
         api.send_message(cid, "**fleet stop**\n" + ("\n".join(results) or "nothing was running"))
@@ -4438,17 +4550,22 @@ def resolve_outbox_target(mapping, session, data):
     envelope came in with, and never resolve into a channel this session does
     not own - CLAUDE.md par.2 promises scoped writes, and the transport has to
     honour that too."""
-    def allowed(t):
-        return t.session == session or t.channel_name in BROADCAST_CHANNELS
+    # Resolved by id, so a renamed #alerts is still the flag channel.
+    broadcast = {fleet_channel_id(mapping, n, "tool.fleet" if n == "fleet-status" else None)
+                 for n in BROADCAST_CHANNELS}
+    broadcast.discard(None)
+
+    def allowed(k, t):
+        return t.session == session or k in broadcast
 
     cid = data.get("channelId")
     if cid and cid in mapping:               # unknown id: fall through to name/primary
-        return cid if allowed(mapping[cid]) else REFUSED
+        return cid if allowed(cid, mapping[cid]) else REFUSED
 
     name = data.get("channel")
     if name:
         matches = [k for k, t in mapping.items() if t.channel_name == name]
-        mine = [k for k in matches if allowed(mapping[k])]
+        mine = [k for k in matches if allowed(k, mapping[k])]
         if mine:
             return mine[0]
         if matches:
@@ -4462,9 +4579,7 @@ def resolve_outbox_target(mapping, session, data):
     # costs him a blocked desk.
     name = data.get("fallback")
     if name:
-        for k, t in mapping.items():
-            if t.channel_name == name:
-                return k
+        return fleet_channel_id(mapping, name)
     return None
 
 
@@ -5563,7 +5678,7 @@ def handle_message(m, cid, target, me, mapping):
         # nothing, so the owner got "nobody listens here" for answering exactly
         # where he was told to - which is how a working rail comes to look
         # broken (2026-08-02). Say what actually happened instead.
-        if (target.channel_name == "alerts"
+        if (cid == fleet_channel_id(mapping, "alerts")
                 and text.lower().strip(".,!` ").split(" ")[0] in ALLOW_WORDS + DENY_WORDS):
             try:
                 api.send_message(cid, "⌛ Nothing is waiting for an answer right now — that "
