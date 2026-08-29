@@ -1,0 +1,14 @@
+#!/bin/sh
+# Refuse a commit message that names this instance. See tools/audit_message.py
+# for why this exists (2026-08-29: a message reached the public repo carrying a
+# project, a domain and this machine's hostname, with every tracked file clean).
+#
+# Wired by `git config core.hooksPath .githooks`, which install.ps1 sets for a
+# checkout. Tracked on purpose: .git/hooks does not travel, and a gate nobody
+# else gets is a gate that only works on one machine.
+#
+# Fails OPEN if python is missing: a commit is not the place to strand someone
+# whose PATH is broken, and the release audit still refuses the zip.
+root=$(git rev-parse --show-toplevel) || exit 0
+command -v python >/dev/null 2>&1 || exit 0
+exec python "$root/tools/audit_message.py" "$1"

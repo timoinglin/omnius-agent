@@ -2793,12 +2793,28 @@ try:
                 _body = (real_root / _f).read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
-            for _rx in _sents:
-                if _rx.search(_body):
-                    _dirty.append(f"{_f} ({_rx.pattern[:30]})")
-                    break
+            # EVERY pattern, not the first. This used to `break`, and on
+            # 2026-08-29 it duly reported one leaked name in three files that
+            # each carried two - the second, this machine's hostname, stayed
+            # invisible behind the project name and was only found by scanning
+            # the commit again by hand. A report that stops at the first hit
+            # reads exactly like a report that found everything.
+            _hits = [_rx.pattern[:30] for _rx in _sents if _rx.search(_body)]
+            if _hits:
+                _dirty.append(f"{_f} ({', '.join(_hits)})")
         check("no tracked text file carries a sentinel name (public-tree clean)",
               not _dirty, f"{_dirty[:5]}")
+
+        # The same names must not travel in a commit MESSAGE either -
+        # audit-sentinels.txt says "a release or a commit" and only files were
+        # ever gated, so on 2026-08-29 a message carrying a project, a domain
+        # and this hostname reached the public repo with every file clean.
+        _hookcfg = subprocess.run(["git", "config", "core.hooksPath"],
+                                  cwd=str(real_root), capture_output=True,
+                                  text=True).stdout.strip()
+        check("core.hooksPath points at the tracked .githooks",
+              _hookcfg.replace("\\", "/") == ".githooks",
+              f"got {_hookcfg!r} - run: git config core.hooksPath .githooks")
 
         # The sentinel file is gitignored, so it protects THIS instance and
         # nobody else. This one needs no list: a real home directory has a
@@ -2861,6 +2877,50 @@ try:
               not _shape_missing, f"missing from a guard: {_shape_missing}")
     else:
         check("no .git here - a fresh instance, nothing to check", True)
+
+    # == the commit message is shipped text too =================================
+    # Three gates read this instance's names out of files: this suite (tracked
+    # tree), release_sanitize (the zip), pack -Fresh (the seed). None of them
+    # read a commit MESSAGE, and a message is published by `git push` - the one
+    # step that cannot be undone, since rewording means a force-push and the old
+    # commit stays reachable by SHA anyway. Built 2026-08-29, the day that
+    # happened. These run without git, because the hook has to work on a clone
+    # whose suite is the only thing that ever checks it.
+    print("== commit message gate ==")
+    sys.path.insert(0, str(real_root / "tools"))
+    import audit_message as _am  # noqa: E402
+
+    _hook = real_root / ".githooks" / "commit-msg"
+    check("a tracked commit-msg hook exists (.git/hooks does not travel)",
+          _hook.is_file())
+    _hook_src = _hook.read_text(encoding="utf-8") if _hook.is_file() else ""
+    check("...and it runs audit_message.py", "audit_message.py" in _hook_src)
+    check("...and it fails OPEN when python is missing, never blocking a commit",
+          "command -v python" in _hook_src,
+          "a broken PATH must not strand someone mid-commit")
+
+    # A real address is refused everywhere, sentinel file or not, so this check
+    # means the same thing on a fresh instance as it does here.
+    check("a message carrying a real address is refused",
+          _am.scan("subject\n\nwrote to someone@a-real-domain.com about it\n"))
+    check("...and example.com is not (RFC 2606, same rule as the release gate)",
+          not _am.scan("subject\n\nwrote to someone@example.com about it\n"))
+    check("the Co-Authored-By trailer does not refuse every commit in this tree",
+          not _am.scan("subject\n\nbody\n\n"
+                       "Co-Authored-By: Someone <noreply@anthropic.com>\n"),
+          "trailers are metadata; gating them would block all work")
+    check("git's own '#' comment block is not scanned",
+          not _am.scan("subject\n\n# On branch main\n"
+                       "#   modified: C:/Users/someone/repo/x.py\n"))
+    # The obvious trailer-strip (pop trailer-shaped lines off the end) walks
+    # past the blank line and eats a Note: paragraph out of the body.
+    check("a mid-body 'Note:' line is still prose, and still scanned",
+          _am.scan("subject\n\nNote: mailed someone@a-real-domain.com\n\n"
+                   "Signed-off-by: A <a@example.com>\n"))
+    check("every rule reports, not just the first (the trap that hid a hostname)",
+          len(_am.scan("subject\n\nsomeone@a-real-domain.com\n",
+                       {"one": re.compile(r"someone"),
+                        "two": re.compile(r"a-real-domain")})) == 2)
 
     print("== the release ships the TOOL, never a video ==")
     # 2026-08-24: a `git add -A` swept a trailer written on this machine into a

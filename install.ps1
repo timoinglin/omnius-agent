@@ -953,6 +953,24 @@ if ($CheckOnly) {
   }
 }
 
+# The commit-msg gate. .git\hooks is not tracked and does not survive a clone,
+# so the hook lives in .githooks\ and core.hooksPath points there. Only matters
+# where there is a repo to commit into: an unzipped release has no git history,
+# and nothing here creates one.
+if (Test-Path (Join-Path $PSScriptRoot '.git')) {
+  $wantHooks = '.githooks'
+  $haveHooks = (cmd /c "git config core.hooksPath" 2>$null)
+  if ($haveHooks -eq $wantHooks) {
+    Write-Status 'OK' 'commit-msg gate is wired (core.hooksPath)'
+  } elseif ($CheckOnly) {
+    Write-Status '!' 'commit-msg gate not wired - re-run install.bat to fix'
+  } else {
+    cmd /c "git config core.hooksPath $wantHooks" | Out-Null
+    if ($LASTEXITCODE -eq 0) { Write-Status 'OK' 'commit-msg gate wired (core.hooksPath)' }
+    else { Write-Status '!' 'could not set core.hooksPath - commit messages are ungated' }
+  }
+}
+
 # whisper: local speech-to-text (default engine: faster-whisper)
 if (-not (Test-PyImport 'faster_whisper')) {
   Write-Status 'OK' 'faster-whisper already installed'

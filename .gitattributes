@@ -1,0 +1,5 @@
+# Git hooks are run by sh, and sh does not tolerate CRLF: a `#!/bin/sh` line
+# ending in \r fails as "bad interpreter". This workspace is developed on
+# Windows with autocrlf on, so without this the commit-msg gate would be
+# checked out broken on the next clone - a gate that silently does nothing.
+.githooks/** text eol=lf
