@@ -169,7 +169,8 @@ for _bad, _why in [("me@localhost", "dotless domain"), ("nonsense", "no @ at all
     check(f"{_why}: falls back to a valid Message-ID instead of forging one",
           _mid.startswith("<") and _mid.endswith(">") and "@" in _mid)
 check("sender_domain requires the dot itself",
-      mail.sender_domain("a@b.com") == "b.com" and mail.sender_domain("a@host") == ""
+      mail.sender_domain("a@example.com") == "example.com"
+      and mail.sender_domain("a@host") == ""
       and mail.sender_domain(None) == "")
 check("EHLO announces the same domain, not the PC name",
       "local_hostname=helo" in SRC,
