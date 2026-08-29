@@ -81,11 +81,17 @@ hostname, however convenient the one in front of you is.
 It is enforced, not trusted: `config\audit-sentinels.txt` (gitignored, because it
 lists exactly what must not leak) names the patterns, `python
 tools\discord\test_watchdog.py` fails on any **tracked** file that carries one,
-and the release gate refuses the zip. It caught this desk on 2026-08-29 — a real
-project name and the owner's PC hostname, in prose only, blocking a release.
-Note the suite reports **one pattern per file**, so a clean-looking failure list
-can still be hiding a second name: scan against the whole list before declaring
-it fixed.
+the `commit-msg` hook checks the message, and the release gate refuses the zip.
+It caught this desk on 2026-08-29 — a real project name and the owner's PC
+hostname, in prose only, blocking a release.
+
+Addresses are gated separately and more strictly, by
+`release_sanitize.IDENTIFYING`: only RFC 2606 (`example.com`, `.net`, `.org`)
+passes. This suite imports that same object rather than keeping its own copy,
+because the copy is what drifts — and it scans **every** `.py` and `.md` here,
+this test file included. It did not always: the check promising no real address
+ships was itself the one file it never read, which is how one reached the
+release gate.
 
 ## Configuration
 
