@@ -151,10 +151,10 @@ check("...and References carries the WHOLE chain, or clients start a new thread"
       "<older@example.com>" in _r["References"] and "<orig@example.com>" in _r["References"])
 
 # --- who the Message-ID says we are -------------------------------------------
-# make_msgid() left alone stamps the PC's hostname: <...@DESKTOP-82PE8BU>.
+# make_msgid() left alone stamps the PC's hostname: <...@DESKTOP-ABC1234>.
 # Dotless, not an FQDN, and not the domain the mail claims to come from - three
 # marks against it at every major spam filter, and nothing in the mail looks
-# wrong. Same fix the site's PHP mailer makes (inc\lib\mailer.php:99-106).
+# wrong. The same fix a PHP mailer makes by setting PHPMailer's Hostname.
 print("== message-id identity ==")
 check("the Message-ID is signed with the From domain",
       _m["Message-ID"].rstrip(">").endswith("@example.com"),
@@ -176,9 +176,9 @@ check("EHLO announces the same domain, not the PC name",
       "a dotless HELO argument is a documented spam signal")
 
 # --- HTML mail ----------------------------------------------------------------
-# The branded template the wow-legends support desk answers in. Plain-only was
-# the ONLY thing _build could produce until 2026-08-29, so the orchestrator had
-# to hand-build MIME in a throwaway script to answer one ticket.
+# The branded template this desk answers support tickets in. Plain-only was the
+# ONLY thing _build could produce until 2026-08-29, so the orchestrator had to
+# hand-build MIME in a throwaway script to answer one ticket.
 print("== html bodies ==")
 _h = mail._build("work", _body, "you@example.com", "Hola", "texto plano",
                  html="<h1>Hola</h1><p>en color</p>")
@@ -287,7 +287,7 @@ check("the dry-run preview does not call get_content() on the message itself",
 # iter_attachments() yields NOTHING for a non-multipart message, so a mail whose
 # whole body is one file reported "attachments": [] and saved nothing - silently,
 # no error anywhere. Reproduced 2026-08-29 against a live google.com DMARC report
-# in the wowlegends INBOX: bare application/zip, a filename, no text part at all.
+# in a live INBOX: bare application/zip, a filename, no text part at all.
 print("== attachments on the way IN ==")
 
 

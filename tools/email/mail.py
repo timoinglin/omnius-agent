@@ -473,7 +473,7 @@ def attachment_parts(msg):
     `iter_attachments()` yields NOTHING for a non-multipart message, so a mail
     whose entire body IS one file reported `"attachments": []` and saved
     nothing - silently, with no error to notice. Reproduced 2026-08-29 on a
-    google.com DMARC report in the wowlegends INBOX: a bare `application/zip`
+    google.com DMARC report in a live INBOX: a bare `application/zip`
     carrying a filename, no text part at all, 773 bytes of real zip. Scanner,
     fax and some invoice senders have the same shape.
 
@@ -808,11 +808,11 @@ def _build(label, body, to, subject, text, in_reply_to=None, references=None,
     msg["Subject"] = subject
     msg["Date"] = email.utils.formatdate(localtime=True)
     # Sign with the From domain, never with the machine's hostname. Left to
-    # itself make_msgid() stamps whatever the PC is called - <...@DESKTOP-82PE8BU>
-    # on his - which is dotless, is not an FQDN, and does not match the domain
-    # the mail claims to come from: three separate marks against it at every
-    # major spam filter. The wow-legends site fixes the identical thing on the
-    # PHP side and says why (inc\lib\mailer.php:99-106).
+    # itself make_msgid() stamps whatever the PC is called - <...@DESKTOP-ABC1234>
+    # - which is dotless, is not an FQDN, and does not match the domain the mail
+    # claims to come from: three separate marks against it at every major spam
+    # filter. A PHP mailer this was compared against fixes the identical thing
+    # by setting PHPMailer's Hostname to the From domain.
     domain = sender_domain(sender)
     msg["Message-ID"] = (email.utils.make_msgid(domain=domain) if domain
                          else email.utils.make_msgid())

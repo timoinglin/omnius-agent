@@ -71,6 +71,22 @@ What the removed friction did **not** remove:
 
 JSON on stdout is a **deliberate departure** from `tools\whisper`, which prints plain text. Mail is structured and the caller is an agent that must not parse prose. Written down so the next capability knows which precedent it is choosing.
 
+## ⚠ Examples in this repo are never real
+
+**This repo is a public product.** Every example here — in the docs, in the
+comments, in the tests — uses `example.com`, a generic account label like `work`,
+and a placeholder machine name. Never a real address, project, domain or
+hostname, however convenient the one in front of you is.
+
+It is enforced, not trusted: `config\audit-sentinels.txt` (gitignored, because it
+lists exactly what must not leak) names the patterns, `python
+tools\discord\test_watchdog.py` fails on any **tracked** file that carries one,
+and the release gate refuses the zip. It caught this desk on 2026-08-29 — a real
+project name and the owner's PC hostname, in prose only, blocking a release.
+Note the suite reports **one pattern per file**, so a clean-looking failure list
+can still be hiding a second name: scan against the whole list before declaring
+it fixed.
+
 ## Configuration
 
 Accounts live in `config\email.ini` (copy `config\email.example.ini`). **Passwords never appear there** — config names the `.env` key that holds one:
@@ -135,7 +151,7 @@ part first, HTML second — and becomes `multipart/mixed` wrapping that pair the
 moment anything is attached.
 
 ```
-python tools\email\mail.py send --account wowlegends --to a@example.com \
+python tools\email\mail.py send --account work --to you@example.com \
     --subject "Support #16" --body-file reply.txt --html reply.html --dry-run
 ```
 
@@ -153,14 +169,15 @@ silently sending the plain part and reporting success.
 
 ## Deliverability: the mail says which domain it is from
 
-`make_msgid()` left to itself stamps the **machine's hostname** —
-`<...@DESKTOP-82PE8BU>`. That is dotless, is not an FQDN, and does not match the
-From domain: three separate marks against the message at every major spam
-filter, and nothing about the mail looks wrong from this side. Since 2026-08-29
-both the **Message-ID** and the **SMTP EHLO** carry the From domain instead
-(`sender_domain()`; a domain with no dot counts as none and the old behaviour
-stands). The wow-legends site fixes the identical thing on the PHP side and
-explains why: `inc\lib\mailer.php:99-106`.
+`make_msgid()` left to itself stamps the **machine's hostname** — something
+shaped like `<...@DESKTOP-ABC1234>`. That is dotless, is not an FQDN, and does
+not match the From domain: three separate marks against the message at every
+major spam filter, and nothing about the mail looks wrong from this side. Since
+2026-08-29 both the **Message-ID** and the **SMTP EHLO** carry the From domain
+instead (`sender_domain()`; a domain with no dot counts as none and the old
+behaviour stands). The PHP mailer this was compared against fixes the identical
+thing on its own side and explains why, in case you keep one: it sets
+PHPMailer's `Hostname` to the From domain (`inc\lib\mailer.php:99-106`).
 
 ## Message ids
 
@@ -190,7 +207,7 @@ Never a sequence number. Sequence numbers shift whenever anything else touches t
 
 Every verb has now touched a real mailbox: `list` (including `--since`/`--until`), `read`, `send`, `reply` (threaded), and the whole attachment path — a 20,620-byte PDF was sent, received back, downloaded **byte-identical** (same sha1) and read by `tools\documents` (6 pages, 8,159 chars).
 
-**2026-08-29, Strato (`wowlegends`)**: the three fixes above were verified against that live mailbox, not just in tests — the DMARC report that used to read as empty now lists and saves its `application/zip`, and the saved file unzips with every CRC intact to the report XML inside; an HTML `--dry-run` builds `multipart/alternative` (and `multipart/mixed` once a file is attached) and stamps `<…@wow-legends.eu>`.
+**2026-08-29, a live Strato mailbox**: the three fixes above were verified against a real account, not just in tests — the DMARC report that used to read as empty now lists and saves its `application/zip`, and the saved file unzips with every CRC intact to the report XML inside; an HTML `--dry-run` builds `multipart/alternative` (and `multipart/mixed` once a file is attached) and stamps a Message-ID at the account's own domain instead of the machine name.
 
 For a provider that has NOT been tried, treat these as a first-connection checklist rather than fact: the Zoho region (`.eu`/`.com`/`.in`), whether IMAP is enabled on the mailbox, whether an app password is accepted, and the real folder names and separator. All of them fail in an authentication-shaped way even when the credentials are right.
 
