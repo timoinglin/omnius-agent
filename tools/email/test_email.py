@@ -487,11 +487,34 @@ check("no second config parser was written - omnius_config is the only reader",
 check("only exit codes 0/1/2 are used (3 and 4 mean other things in this tree)",
       "return 2" in SRC and "return 1" in SRC and "return 3" not in SRC
       and "return 4" not in SRC)
-_addresses = {a for a in __import__("re").findall(r"[\w.+-]+@[\w-]+\.[\w.]+", SRC)}
-check("every address in the source is a documentation address",
-      all(a.endswith((".invalid", "example.com", "example.org", "example.net"))
-          or "example" in a for a in _addresses),
-      f"found {sorted(_addresses)}")
+# This check used to read mail.py alone, through SRC - so the one file it could
+# not see was THIS one, and the file asserting that no real address ships was
+# the only file free to ship one. On 2026-08-29 it did - an invented local part
+# at a domain that really exists - and the release audit refused the cut after
+# the scrub commit was already in. It now reads every .py and .md on this desk,
+# itself included.
+#
+# And it asks the RELEASE GATE'S OWN pattern rather than keeping a second copy
+# of the rule - a private copy is a copy that drifts, and the gate is what
+# actually blocks a cut. RFC 2606 reserves example.com/.net/.org for exactly
+# this; anything else in a shipped file is somebody's real mailbox.
+import release_sanitize as _rs  # noqa: E402
+
+_ADDR = _rs.IDENTIFYING["email address"]
+_leaks = [f"{p.name}:{n} {m.group(0)}"
+          for p in sorted(HERE.glob("*.py")) + sorted(HERE.glob("*.md"))
+          for n, line in enumerate(
+              p.read_text(encoding="utf-8", errors="replace").splitlines(), 1)
+          for m in _ADDR.finditer(line)]
+check("no file on this desk carries a real address - INCLUDING this test file",
+      not _leaks, f"found {_leaks}")
+# Assembled, not written out: any literal proving the rule REJECTS a domain is
+# by definition a literal the check above then flags. Split so the scan sees no
+# address, joined so the assertion tests one. Do not tidy it into one string.
+_probe = "nobody@" + "nowhere.invalid"      # .invalid can never be a real mailbox
+check("...and the rule is the release gate's own, so the two cannot drift",
+      bool(_ADDR.search(_probe)) and not _ADDR.search("you@example.com"),
+      "release_sanitize.IDENTIFYING is the single definition")
 
 import shutil  # noqa: E402
 shutil.rmtree(SAND, ignore_errors=True)
