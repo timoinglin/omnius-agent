@@ -2809,12 +2809,21 @@ try:
         # audit-sentinels.txt says "a release or a commit" and only files were
         # ever gated, so on 2026-08-29 a message carrying a project, a domain
         # and this hostname reached the public repo with every file clean.
+        # UNSET IS A PASS, and that is the whole point. core.hooksPath lives in
+        # .git\config - per machine, written by install.ps1, and NOT carried by
+        # a pull. Asserting it was set failed on every install that had not
+        # re-run the installer, `!update` read a green check going red as the
+        # update breaking it, and rolled the machine back (2026-08-29, reported
+        # from his second PC within the hour). A suite that ships in the product
+        # tests the PRODUCT; local wiring is the installer's job to do and the
+        # installer's `-CheckOnly` to report. Only a path pointing somewhere
+        # ELSE is a real fault, because that silently disables the hook.
         _hookcfg = subprocess.run(["git", "config", "core.hooksPath"],
                                   cwd=str(real_root), capture_output=True,
                                   text=True).stdout.strip()
-        check("core.hooksPath points at the tracked .githooks",
-              _hookcfg.replace("\\", "/") == ".githooks",
-              f"got {_hookcfg!r} - run: git config core.hooksPath .githooks")
+        check("core.hooksPath is unset or points at the tracked .githooks",
+              _hookcfg.replace("\\", "/") in ("", ".githooks"),
+              f"got {_hookcfg!r} - that path bypasses the commit-msg gate")
 
         # The sentinel file is gitignored, so it protects THIS instance and
         # nobody else. This one needs no list: a real home directory has a
@@ -2898,6 +2907,11 @@ try:
     check("...and it fails OPEN when python is missing, never blocking a commit",
           "command -v python" in _hook_src,
           "a broken PATH must not strand someone mid-commit")
+    # The wiring IS testable as code - in the installer, where it belongs, and
+    # where it runs on a machine that has not been wired yet.
+    _inst_src = (real_root / "install.ps1").read_text(encoding="utf-8")
+    check("install.ps1 wires core.hooksPath, so the gate is not one machine's habit",
+          "core.hooksPath" in _inst_src and ".githooks" in _inst_src)
 
     # A real address is refused everywhere, sentinel file or not, so this check
     # means the same thing on a fresh instance as it does here.
