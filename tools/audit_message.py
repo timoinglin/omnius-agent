@@ -34,10 +34,14 @@ import release_sanitize as rs  # noqa: E402
 # every commit on a machine whose checkout sits under a real home directory.
 COMMENT = re.compile(r"^\s*#")
 
-# Trailers are metadata, not prose, and the standard ones carry addresses by
-# design - `Co-Authored-By: ... <noreply@anthropic.com>` is on every commit in
-# this tree. Gating them would block all work; they are also not where a leak
-# hides, because nobody writes an incident record in a trailer.
+# Trailers are metadata, not prose, and the standard ones carry an address by
+# design - every commit in this tree ends with a Co-Authored-By naming a
+# no-reply mailbox. Gating them would block all work; they are also not where a
+# leak hides, because nobody writes an incident record in a trailer.
+#
+# Note the address is DESCRIBED and not quoted here. The release audit refuses
+# any file carrying one outside example.com, and it duly refused this file on
+# its first build - a guard is not exempt from the rule it enforces.
 TRAILER = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:\s")
 
 
