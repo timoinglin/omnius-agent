@@ -312,11 +312,17 @@ def list_attachments(body, graph_id):
     return out.get("value", [])
 
 
-def send(body, to, subject, text, reply_to_id=None):
+def send(body, to, subject, text, reply_to_id=None, html=None):
     """Send, or reply in-thread when reply_to_id is given.
 
     Graph's /reply endpoint keeps the conversation intact server-side, so the
-    In-Reply-To / References juggling IMAP needs does not arise here.
+    In-Reply-To / References juggling IMAP needs does not arise here. It also
+    takes only a `comment`, which is why an HTML reply is refused up in
+    mail.py rather than half-supported here.
+
+    Graph carries ONE body, not multipart/alternative: there is no plain-text
+    fallback part to send alongside the HTML, so `html` replaces `text` rather
+    than accompanying it.
     """
     token = access_token(body)
     if reply_to_id:
@@ -325,7 +331,8 @@ def send(body, to, subject, text, reply_to_id=None):
         return {"threaded": True}
     payload = {"message": {
         "subject": subject,
-        "body": {"contentType": "Text", "content": text},
+        "body": ({"contentType": "HTML", "content": html} if html
+                 else {"contentType": "Text", "content": text}),
         "toRecipients": [{"emailAddress": {"address": a.strip()}}
                          for a in str(to).split(",") if a.strip()]},
         "saveToSentItems": True}

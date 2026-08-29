@@ -150,6 +150,84 @@ check("a reply sets In-Reply-To", _r["In-Reply-To"] == "<orig@example.com>")
 check("...and References carries the WHOLE chain, or clients start a new thread",
       "<older@example.com>" in _r["References"] and "<orig@example.com>" in _r["References"])
 
+# --- who the Message-ID says we are -------------------------------------------
+# make_msgid() left alone stamps the PC's hostname: <...@DESKTOP-82PE8BU>.
+# Dotless, not an FQDN, and not the domain the mail claims to come from - three
+# marks against it at every major spam filter, and nothing in the mail looks
+# wrong. Same fix the site's PHP mailer makes (inc\lib\mailer.php:99-106).
+print("== message-id identity ==")
+check("the Message-ID is signed with the From domain",
+      _m["Message-ID"].rstrip(">").endswith("@example.com"),
+      f"got {_m['Message-ID']!r}")
+check("...so the machine's hostname never leaves the building",
+      __import__("socket").gethostname().lower() not in _m["Message-ID"].lower())
+check("the domain is an FQDN, never a dotless name",
+      "." in _m["Message-ID"].rpartition("@")[2])
+for _bad, _why in [("me@localhost", "dotless domain"), ("nonsense", "no @ at all"),
+                   ("", "no address")]:
+    _mid = mail._build("w", {"user": _bad}, "you@example.com", "S", "t")["Message-ID"]
+    check(f"{_why}: falls back to a valid Message-ID instead of forging one",
+          _mid.startswith("<") and _mid.endswith(">") and "@" in _mid)
+check("sender_domain requires the dot itself",
+      mail.sender_domain("a@b.com") == "b.com" and mail.sender_domain("a@host") == ""
+      and mail.sender_domain(None) == "")
+check("EHLO announces the same domain, not the PC name",
+      "local_hostname=helo" in SRC,
+      "a dotless HELO argument is a documented spam signal")
+
+# --- HTML mail ----------------------------------------------------------------
+# The branded template the wow-legends support desk answers in. Plain-only was
+# the ONLY thing _build could produce until 2026-08-29, so the orchestrator had
+# to hand-build MIME in a throwaway script to answer one ticket.
+print("== html bodies ==")
+_h = mail._build("work", _body, "you@example.com", "Hola", "texto plano",
+                 html="<h1>Hola</h1><p>en color</p>")
+check("html makes the message multipart/alternative",
+      _h.get_content_type() == "multipart/alternative",
+      f"got {_h.get_content_type()}")
+check("the HTML part is really there",
+      "<h1>Hola</h1>" in _h.get_body(preferencelist=("html",)).get_content())
+check("...and a text/plain fallback part SURVIVES beside it",
+      "texto plano" in _h.get_body(preferencelist=("plain",)).get_content(),
+      "html-only scores as spam and is blank in clients that refuse HTML")
+check("no --html means exactly the old plain message, unchanged",
+      _m.get_content_type() == "text/plain")
+_pdf = [("invoice.pdf", b"%PDF-1.4 fake\n", "application", "pdf")]
+_hm = mail._build("work", _body, "you@example.com", "S", "texto",
+                  html="<p>rico</p>", attachments=_pdf)
+check("html PLUS an attachment nests correctly (mixed wrapping alternative)",
+      _hm.get_content_type() == "multipart/mixed"
+      and [p.get_filename() for p in _hm.iter_attachments()] == ["invoice.pdf"],
+      f"got {_hm.get_content_type()}")
+check("...and both bodies are still reachable inside it",
+      "texto" in _hm.get_body(preferencelist=("plain",)).get_content()
+      and "rico" in _hm.get_body(preferencelist=("html",)).get_content())
+
+
+class _Args:
+    def __init__(self, **kw):
+        self.__dict__.update(kw)
+
+
+_htmlf = SAND / "template.html"
+_htmlf.write_text("<p>plantilla</p>", encoding="utf-8")
+check("--html is read from a FILE, like the body",
+      mail._html_body(_Args(html=str(_htmlf))) == "<p>plantilla</p>")
+check("no --html is None, not an empty string",
+      mail._html_body(_Args(html=None)) is None and mail._html_body(_Args()) is None)
+check("a missing --html file refuses the send instead of sending plain",
+      raises(lambda: mail._html_body(_Args(html=str(SAND / "ghost.html"))),
+             mail.UsageError))
+_empty_html = SAND / "empty.html"
+_empty_html.write_text("   \n", encoding="utf-8")
+check("an empty --html file is refused, naming the fix",
+      raises(lambda: mail._html_body(_Args(html=str(_empty_html))), mail.UsageError))
+check("an HTML reply through Graph is REFUSED, never silently sent as plain",
+      raises(lambda: mail._send_graph("w", {}, "you@example.com", "S", "t",
+                                      "graph-id", True, None, "<p>x</p>"),
+             mail.UsageError),
+      "Graph's /reply carries a comment, not a body")
+
 # --- date ranges --------------------------------------------------------------
 # "all the mail from July" is the shape of every real request, and the end of a
 # range is EXCLUSIVE in both IMAP (BEFORE) and Graph (lt) - so a naive
@@ -204,6 +282,65 @@ check("...and the body is still recoverable from a multipart message",
 check("the dry-run preview does not call get_content() on the message itself",
       "msg.get_content()" not in SRC,
       "it raises KeyError on multipart/mixed")
+
+# --- attachments on the way IN ------------------------------------------------
+# iter_attachments() yields NOTHING for a non-multipart message, so a mail whose
+# whole body is one file reported "attachments": [] and saved nothing - silently,
+# no error anywhere. Reproduced 2026-08-29 against a live google.com DMARC report
+# in the wowlegends INBOX: bare application/zip, a filename, no text part at all.
+print("== attachments on the way IN ==")
+
+
+def _one_file_msg(data=b"PK\x03\x04zip", maintype="application", subtype="zip",
+                  filename="report.zip"):
+    m = EmailMessage()
+    m["From"] = "dmarc@example.com"
+    m["Subject"] = "Report domain: example.com"
+    m.set_content(data, maintype=maintype, subtype=subtype,
+                  **({"filename": filename} if filename else
+                     {"disposition": "attachment"}))
+    return mail.parse_message(m.as_bytes())
+
+
+_dmarc = _one_file_msg()
+check("a non-multipart mail that IS a file is seen as an attachment",
+      len(mail.attachment_parts(_dmarc)) == 1,
+      "the DMARC-report shape; it used to report [] and lose the file")
+check("...and it keeps the real filename",
+      mail.attachment_name(mail.attachment_parts(_dmarc)[0]) == "report.zip")
+check("a nameless binary mail still gets a name with a usable extension",
+      mail.attachment_name(mail.attachment_parts(
+          _one_file_msg(filename=None))[0]).endswith(".zip"))
+check("an ordinary text mail has NO attachments (no false positives)",
+      mail.attachment_parts(_msg("hola")) == [])
+check("an html mail is not an attachment either",
+      mail.attachment_parts(_msg("<p>hola</p>", subtype="html")) == [])
+_multi = EmailMessage()
+_multi["From"] = "a@example.com"
+_multi.set_content("mira el adjunto")
+_multi.add_attachment(b"%PDF-1.4", maintype="application", subtype="pdf",
+                      filename="factura.pdf")
+check("the ordinary multipart case is untouched",
+      [p.get_filename() for p in mail.attachment_parts(
+          mail.parse_message(_multi.as_bytes()))] == ["factura.pdf"])
+
+_real_media, mail.MEDIA_INBOX = mail.MEDIA_INBOX, SAND / "media"
+try:
+    _saved = mail.save_attachments(_dmarc, "148")
+    check("--save-attachments writes the one-file mail to disk, byte for byte",
+          len(_saved) == 1
+          and Path(_saved[0]["path"]).read_bytes() == b"PK\x03\x04zip",
+          "it used to write nothing at all and report success")
+    check("the saved file is uid-prefixed and inside media\\inbox",
+          _saved[0]["name"].startswith("148-")
+          and (SAND / "media") in Path(_saved[0]["path"]).resolve().parents)
+    check("a mail with nothing to save saves nothing, without failing",
+          mail.save_attachments(_msg("hola"), "1") == [])
+finally:
+    mail.MEDIA_INBOX = _real_media
+check("`read` lists attachments through the same helper that saves them",
+      SRC.count("attachment_parts(msg)") >= 2,
+      "the listing went blind on exactly the same messages as the save")
 
 # --- the audit trail ----------------------------------------------------------
 print("== audit ==")
