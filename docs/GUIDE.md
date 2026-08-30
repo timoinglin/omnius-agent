@@ -42,6 +42,12 @@ same channel. What you can send:
 | A **video link or file** | Say *"watch this"* — frames + transcript, then ask questions about it |
 | A later correction | The newer message wins; the desk says so rather than doing both |
 
+Every desk answers in Claude Code's **Concise** style (2026-08-29): the result
+first, no preamble, no narration — while error output, security warnings and
+confirmations for anything destructive stay complete. It is stamped into the
+shipped desk settings, so it reaches every machine and every new project rather
+than being a habit one desk remembers.
+
 Silence rules: heartbeats and routine checks that find nothing **say nothing**.
 If a desk has mail and nothing alive to take it for ten minutes, the watchdog
 pages you — you never discover a dead desk by waiting.
@@ -143,6 +149,14 @@ What guards it, so it can't run away:
 Measured live: a full four-hop chain across three desks closes in about a
 minute, cold. Design: [DELEGATION.md](DELEGATION.md).
 
+**And Claude Code's own session-to-session messaging?** Not how you delegate.
+It reaches a session that is **running right now** — handy for the terminals
+you keep open that are not desks at all — but it queues nothing, is mirrored
+into no channel and is counted by no budget. So: **native reaches a session,
+desk mail reaches a desk**, running or not. You never need to choose: a message
+in a project's channel already *is* the delegation. The boundary, and why
+delegation may not cross it: [DELEGATION.md D10](DELEGATION.md).
+
 ## 7. Work loops — long grinds with a leash *(new)*
 
 For work that spans many runs: *"keep going until the tests pass — work in
@@ -181,10 +195,16 @@ Skills worth allowing, all shipped: `goal` (hand over an objective — it gets
 decomposed into checkable done-conditions and reported against them with
 receipts), `backup` (pack the workspace + verified copy to your backup
 folder), `release` (re-cut the rolling release, suites and all), `brief`
-(fleet briefing: needs-you → moved today → running → open), the fleet verbs
+(fleet briefing: needs-you → moved today → running → open), `btw` (a side
+question that does *not* become the desk's work — ours, because Claude Code's
+own `/btw` is drawn by the terminal and cannot travel), the fleet verbs
 (`new-project`, `spawn-session`, `archive-project`), and Claude Code's own
-`code-review`, `simplify`, `security-review` and `run` for working a
+`code-review`, `simplify`, `security-review`, `design` and `run` for working a
 project's diff from your phone.
+
+**Which `/commands` actually survive the trip** — the ones that work, the two
+dozen that are terminal UI and never will, and the `!verb` to send instead —
+is [SLASH.md](SLASH.md).
 
 ## 9. Routines, reminders, schedules
 
@@ -340,7 +360,7 @@ what they themselves said. Full contract:
 
 Friction is a work order: *"Omnius, add a `!weather` command to yourself"*,
 *"make the briefing shorter"*, *"stop asking about X"*. The orchestrator edits
-its own code or skills, runs the 1,300+-check suite, and commits — every
+its own code or skills, runs the 1,600+-check suite, and commits — every
 self-improvement is a reviewable commit. `!reload` puts watchdog changes live.
 
 **Your instance is yours to change, and updating will not undo it.** `!update`

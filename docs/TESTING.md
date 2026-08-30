@@ -5,7 +5,7 @@ How to run the automated tests, and what has been validated. Keep this current a
 ## Run the tests
 
 ```
-python tools\discord\test_watchdog.py      # 1,400+ checks — watchdog, bus, delegation, skills, installer, packaging
+python tools\discord\test_watchdog.py      # 1,600+ checks — watchdog, bus, delegation, skills, installer, packaging
 python daybook\test_storage.py             # 141 checks — daybook storage + API
 python tools\email\test_email.py           # 86 checks — IMAP/SMTP + Graph contract
 python tools\documents\test_documents.py   # 39 checks — PDF text, OCR fallback, schema validation
