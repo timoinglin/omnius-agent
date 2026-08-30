@@ -8510,6 +8510,25 @@ try:
               "$defaults" in (_pj.get("autoMode", {}).get("allow") or []))
         check(f"{_sf2}: .env is denied for writing too, not only reading",
               any(x.startswith("Write(") and "env" in x for x in _pp.get("deny", [])))
+        # Owner, 2026-08-29, the fourth time he has asked for shorter answers:
+        # "i want by default all sessions in consise mode responses". Shipped in
+        # the settings rather than left to his user config, so a desk on another
+        # machine and every project stamped from the template carry it too.
+        check(f"{_sf2}: answers concisely by default (his accessibility need)",
+              _pj.get("outputStyle") == _sp2.OUTPUT_STYLE,
+              f"got {_pj.get('outputStyle')!r}")
+        # The mistake this guards was made once, on 2026-08-29, and it is the
+        # kind that ships silently: `crossSessionInbound: accept` stamped into
+        # every desk file, doing nothing on either PC. Claude Code honors only a
+        # STRICTER value from a project or local file on the accept < hold <
+        # refuse ladder; `accept` is the loosest rung, so it is ignored there.
+        # A desk file may still carry `refuse` - that direction is honored, and
+        # is the whole point of the exception - so this asserts "not accept"
+        # rather than "absent".
+        check(f"{_sf2}: does not stamp a crossSessionInbound a desk file cannot carry",
+              _pj.get("crossSessionInbound") != "accept",
+              "a project-scope 'accept' is ignored - the scopes that can say it "
+              "are user settings, --settings and managed (see sync_permissions)")
 
     print(f"\n==== {passed} passed, {failed} failed ====")
 finally:

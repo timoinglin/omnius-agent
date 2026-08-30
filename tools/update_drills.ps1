@@ -67,7 +67,30 @@ function Want([string]$name) { -not $Only -or $Only -eq $name }
 Write-Host ''
 Write-Host '--- update.ps1 drills ------------------------------------' -ForegroundColor Cyan
 $target = (& git -C $repo rev-parse --short HEAD)
+
+# The two conflict drills need a file the RELEASE actually rewrites - otherwise
+# git rebases cleanly, no conflict ever happens, and the drill reports "the
+# updater no longer stops on a conflict" when the truth is "this drill stopped
+# building one". That is exactly the silent-decay shape these drills exist to
+# catch, and on 2026-08-30 it had already happened: the victim was hard-coded to
+# README.md, and HEAD~4..HEAD had not touched README.md in weeks. Both drills
+# went red pointing at update.ps1, which was innocent.
+#
+# So pick it from the diff instead of naming it. It must also EXIST at $base -
+# a file the release ADDS cannot be rewritten by a local commit made before it.
+$victimRel = $null
+foreach ($f in (& git -C $repo diff --name-only $base HEAD)) {
+  if (-not $f) { continue }
+  & git -C $repo cat-file -e "${base}:${f}" 2>$null
+  if ($LASTEXITCODE -eq 0) { $victimRel = $f; break }
+}
+if (-not $victimRel) {
+  Write-Host "  [FAIL] no file is both changed by $base..HEAD and present at $base - the conflict drills cannot build a conflict" -ForegroundColor Red
+  $script:fail++
+}
+
 Write-Host "    updating clones of $repo from $base up to $target"
+Write-Host "    conflict drills will collide on: $victimRel"
 Write-Host ''
 
 # 1. THE ORDINARY CASE. If this ever fails, nothing else matters.
@@ -116,14 +139,15 @@ if (Want 'localwork') {
 if (Want 'conflict') {
   Write-Host '== conflict: their edit and the release touch the same lines =='
   $d = New-Instance $base
-  $victim = Join-Path $d 'README.md'
-  Set-Content $victim "COMPLETELY DIFFERENT README`n" -Encoding utf8
+  $victim = Join-Path $d $victimRel
+  Set-Content $victim "COMPLETELY DIFFERENT CONTENT`n" -Encoding utf8
   & git -C $d add -A 2>&1 | Out-Null
-  & git -C $d commit --quiet -m 'local: rewrote the readme' 2>&1 | Out-Null
+  & git -C $d commit --quiet -m 'local: rewrote a file the release also touches' 2>&1 | Out-Null
   $before = Head $d
   $r = Run-Update $d
   Check 'a conflicting local commit stops the update' ($r.rc -ne 0) $r.out
-  Check '...and says which file' ($r.out -match 'README')
+  # Named, not guessed: he has to know WHICH file to go and look at.
+  Check '...and says which file' ($r.out -match [regex]::Escape((Split-Path $victimRel -Leaf)))
   Check '...the instance is left on the commit it was on' ((Head $d) -eq $before)
   Check '...their version is intact' ((Get-Content $victim -Raw) -match 'COMPLETELY DIFFERENT')
   Check '...and no merge markers were left behind' (
@@ -138,7 +162,7 @@ if (Want 'conflict') {
 if (Want 'autostash') {
   Write-Host '== autostash: an UNCOMMITTED edit collides with the release =='
   $d = New-Instance $base
-  $victim = Join-Path $d 'README.md'
+  $victim = Join-Path $d $victimRel
   Set-Content $victim "my uncommitted rewrite`n" -Encoding utf8
   $before = Head $d
   $r = Run-Update $d

@@ -95,5 +95,6 @@
       "This machine belongs to the person running these desks, and every desk acts with their full authority. Do not ask permission to use a tool: act, then say what you did. The single exception is .env, which holds the tokens and passwords and is denied on purpose - if you genuinely need something from it, say which key and why. Irreversible or outward-facing steps (deleting broadly, force-pushing, sending mail as them, spending money) are still described in words first."
     ]
   },
-  "enableAllProjectMcpServers": true
+  "enableAllProjectMcpServers": true,
+  "outputStyle": "Concise"
 }

@@ -180,6 +180,16 @@ all**, and posted twice anyway — he was sitting at that very terminal watching
 the same text arrive in its channel. "Why do I get messages in Discord if
 I am in CLI?" Because the desk had no notion that nobody had written to it.
 
+**A native session message is not an envelope.** Claude Code's own
+`ListAgents`/`SendMessage` can reach this desk while it is running
+(docs\DELEGATION.md D10). It arrives in the conversation, not in
+`state\inbox\`, so it grants no right to post: answer its sender with
+`SendMessage`, and stay quiet in Discord unless a real envelope asked.
+Sending is the same rule in reverse — native for one fact to a peer that is
+**already live**, **desk mail for anything you are delegating**, because only
+desk mail wakes a stopped desk, mirrors the hop into the channel and counts
+against the hop budget.
+
 Write `state\outbox\<id>\<unix-ms>.json`:
 
 ```json

@@ -132,6 +132,55 @@ DENY_ENV = ["Read(./.env)", "Read(./**/.env)",
             "Write(./.env)", "Write(../.env)", "Write(../../.env)",
             "Write(../../../.env)"]
 
+# Claude Code's built-in "Concise" output style: lead with the result, no
+# preamble, no narration, short by default - while keeping error reports,
+# security warnings and destructive-action confirmations complete. Owner
+# instruction 2026-08-29: "i want by default all sessions in consise mode
+# responses", the fourth time he has asked for shorter answers (shared\USER.md
+# records why it is an accessibility need and not a taste).
+#
+# Stamped here rather than in his user settings because it must travel: a desk
+# on his second PC, and every project stamped from the template, gets it without
+# anyone remembering to set it. Needs Claude Code v2.1.237+; an older build
+# ignores the key rather than failing, so this is safe to ship.
+#
+# It is a SYSTEM PROMPT change, so it lands at session start - which for a desk
+# is every run. Note it does not reach subagents: they carry their own prompt.
+OUTPUT_STYLE = "Concise"
+
+# crossSessionInbound is deliberately NOT stamped here, and this comment is the
+# reason - so the next person to read the cross-session docs does not add it back.
+#
+# The key chooses what a session does with messages from his OTHER Claude Code
+# sessions: accept / hold / refuse. A first pass on 2026-08-29 stamped "accept"
+# into all eleven desk files. It would have shipped to both PCs doing NOTHING.
+# crossSessionInbound is one of the security-sensitive keys with inverted
+# precedence (settings docs, "Exceptions to managed settings precedence"): from
+# `.claude\settings.json` or `.claude\settings.local.json` Claude Code honors
+# only a STRICTER value on the accept < hold < refuse ladder, and "a project or
+# local value that isn't stricter is ignored". `accept` is the loosest rung, so
+# a desk file can never carry it. A desk file CAN carry `refuse`, which is the
+# direction the exception exists to protect.
+#
+# The scopes that can say accept are user settings, --settings and managed
+# settings - and the cross-session page recommends exactly those two for an
+# unattended worker, never the project file.
+#
+# It is also mostly moot, which is why nothing here works around it. With no
+# value applying, Claude Code decides per message from the two sessions'
+# permission classes, and every desk sets defaultMode acceptEdits, which counts
+# as PROMPTING rather than bypassing: a prompting receiver is delivered each
+# message, and holds one only when the SENDER declares itself as bypassing
+# permission prompts. So a desk already takes mail from his ordinary terminals.
+# The only gap is a sender started with --dangerously-skip-permissions, and
+# closing that means writing his personal ~\.claude\settings.json (or the
+# /config row "Messages from your other sessions"), which is his call to make,
+# not a stamp this script gets to apply to his profile.
+#
+# What a desk should do with the feature lives in docs\DELEGATION.md, not here:
+# native messaging reaches a LIVE session, desk mail wakes a desk that is not
+# running, and they are not substitutes.
+
 LEARNED = ROOT / "config" / "allow-learned.json"
 
 
@@ -260,6 +309,10 @@ def main():
         # trusted rather than asked about, per project, on first use.
         mode_wrong = perms.get("defaultMode") != "acceptEdits"
         mcp_wrong = data.get("enableAllProjectMcpServers") is not True
+        # One definition here, stamped on every desk, rather than eleven files
+        # kept in step by hand. (See the CROSS_SESSION_INBOUND note above for
+        # the key that deliberately did NOT join it.)
+        style_wrong = data.get("outputStyle") != OUTPUT_STYLE
         # `ask` is the third list Claude Code reads: anything in it prompts
         # every time, whatever `allow` says. Empty is the posture here.
         asks = [t for t in (perms.get("ask") or [])]
@@ -271,7 +324,8 @@ def main():
             lhave = []
         local_missing = [t for t in extra if t not in lhave]
         if not (missing or stale or undenied or misplaced or local_missing
-                or auto_missing or mode_wrong or mcp_wrong or asks):
+                or auto_missing or mode_wrong or mcp_wrong or asks
+                or style_wrong):
             continue
         short.append((p, missing + local_missing))
         if check_only:
@@ -287,6 +341,7 @@ def main():
             auto["allow"] = auto_have + auto_missing
         perms["defaultMode"] = "acceptEdits"
         data["enableAllProjectMcpServers"] = True
+        data["outputStyle"] = OUTPUT_STYLE
         if asks:
             # A tool that always asks is a tool that stops an unattended desk.
             perms.pop("ask", None)

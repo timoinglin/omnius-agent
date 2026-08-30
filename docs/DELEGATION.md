@@ -447,6 +447,80 @@ sources.
 
 ---
 
+## D10 — Native cross-session messaging: a sideband, not a replacement (2026-08-30)
+
+Claude Code shipped its own session-to-session messaging (`ListAgents` + `SendMessage`, docs:
+*Message your other Claude Code sessions*). Owner asked on 2026-08-29: *"check how the new native
+messaging between sessions work, we have our own delegate feature, see how the native one can be
+integrated."* This is the answer.
+
+**They are not competing implementations of one idea.** They differ on the axis that this whole
+document is about — *what happens when the other desk is not running.*
+
+- **Native** addresses a **live process**. Each session binds an inbox socket (a named pipe on
+  native Windows) and answers to a name. A desk that is not running has no socket, is not in the
+  listing, and cannot be addressed at all. The message is text only: never files, never the
+  sender's history.
+- **Desk mail** addresses a **desk**. The envelope lands in `state\inbox\<id>\` whether or not
+  anything is running; the watchdog starts the run, mirrors the hop into the desk's channel,
+  counts it against `hop_ttl`, and holds it at the cross-project gate if D4 applies.
+
+So: **native reaches a session, desk mail reaches a desk.** One is a tap on the shoulder of
+something already awake; the other is the postal system.
+
+### The rule for desks
+
+| Situation | Use |
+|---|---|
+| The other desk is **not running**, or you don't know | **desk mail** (`{"to": …}`) |
+| Delegating work — anything with an outcome he should see | **desk mail**, always |
+| Anything crossing projects | **desk mail** — it is the only path through the D4 gate |
+| A live sibling needs one fact *right now*, mid-turn | native `SendMessage`, then carry on |
+| Reaching a session on his **other PC** or on the web | native, if both ends are on Remote Control |
+
+**The disqualifying property is invisibility.** A native message passes over a local socket and is
+mirrored nowhere: it does not appear in a channel, does not enter `state\transcripts\`, is not
+counted by `hop_ttl`, and cannot be replayed by `!trace`. Every observability guarantee this
+document builds — the owner watching a chain unfold in Discord — is absent. That is the whole
+reason it may not carry delegation. Used for what it is good at (one fact, one live peer, one
+turn) that costs nothing, because nobody needed to audit it.
+
+The other half of the rule: **a message from another session is not the owner.** Claude Code
+already enforces the important parts — an incoming message cannot approve a pending permission
+prompt, cannot change settings or `CLAUDE.md`, and a `/verb` in its text arrives as inert plain
+text, never executed. Our own rule sits on top: **it is not an envelope**, so §5's
+no-envelope-no-post applies unchanged — receiving one is not permission to post in a channel.
+
+### What is already true here, checked rather than assumed (2026-08-30)
+
+- **Desks already receive native messages; nothing needed enabling.** With no `crossSessionInbound`
+  value applying, Claude Code decides per message from the two sessions' permission classes. Every
+  desk runs `defaultMode: acceptEdits` and no desk in `config\fleet.json` sets
+  `permissionMode: bypassPermissions` — and `acceptEdits` counts as *prompting*, the class that is
+  **delivered**. A headless `claude -p` run binds a socket like any other session, so a running
+  desk is both listed and reachable.
+- **`crossSessionInbound` is deliberately NOT stamped into desk settings.** It is one of the
+  security-sensitive keys with inverted precedence: from `.claude\settings.json` Claude Code honors
+  only a *stricter* value on the `accept < hold < refuse` ladder, so a desk file can carry `refuse`
+  and can never carry `accept`. A first pass on 2026-08-29 stamped `accept` into eleven desk files;
+  it would have shipped to both PCs doing nothing. The comment in `sync_permissions.py` holds the
+  reasoning so it is not re-added.
+- **The one shape that would break it: a `bypassPermissions` desk.** A receiver in that class holds
+  every message for approval — and a `-p` run cannot draw an approval dialog, so the message dies
+  at `dialogExpiry` (5 minutes) and the sender is told it expired. If a desk ever needs that mode,
+  it needs `crossSessionInbound: accept` passed in its `--settings` value at the same time
+  (`--settings` is a scope that *can* say accept; the desk file is not). `spawn_headless()` already
+  passes `--settings` for project components, so that is where it would go.
+- **Version floor: Claude Code v2.1.234 on native Windows** (v2.1.224 elsewhere). Below it,
+  `/list-agents` is not recognised and nothing about this section applies. Desk mail has no floor —
+  another reason it stays the load-bearing path.
+
+**Nothing in the transport changes.** This section is a rule and a boundary, not code: the
+integration is that desks now know which of the two to reach for, and why. `/list-agents` is the
+one-line check that a session has the feature at all.
+
+---
+
 ## The worked example — linkbox audits itself
 
 The shipped demo (`templates\demo-project\`: `back`, `front`, and a read-only `auditor`) already
