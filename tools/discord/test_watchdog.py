@@ -7035,6 +7035,20 @@ try:
           and "as it was" in sent[-1][1])
     check("...and it does not reload a half-updated instance",
           _reloaded == [])
+    # A phone cannot run `git checkout`. This message is the one place the
+    # updater hands the problem back to a person, so it has to name a route
+    # that exists FROM DISCORD - the desk, which can run git - and not only the
+    # shell command. 2026-08-31: a second install stopped on a real conflict in
+    # `tools\email\` and its owner read the shell instruction as "GitHub is
+    # refusing me / it wants somebody else's account", because nothing in the
+    # message was reachable from where he was sitting.
+    check("...and names a route a phone can take, not only a shell command",
+          "take the new version" in sent[-1][1] and "no shell needed" in sent[-1][1],
+          "the desk can run git checkout; the person reading this cannot")
+    upd_src = (real_root / "update.ps1").read_text(encoding="utf-8", errors="replace")
+    check("update.ps1's conflict message offers the same desk route",
+          "take the new version of" in upd_src,
+          "its output is relayed into Discord verbatim by !update go")
     # GIT SAID SUCCESS. When the rebase lands but restoring the autostash
     # conflicts, `pull` exits 0 and leaves merge markers in the tree - proven in
     # a scratch repo before this shipped. Trusting the exit code would reload

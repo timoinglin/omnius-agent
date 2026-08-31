@@ -152,8 +152,11 @@ function Update-Omnius {
     Say 'X' 'your local changes and the new release edit the same lines' 'Red'
     if ($conflicted.Count) { $conflicted | ForEach-Object { Write-Host "      $_" } }
     Write-Host "      Nothing was lost - still on $before, with your version intact."
-    Write-Host '      Take the new version of a file with `git checkout -- <file>`, or fold'
-    Write-Host '      your change into it, then run this again.'
+    Write-Host '      Somebody has to choose which version wins. From Discord you do not'
+    Write-Host '      need a shell for it: say in the channel "take the new version of'
+    Write-Host '      <file>" (or "of all of them") and the desk runs it, then `!update go`.'
+    Write-Host '      If your change was deliberate, say "fold my change into the new one".'
+    Write-Host '      At a terminal it is `git checkout -- <file>`, then run this again.'
     return 1
   }
   $after = (& git -C $root rev-parse --short HEAD 2>$null)

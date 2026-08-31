@@ -4060,10 +4060,11 @@ def handle_update(text, cid):
             f"same lines.\n{listing}"
             f"Nothing was lost — the instance is exactly as it was, still on `{head}`, "
             f"with your version of those files intact.\n"
-            f"Both sides changed the same lines, so somebody has to choose. If your "
-            f"change was not deliberate, take the new version with "
-            f"`git checkout -- <file>` and `!update go` again; if it was, fold it into "
-            f"the incoming one at the desk first.\n"
+            f"Both sides changed the same lines, so somebody has to choose — and you "
+            f"can do it from here, no shell needed. Say **take the new version of "
+            f"`<file>`** (or *of all of them*) and the desk runs it, then `!update go`. "
+            f"If your change was deliberate, say **fold my change into the new one** "
+            f"instead. At a terminal it is `git checkout -- <file>`.\n"
             f"```\n{out.strip()[:300]}\n```")
         return
     _rc, new = _git("rev-parse", "--short", "HEAD")
