@@ -6,13 +6,91 @@ stdout, non-zero exit + stderr on failure. Accepts anything ffmpeg can read
 (.ogg Discord voice notes, .mp3, .wav, .m4a, ...). Language auto-detected.
 Default engine: local faster-whisper (installed by root install.bat).
 """
+import importlib.util
+import shutil
+import subprocess
 import sys
+import types
 from pathlib import Path
 
 
 USAGE = ("usage: transcribe.py <audio-file>   -> transcript on stdout\n"
          "  env: WHISPER_MODEL=tiny|base|small|medium|large-v3  (default base)\n"
          "  accepts anything ffmpeg reads: .ogg voice notes, .mp3, .wav, .m4a")
+
+
+def load_whisper_model():
+    """Import WhisperModel, routing around a blocked PyAV if we have to.
+
+    Returns (WhisperModel, decode_here) - `decode_here` True means `av` is a
+    stub and the CALLER must hand transcribe() a numpy array, because
+    faster_whisper's own decoder is gone.
+
+    Raises ImportError with a message worth reading.
+    """
+    try:
+        from faster_whisper import WhisperModel
+        return WhisperModel, False
+    except ImportError as first:
+        # NOT INSTALLED and INSTALLED-BUT-BROKEN are different problems and
+        # both raise ImportError. Ask the loader which one this is: a missing
+        # spec is a missing package, anything else is a package that is right
+        # there and failed to load.
+        if importlib.util.find_spec("faster_whisper") is None:
+            # NAME THE INTERPRETER. The old message said "run install.bat",
+            # which on 2026-08-12 was both wrong and expensive: install.bat HAD
+            # run - into Python 3.11 - and miniconda later took the front of
+            # PATH, so `python` became a different interpreter with none of the
+            # tool deps. A voice note came back "not installed" on a machine
+            # where it demonstrably was, and finding that out meant probing
+            # three interpreters by hand. A missing import here almost never
+            # means "never installed"; it means THIS python is not the one that
+            # was installed into.
+            raise ImportError(
+                f"faster-whisper is not installed for {sys.executable}\n"
+                f"  install it there:  \"{sys.executable}\" -m pip install "
+                f"faster-whisper\n"
+                f"  (if install.bat already ran, it used a different "
+                f"interpreter - whichever `python` resolved to at the time)"
+            ) from first
+        # PyAV's bundled DLL is the one dependency an OS policy can veto:
+        # 2026-08-31 Windows Smart App Control blocked `av\_core.pyd` on his
+        # PC ("Una directiva de Control de aplicaciones bloquea este archivo")
+        # and every voice note came back as "faster-whisper is not installed"
+        # on a machine where it was. faster_whisper imports `av` ONLY in
+        # audio.py, and only calls it inside decode_audio() - which
+        # transcribe() skips entirely when handed a numpy array. So a stub
+        # satisfies the import and ffmpeg does the decoding instead.
+        if "av" not in str(first) and "_core" not in str(first):
+            raise
+        if not shutil.which("ffmpeg"):
+            raise ImportError(
+                f"faster-whisper is installed for {sys.executable} but PyAV "
+                f"will not load:\n  {first}\nffmpeg would be the way around "
+                f"it, and ffmpeg is not on PATH either. Install ffmpeg, or "
+                f"unblock PyAV in Windows Security > App & browser control."
+            ) from first
+        sys.modules.setdefault("av", types.ModuleType("av"))
+        try:
+            from faster_whisper import WhisperModel
+        except ImportError as second:
+            raise ImportError(
+                f"faster-whisper is installed for {sys.executable} but will "
+                f"not import:\n  {second}"
+            ) from second
+        print(f"note: PyAV will not load ({first}); decoding with ffmpeg "
+              f"instead", file=sys.stderr)
+        return WhisperModel, True
+
+
+def decode_with_ffmpeg(audio: Path, rate: int = 16000):
+    """s16le mono at `rate`, as the float32 array faster-whisper wants."""
+    import numpy as np
+    raw = subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-i", str(audio),
+         "-f", "s16le", "-ac", "1", "-ar", str(rate), "-"],
+        capture_output=True, check=True).stdout
+    return np.frombuffer(raw, np.int16).astype(np.float32) / 32768.0
 
 
 def main():
@@ -31,20 +109,9 @@ def main():
         print(f"file not found: {audio}", file=sys.stderr)
         return 2
     try:
-        from faster_whisper import WhisperModel
-    except ImportError:
-        # NAME THE INTERPRETER. The old message said "run install.bat", which on
-        # 2026-08-12 was both wrong and expensive: install.bat HAD run - into
-        # Python 3.11 - and miniconda later took the front of PATH, so `python`
-        # became a different interpreter with none of the tool deps. A voice note
-        # came back "not installed" on a machine where it demonstrably was, and
-        # finding that out meant probing three interpreters by hand. A missing
-        # import here almost never means "never installed"; it means THIS python
-        # is not the one that was installed into.
-        print(f"faster-whisper is not installed for {sys.executable}\n"
-              f"  install it there:  \"{sys.executable}\" -m pip install faster-whisper\n"
-              f"  (if install.bat already ran, it used a different interpreter - "
-              f"whichever `python` resolved to at the time)", file=sys.stderr)
+        WhisperModel, decode_here = load_whisper_model()
+    except ImportError as exc:
+        print(exc, file=sys.stderr)
         return 3
     import os
     cfg = {}
@@ -87,7 +154,8 @@ def main():
         "Task Scheduler, Windows, GitHub, commit, push, backup, skills, Whisper, "
         "Remotion, Pexip, Firebase, The Campus, Colegia, <your-org>, PWA, WebRTC."
     )
-    segments, _info = model.transcribe(str(audio), vad_filter=True,
+    source = decode_with_ffmpeg(audio) if decode_here else str(audio)
+    segments, _info = model.transcribe(source, vad_filter=True,
                                        language=lang,
                                        initial_prompt=prompt or None)
     print(" ".join(s.text.strip() for s in segments).strip())

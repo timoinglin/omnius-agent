@@ -84,11 +84,17 @@ def cut(src, start, length, dest):
 def transcribe_chunk(job):
     """Runs in a worker process: one chunk -> segments on the GLOBAL timeline."""
     path, offset, model_size, language, prompt, threads = job
-    from faster_whisper import WhisperModel
+    # Shared loader: it routes around a PyAV that an OS policy refuses to load
+    # (Windows Smart App Control, 2026-08-31) by decoding with ffmpeg instead -
+    # which this file already depends on for `cut`, so nothing new is required.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "whisper"))
+    from transcribe import load_whisper_model, decode_with_ffmpeg
+    WhisperModel, decode_here = load_whisper_model()
     model = WhisperModel(model_size, device="cpu", compute_type="int8",
                          cpu_threads=threads)
     segments, info = model.transcribe(
-        str(path), language=language, vad_filter=True,
+        decode_with_ffmpeg(path) if decode_here else str(path),
+        language=language, vad_filter=True,
         initial_prompt=prompt, condition_on_previous_text=False)
     out = []
     for s in segments:
