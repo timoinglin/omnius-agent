@@ -1,5 +1,6 @@
-# Omnius - build the portable zip. A BACKUP travels complete, `.env` included, so
-# it can actually restore this machine; a RELEASE (-Fresh) carries no secrets at all.
+# Omnius - build the portable zip. A BACKUP is THE WHOLE FOLDER AS IT STANDS -
+# .env, state\, keys and all - because a backup that cannot restore this machine
+# is not a backup; a RELEASE (-Fresh) carries no secrets and no biography at all.
 # Run via pack.bat (double-click) or:  powershell -ExecutionPolicy Bypass -File pack.ps1
 #
 #   -Work : build a WORK instance - system only. Leaves personal content behind
@@ -32,8 +33,10 @@ if ($Help -or $args.Count) {
   }
   Write-Host 'pack.ps1 - build a portable zip of this workspace'
   Write-Host ''
-  Write-Host '  (no flags)  BACKUP of this instance: system, projects, daybook notes,'
-  Write-Host '              media, full git history AND .env. What you restore onto a'
+  Write-Host '  (no flags)  BACKUP: the WHOLE folder as it stands - projects, notes,'
+  Write-Host '              media, git history, state\, .env and key files. Only'
+  Write-Host '              regenerable output is skipped (node_modules\, .next\,'
+  Write-Host '              __pycache__\, dist\, build\, logs). What you restore onto a'
   Write-Host '              new PC - so it holds secrets: keep it on a drive you control.'
   Write-Host '  -Fresh      CLEAN RELEASE for a NEW instance: code, skills, docs and a'
   Write-Host '              scrubbed memory seed. No notes, no projects, no history,'
@@ -109,23 +112,36 @@ if (Test-Path $dest) {
 # Exclude patterns match at ANY depth, so workspace-scoped ones must be anchored
 # to the archive root: a bare "--exclude=state" also deleted projects\*\src\state\
 # (Redux/Zustand/XState) from the zip - real source, silently missing on the new PC.
-# Secrets and regenerable junk stay global on purpose.
 # zip:hdrcharset=UTF-8 keeps non-ASCII filenames intact across machines.
 $tarArgs = @('-a', '-c', '-f', $dest, '--options', 'zip:hdrcharset=UTF-8')
-$tarArgs += "--exclude=$leaf/state"
-# .env travels in a BACKUP and only in a backup. Owner, 2026-09-01: "the backup
-# of OMNIUS should take the complete OMNIUS folder as is, including the .env,
-# that's why it is a separate user backup". He is right - restoring onto a new
-# PC without .env gives you a workspace with no Discord token, so the fleet
-# never starts and the "backup" was a folder copy with the important part
-# missing. It stays excluded from -Fresh, which is a RELEASE: that one goes to
-# strangers and becomes a GitHub asset, which is the exposure the key-material
-# note below is about. Two products, two rules - not one rule applied twice.
+
+# --- THE LINE THIS SCRIPT IS BUILT AROUND -------------------------------------
+# A BACKUP takes the folder AS IT STANDS. A RELEASE takes the product.
 #
-# The cost, stated plainly because it is now true: the backup zip CONTAINS
-# SECRETS. It belongs on a drive he controls. Never a shared folder, never a
-# cloud sync, never a release asset.
+# Owner, 2026-09-01, twice, because the first fix was too narrow: "the backup of
+# OMNIUS should take the complete OMNIUS folder as is" ... "no, i said a full
+# OMNIUS folder backup as is, otherwise it is not a backup". He is right, and
+# the reasoning generalises past the .env that started it: every exclusion in a
+# BACKUP is a bet that you will not need that file after the disk dies. The only
+# bet worth making is on files a COMMAND rebuilds - node_modules\ from a
+# lockfile, .next\ from a build. Everything else stays, because "probably not
+# needed" is not a property you can verify from here.
+#
+# So the split below is not secret-vs-public. It is:
+#   BACKUP  = everything except regenerable output      (this machine, restored)
+#   RELEASE = product only, and it REFUSES to identify you  (-Fresh)
+#   -Work   = release-ish transport of THIS system, minus personal content
+#
+# The cost, stated plainly because it is now true of more than .env: the backup
+# zip CONTAINS SECRETS - .env, saved browser sessions under state\web\, and any
+# key file sitting in the tree. It belongs on a drive he controls. Never a
+# shared folder, never a cloud sync, never a release asset.
 if ($Fresh -or $Work) {
+  # state\: claims, the bus, inboxes, logs, watchdog leases, saved web sessions.
+  # Machine-local and worthless on another instance - but NOT worthless to him:
+  # state\transcripts\ is the Discord conversation history, which is why the
+  # backup keeps it and only these two products drop it.
+  $tarArgs += "--exclude=$leaf/state"
   $tarArgs += '--exclude=.env', '--exclude=.env.local', '--exclude=.env.development',
               '--exclude=.env.production', '--exclude=.env.test'
 }
@@ -142,17 +158,24 @@ $tarArgs += '--exclude=.next', '--exclude=.turbo'
 
 # --- key material -------------------------------------------------------------
 # .gitignore has NO say over this archive. A key that git correctly refuses to
-# commit still lands in the zip, and the zip becomes a GitHub release asset and
-# a cloud-folder copy - so the archive is the WIDER exposure, not the narrower
-# one. Found 2026-07-31: a project's serviceAccount json (full Firebase admin)
-# was correctly gitignored by *-sa.json and would still have shipped in a
-# release. Deliberately NOT excluding a bare *.key: too broad, and a wrongly
-# dropped file is the failure this repo has already been bitten by.
+# commit still lands in the zip, and a RELEASE zip becomes a GitHub asset - so
+# for that product the archive is the WIDER exposure, not the narrower one.
+# Found 2026-07-31: a project's serviceAccount json (full Firebase admin) was
+# correctly gitignored by *-sa.json and would still have shipped in a release.
+#
+# Scoped to the outbound products since 2026-09-01. In a BACKUP these files are
+# the point: a Firebase admin key is not regenerable by any command, so dropping
+# it from the one archive that exists to restore the machine loses it for good -
+# the same failure as the .env, one class wider. Deliberately NOT excluding a
+# bare *.key even there: too broad, and a wrongly dropped file is the failure
+# this repo has already been bitten by.
 $secretGlobs = @('*serviceAccount*.json', '*service-account*.json', '*adminsdk*.json',
                  '*-sa.json', '*.pem', '*.p12', '*.pfx', '*.jks', '*.keystore',
                  'id_rsa', 'id_ed25519')
-foreach ($g in $secretGlobs) { $tarArgs += "--exclude=$g" }
-$tarArgs += "--exclude=$leaf/.secrets"
+if ($Fresh -or $Work) {
+  foreach ($g in $secretGlobs) { $tarArgs += "--exclude=$g" }
+  $tarArgs += "--exclude=$leaf/.secrets"
+}
 
 $drops = @()
 if ($Work) {
@@ -233,10 +256,12 @@ if ($Work) {
   }
 }
 
-# Name what the secret rules caught. tar excludes silently, and a file that
-# vanishes without a word is indistinguishable from one that was never there -
-# which is how a wrong exclusion hides. Saying it out loud also tells the user
-# a key is sitting in the workspace when it should be outside it.
+# Name what the secret rules caught, either way. tar excludes silently, and a
+# file that vanishes without a word is indistinguishable from one that was never
+# there - which is how a wrong exclusion hides. The BACKUP now keeps these, so
+# the line has to say WHICH of the two happened: reporting "EXCLUDED" over an
+# archive that contains them would be worse than saying nothing, because he
+# would file the zip believing it is safe to share.
 $secretHits = @()
 foreach ($g in $secretGlobs) {
   $secretHits += @(Get-ChildItem -LiteralPath $PSScriptRoot -Recurse -File -Force -Filter $g -ErrorAction SilentlyContinue |
@@ -244,11 +269,19 @@ foreach ($g in $secretGlobs) {
 }
 $secretHits = @($secretHits | Sort-Object FullName -Unique)
 if ($secretHits.Count) {
-  Write-Host '  key material found in the workspace - EXCLUDED from the archive:' -ForegroundColor Yellow
+  if ($Fresh -or $Work) {
+    Write-Host '  key material found in the workspace - EXCLUDED from the archive:' -ForegroundColor Yellow
+  } else {
+    Write-Host '  key material found in the workspace - INCLUDED (a backup restores them):' -ForegroundColor Yellow
+  }
   foreach ($h in $secretHits) {
     Write-Host ('    ' + $h.FullName.Substring($PSScriptRoot.Length + 1)) -ForegroundColor Yellow
   }
-  Write-Host '    (keys belong outside the workspace - point an env var at them instead)' -ForegroundColor Gray
+  if ($Fresh -or $Work) {
+    Write-Host '    (keys belong outside the workspace - point an env var at them instead)' -ForegroundColor Gray
+  } else {
+    Write-Host '    (one more reason this zip stays on a drive you control)' -ForegroundColor Gray
+  }
 }
 
 # --- -Fresh: a RELEASE, not a copy of this instance ----------------------------
@@ -370,7 +403,7 @@ if ($Work) {
 } elseif ($Fresh) {
   Write-Host '[..] packing CLEAN RELEASE (no projects, notes, media, state or git history) ...' -ForegroundColor Cyan
 } else {
-  Write-Host '[..] packing (includes projects, daybook notes and full git history) ...' -ForegroundColor Cyan
+  Write-Host '[..] packing BACKUP (the whole folder - only regenerable output is skipped) ...' -ForegroundColor Cyan
 }
 & $tar @tarArgs
 
@@ -493,11 +526,15 @@ if ((Test-Path $dest) -and ($LASTEXITCODE -eq 0)) {
     Write-Host '     excluded: .env (only .env.example travels), state\, node_modules\, caches, logs'
     Write-Host '     on the new PC: unzip -> install.bat (set up the NEW Discord bot + server) -> start-omnius.bat'
   } else {
-    Write-Host '     included: system, docs, memory, full git history, projects\, daybook notes, media archive'
-    Write-Host '     included: .env - this restores the machine, so it CONTAINS SECRETS' -ForegroundColor Yellow
+    Write-Host '     included: THE WHOLE FOLDER - system, docs, memory, full git history,'
+    Write-Host '               projects\, daybook notes, media, state\ (Discord history), .env, keys'
+    Write-Host '     excluded: ONLY what a command rebuilds - node_modules\, .next\, .turbo\,'
+    Write-Host '               __pycache__\, .venv\, dist\, build\, *.log, settings.local.json'
+    Write-Host '     this zip CONTAINS SECRETS (.env, state\web\ sessions, any key file)' -ForegroundColor Yellow
     Write-Host '     keep it on a drive you control: no shared folder, no cloud sync, never a release asset' -ForegroundColor Yellow
-    Write-Host '     excluded: state\, node_modules\, caches, logs, and key files (*.pem, serviceAccount*.json, id_rsa, ...)'
-    Write-Host '     on the new PC: unzip -> install.bat -> start-omnius.bat'
+    Write-Host '     on the new PC: unzip -> install.bat -> start-omnius.bat   (docs\BACKUP.md)'
+    Write-Host '     install.bat rebuilds the excluded parts; a PROJECT''s node_modules\ is'
+    Write-Host '     its own npm install, the first time you work on it again.'
   }
 } else {
   # A truncated archive with a completely plausible name is worse than none:

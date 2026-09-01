@@ -5,9 +5,15 @@ description: Build the personal backup zip of the whole workspace with pack.ps1 
 
 # /backup — the workspace in one zip, copied off-drive
 
-Root verb: it packs the WHOLE workspace (memory, config, daybook, projects —
-`state\`, `.env` and caches excluded by design), so run it against the
-workspace root whatever desk received the ask.
+Root verb: it packs the WHOLE workspace **as it stands** — memory, config,
+daybook, projects, `state\`, `.env`, key files, full git history. Only
+regenerable output is skipped (`node_modules\`, `.next\`, `__pycache__\`,
+`dist\`, `build\`, logs). Run it against the workspace root whatever desk
+received the ask. Full contract: `docs\BACKUP.md`.
+
+**The zip therefore holds secrets.** When you report where the copy landed, say
+so if the destination looks like a sync folder (OneDrive, Dropbox, Drive) — that
+is a real exposure, not a style note, and the owner should hear it once.
 
 ## Steps
 

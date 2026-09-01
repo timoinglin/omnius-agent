@@ -1,15 +1,22 @@
 # Standing up a new Omnius instance
 
-Follow this on a **new machine** (new job, new laptop, second PC). It assumes a
-zip built by `pack.ps1` — see §0 for which kind you want.
+Follow this to stand up a **new, separate instance** — a work laptop, a second
+PC, someone else's install. It assumes a `-Fresh` or `-Work` zip built by
+`pack.ps1`; see §0.
 
-Two facts drive everything below:
+> **Restoring your own machine instead?** Read `docs\BACKUP.md`. A backup zip is
+> a different product with different rules — it carries `.env`, `state\` and
+> everything else, so most of what follows does not apply to it.
 
-- **`.env` never travels.** `pack.ps1` excludes it on purpose (secrets stay put).
-  A fresh instance therefore *always* reports "Discord not set up" on first run.
-  **That is correct behaviour, not a bug** — you are expected to set up the bot
-  for *this* instance. It caught the author out once; that is why this note exists.
-- **`state\` never travels either.** Claims, the bus, logs, the watchdog lock and the
+Two facts drive everything below, and both are true **of these two zips only**:
+
+- **`.env` does not travel.** `pack.ps1 -Fresh` and `-Work` exclude it on purpose
+  (secrets stay put). Such an instance therefore *always* reports "Discord not set
+  up" on first run. **That is correct behaviour, not a bug** — you are expected to
+  set up the bot for *this* instance. It caught the author out once; that is why
+  this note exists. (A plain backup zip *does* carry it — that is the whole
+  difference between the two.)
+- **`state\` does not travel either.** Claims, the bus, logs, the watchdog lock and the
   channel→desk **pins** (`state\watchdog\channels.json`) are machine-local and rebuild
   themselves. An empty `state\` on day one is normal — with one thing worth knowing: with
   no pins the map is derived from channel **names** for one round and pinned again, so a
@@ -23,8 +30,9 @@ Two facts drive everything below:
 
 | Command | Use when |
 |---|---|
-| `pack.bat` or `powershell -File pack.ps1` | Personal machine → personal machine. Carries **everything**: projects, daybook notes, media archive. |
+| `pack.bat` or `powershell -File pack.ps1` | **Restoring your own machine.** The whole folder as it stands — `.env`, `state\`, keys included. Not this document: see `docs\BACKUP.md`. |
 | `powershell -File pack.ps1 -Work` | **Work / employer hardware.** System only. Leaves `daybook\notes\`, every `projects\<name>\` and `media\` behind. |
+| `powershell -File pack.ps1 -Fresh` | **A clean install for anyone.** Product only, scrubbed memory seed, no history, no secrets. |
 
 `-Work` genuinely removes that content: all three paths are gitignored and were
 never committed, so the bundled `.git\` cannot leak them back. The suite asserts
@@ -150,7 +158,7 @@ read. Choose the `#alerts` channel's visibility accordingly.
 
 | Symptom | Look at |
 |---|---|
-| "Discord not set up" on a fresh box | Expected — `.env` does not travel. Do §3. |
+| "Discord not set up" on a fresh box | Expected — `-Fresh`/`-Work` carry no `.env`. Do §3. (Restoring a *backup*? Then it should have been there — check the unzip.) |
 | Config accepted but watchdog dies | `api.py config-check --verify`; then `state\logs\watchdog.log` |
 | Watchdog runs but never answers | The liveness **beacon**: alive-but-deaf is a real state. `!status`, and check `state\watchdog\beacon.json` |
 | Messages ignored | You are not `DISCORD_OWNER_ID`, or the bot lacks Message Content Intent |

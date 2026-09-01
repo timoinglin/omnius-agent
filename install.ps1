@@ -752,9 +752,10 @@ Write-Host ''
 Write-Host '--- .env -------------------------------------------------'
 if (Test-Path .env) {
   Write-Status 'OK' '.env exists'
-  # .env is the one file that CANNOT travel in the backup zip (secrets stay out
-  # of archives), so every move ends with it hand-copied from the old machine -
-  # and it carries MACHINE_NAME with it. On 2026-08-14 the new laptop spent its
+  # .env DOES travel in the backup zip now (2026-09-01 - a backup that cannot
+  # restore the fleet is not a backup), which makes this check MORE important,
+  # not less: it arrives automatically, and it carries MACHINE_NAME with it.
+  # It still never travels in a release or a -Work zip. On 2026-08-14 the new laptop spent its
   # first hour insisting it was the old one: session claims, Discord channel
   # topics and !status all wrong, and claims written under the old name then
   # read as FOREIGN, i.e. "another machine owns this desk". Nothing anywhere
@@ -1107,10 +1108,14 @@ $discordOk = ($LASTEXITCODE -eq 0)
 if ($discordOk) {
   Write-Status 'OK' 'Discord configured'
 } elseif (-not (Test-Path -LiteralPath .env)) {
-  # Fresh machine: .env is deliberately excluded from the portable zip, so this
-  # is expected, not a fault. Say so - otherwise it reads as "the zip lost my setup".
+  # No .env at all. Two very different roads lead here, and telling someone the
+  # wrong one wastes an afternoon: a RELEASE zip carries no .env by design (set
+  # it up once, expected), but a BACKUP zip does carry it since 2026-09-01 - so
+  # if this was meant to be a restore, the .env is missing because something
+  # went wrong, not because archives never hold one. Say both.
   Write-Status 'i' 'Discord not set up yet on this machine'
-  Write-Status 'i' '     .env never travels in the zip (secrets stay per-machine) - set it up once here'
+  Write-Status 'i' '     new instance? expected - a release carries no .env. Set it up once here.'
+  Write-Status 'i' '     restoring a backup? a backup zip DOES carry .env - check you unzipped it all'
 } else {
   # A .env we created from the example two sections ago has all three values
   # blank. That is the EXPECTED state, not a fault list - and printing one

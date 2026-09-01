@@ -2989,18 +2989,74 @@ try:
     check("pack -Work: post-pack summary reports the real drop, not a static list",
           "LEFT BEHIND: daybook\\notes\\, projects\\<name>\\, media\\" not in pack_src)
 
-    # Key material. .gitignore has no say over the archive, and the archive is the
-    # WIDER exposure: it becomes a GitHub release asset and a cloud-folder copy. A
-    # key git correctly refuses to commit still ships in the zip.
+    # Key material. .gitignore has no say over the archive, and a RELEASE archive
+    # is the WIDER exposure: it becomes a GitHub release asset and a cloud-folder
+    # copy. A key git correctly refuses to commit still ships in that zip.
     for glob in ("*serviceAccount*.json", "*service-account*.json", "*adminsdk*.json",
                  "*-sa.json", "*.p12", "*.jks", "*.keystore"):
         check(f"pack excludes key shape {glob}", f"'{glob}'" in pack_src)
-    check("pack: names excluded key material instead of dropping it silently",
+    check("pack: names key material instead of dropping it silently",
           "secretHits" in pack_src and "EXCLUDED from the archive" in pack_src)
+    # ...and says the OPPOSITE when it kept them. Printing "EXCLUDED" over an
+    # archive that contains the keys is worse than printing nothing: he files the
+    # zip believing it is safe to share.
+    check("pack: a BACKUP reports key material as INCLUDED, not excluded",
+          "INCLUDED (a backup restores them)" in pack_src)
     # Guard against someone widening this later: a bare *.key would silently drop
     # legitimate files, which is the exact class of bug --exclude=state already was.
     check("pack: does NOT exclude a bare *.key (too broad -> silent loss)",
           "'*.key'" not in pack_src)
+
+    # == the BACKUP takes the folder AS IT STANDS ==============================
+    # Owner, 2026-09-01, after a first fix that only freed .env: "no, i said a
+    # full OMNIUS folder backup as is, otherwise it is not a backup". Every
+    # exclusion in a backup is a bet you will not need that file after the disk
+    # dies, and the only safe bet is on files a COMMAND rebuilds. These four
+    # assert the scoping survives, because the failure is silent: the pack
+    # succeeds, the zip looks right, and what is missing shows up only on the
+    # day it is restored.
+    print("== pack: a backup is the whole folder ==")
+    check("backup keeps .env (a fleet with no token does not start)",
+          "--exclude=.env'" in pack_src and "if ($Fresh -or $Work) {" in pack_src
+          and pack_src.index("if ($Fresh -or $Work) {") < pack_src.index("--exclude=.env'"),
+          "the .env exclusion must sit INSIDE the -Fresh/-Work branch")
+    check("backup keeps state\\ (it holds the Discord transcripts)",
+          pack_src.index("if ($Fresh -or $Work) {")
+          < pack_src.index('"--exclude=$leaf/state"'),
+          "state must only be dropped for -Fresh/-Work")
+    check("backup keeps key material (a Firebase admin key regenerates from nothing)",
+          pack_src.index("if ($Fresh -or $Work) {")
+          < pack_src.index("foreach ($g in $secretGlobs) { $tarArgs += "),
+          "the key-glob loop must sit inside the -Fresh/-Work branch")
+    check("...and .secrets\\ with them",
+          pack_src.index("if ($Fresh -or $Work) {")
+          < pack_src.index('"--exclude=$leaf/.secrets"'))
+    # The other half of the same rule: what stays out must stay out UNCONDITIONALLY,
+    # or a backup starts carrying 1.8GB of node_modules it can rebuild in a minute.
+    for _junk in ("node_modules", "__pycache__", ".venv", "dist", "build",
+                  ".next", ".turbo", "settings.local.json"):
+        check(f"regenerable {_junk} is excluded from EVERY product",
+              f"'--exclude={_junk}'" in pack_src)
+    # .next is not merely bloat: `next dev` holds .next\dev\lock open, tar cannot
+    # read it, and the ENTIRE archive is refused (2026-08-13, a real backup).
+    check("pack documents WHY .next is excluded (a dev lock kills the whole pack)",
+          "dev\\lock" in pack_src or "dev/lock" in pack_src)
+    # The zip now holds secrets, so the destination advice had to change with it.
+    _ex_ini = (real_root / "config" / "omnius.example.ini").read_text(encoding="utf-8")
+    check("the example backup folder is no longer a consumer cloud path",
+          "OneDrive\\omnius-backups" not in _ex_ini,
+          "a zip with .env in it must not be pointed at OneDrive by default")
+    check("...and says why in the file itself",
+          "NOT a consumer cloud folder" in _ex_ini)
+    check("docs\\BACKUP.md exists (the owner asked for a real guide 2026-09-01)",
+          (real_root / "docs" / "BACKUP.md").is_file())
+    _bk = (real_root / "docs" / "BACKUP.md").read_text(encoding="utf-8")
+    check("...and it leads with the restore ORDER, which is the part people invert",
+          "install.bat" in _bk and "Do NOT install first" in _bk)
+    check("...and warns the zip carries secrets",
+          "contains your secrets" in _bk.lower())
+    check("...and is linked from the README, or nobody will find it",
+          "docs/BACKUP.md" in (real_root / "README.md").read_text(encoding="utf-8"))
 
     # The tar exclusion only works because none of this is in git: anything ever
     # committed still travels inside the bundled .git\ no matter what tar skips.
