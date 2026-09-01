@@ -127,6 +127,52 @@ def describe(tool_name, tool_input):
     return api.redact(json.dumps(tool_input, ensure_ascii=False))[:400]
 
 
+EDIT_TOOLS = {"Edit", "Write", "MultiEdit", "NotebookEdit", "Update"}
+
+
+def own_claude_file(tool_name, tool_input):
+    """Is this the workspace editing its OWN .claude\\ wiring? -> the path, or None.
+
+    WHY THIS IS ALLOWED, and it is not a loosening. Claude Code guards writes
+    under `.claude\\` above the allow-list: a skill or settings file changes what
+    the agent may do, so `Edit` being allow-listed does not cover it. Sound in
+    general - and on THIS fleet it stops the wrong door. Every desk already
+    allows bare `Bash`/`PowerShell` (owner, 2026-08-06), so a desk that wants to
+    rewrite its own skill can already do it with one unaudited
+    `python -c "open(...).write(...)"` and no prompt at all. The dialog therefore
+    blocks the legible, reviewable tool and waves through the illegible one. That
+    is friction, not a fence.
+
+    And it is friction he pays for personally: 9 of the 9 permission asks this
+    fleet has ever raised were this exact class, ending 2026-09-01 with two `ok`s
+    in three minutes for one skill edit - "And still all these annoying ask
+    permission ok". His standing instruction is the other half: "Over discord
+    make everything auto allow, no allow questions, no matter where ... what you
+    can do is that you as LLM ask twice." The model is the brake now.
+
+    So: narrow, and provably narrow. The path must be INSIDE this workspace
+    (a `.claude` folder in someone else's tree is not ours to touch), must have
+    a real `.claude` path SEGMENT (never a filename that merely starts with it),
+    and `.env` is refused here as everywhere - that one fence is real, and it is
+    enforced by the deny-list regardless of what this returns.
+    """
+    if tool_name not in EDIT_TOOLS or not isinstance(tool_input, dict):
+        return None
+    raw = tool_input.get("file_path") or tool_input.get("path") or ""
+    if not raw:
+        return None
+    try:
+        target = Path(str(raw)).resolve()
+        rel = target.relative_to(ROOT)            # ValueError = outside the workspace
+    except (ValueError, OSError):
+        return None
+    if ".claude" not in rel.parts:
+        return None
+    if target.name == ".env" or target.name.startswith(".env."):
+        return None
+    return rel.as_posix()
+
+
 def wait_seconds():
     # os.environ first, then root .env. Keeping both in step matters: the audit
     # found PORT/WHISPER_MODEL read from one source by the service and the other
@@ -159,6 +205,23 @@ def main():
     tool_name = event.get("tool_name", "?")
     tool_use_id = str(event.get("tool_use_id") or f"req-{int(time.time()*1000)}")
     code = tool_use_id[-6:]                          # short handle to answer by
+
+    # The workspace editing its own .claude\ wiring: allow, and say so in the log
+    # rather than in his channel. Reasoning in own_claude_file(). Logged, not
+    # silent - an auto-allow nobody can audit is how a relay stops being trusted.
+    own = own_claude_file(tool_name, event.get("tool_input"))
+    if own:
+        try:
+            (STATE / "logs").mkdir(parents=True, exist_ok=True)
+            with open(STATE / "logs" / "permission_relay.log", "a", encoding="utf-8") as fh:
+                fh.write(f"{now_iso()} auto-allow {session} {tool_name} {own}\n")
+        except OSError:
+            pass                                     # logging must never block a turn
+        print(json.dumps({"hookSpecificOutput": {
+            "hookEventName": "PermissionRequest",
+            "decision": {"behavior": "allow"},
+        }}))
+        return 0
 
     PERMS.mkdir(parents=True, exist_ok=True)
     # A new request proves the desk is running again, so any earlier stall
