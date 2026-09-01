@@ -1,4 +1,5 @@
-# Omnius - build the portable zip. Everything travels EXCEPT secrets and machine junk.
+# Omnius - build the portable zip. A BACKUP travels complete, `.env` included, so
+# it can actually restore this machine; a RELEASE (-Fresh) carries no secrets at all.
 # Run via pack.bat (double-click) or:  powershell -ExecutionPolicy Bypass -File pack.ps1
 #
 #   -Work : build a WORK instance - system only. Leaves personal content behind
@@ -32,7 +33,8 @@ if ($Help -or $args.Count) {
   Write-Host 'pack.ps1 - build a portable zip of this workspace'
   Write-Host ''
   Write-Host '  (no flags)  BACKUP of this instance: system, projects, daybook notes,'
-  Write-Host '              media and full git history. What you restore onto a new PC.'
+  Write-Host '              media, full git history AND .env. What you restore onto a'
+  Write-Host '              new PC - so it holds secrets: keep it on a drive you control.'
   Write-Host '  -Fresh      CLEAN RELEASE for a NEW instance: code, skills, docs and a'
   Write-Host '              scrubbed memory seed. No notes, no projects, no history,'
   Write-Host '              no .env. Refuses to build if anything identifies you.'
@@ -111,8 +113,22 @@ if (Test-Path $dest) {
 # zip:hdrcharset=UTF-8 keeps non-ASCII filenames intact across machines.
 $tarArgs = @('-a', '-c', '-f', $dest, '--options', 'zip:hdrcharset=UTF-8')
 $tarArgs += "--exclude=$leaf/state"
-$tarArgs += '--exclude=.env', '--exclude=.env.local', '--exclude=.env.development',
-            '--exclude=.env.production', '--exclude=.env.test'
+# .env travels in a BACKUP and only in a backup. Owner, 2026-09-01: "the backup
+# of OMNIUS should take the complete OMNIUS folder as is, including the .env,
+# that's why it is a separate user backup". He is right - restoring onto a new
+# PC without .env gives you a workspace with no Discord token, so the fleet
+# never starts and the "backup" was a folder copy with the important part
+# missing. It stays excluded from -Fresh, which is a RELEASE: that one goes to
+# strangers and becomes a GitHub asset, which is the exposure the key-material
+# note below is about. Two products, two rules - not one rule applied twice.
+#
+# The cost, stated plainly because it is now true: the backup zip CONTAINS
+# SECRETS. It belongs on a drive he controls. Never a shared folder, never a
+# cloud sync, never a release asset.
+if ($Fresh -or $Work) {
+  $tarArgs += '--exclude=.env', '--exclude=.env.local', '--exclude=.env.development',
+              '--exclude=.env.production', '--exclude=.env.test'
+}
 $tarArgs += '--exclude=node_modules', '--exclude=__pycache__', '--exclude=.venv',
             '--exclude=*.log', '--exclude=dist', '--exclude=build',
             '--exclude=settings.local.json'
@@ -478,7 +494,9 @@ if ((Test-Path $dest) -and ($LASTEXITCODE -eq 0)) {
     Write-Host '     on the new PC: unzip -> install.bat (set up the NEW Discord bot + server) -> start-omnius.bat'
   } else {
     Write-Host '     included: system, docs, memory, full git history, projects\, daybook notes, media archive'
-    Write-Host '     excluded: .env (only .env.example travels), state\, node_modules\, caches, logs'
+    Write-Host '     included: .env - this restores the machine, so it CONTAINS SECRETS' -ForegroundColor Yellow
+    Write-Host '     keep it on a drive you control: no shared folder, no cloud sync, never a release asset' -ForegroundColor Yellow
+    Write-Host '     excluded: state\, node_modules\, caches, logs, and key files (*.pem, serviceAccount*.json, id_rsa, ...)'
     Write-Host '     on the new PC: unzip -> install.bat -> start-omnius.bat'
   }
 } else {
