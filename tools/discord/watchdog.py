@@ -3973,7 +3973,36 @@ def handle_update(text, cid):
     rc, behind = _git("rev-list", "--count", "HEAD..origin/main")
     behind_n = int(behind.strip()) if rc == 0 and behind.strip().isdigit() else 0
     if behind_n == 0:
-        api.send_message(cid, f"✅ already current at `{head}` - nothing new on origin/main")
+        # "Nothing new on origin" is not the same as "everything is shipped",
+        # and on the MAINTAINER's machine the difference is the whole point.
+        # 2026-09-01: he ran !update here with four unpushed commits sitting on
+        # the disk - one of them an !update fix - and got a green tick. He read
+        # it as "shipped", filed the feature as still broken, and he was right
+        # to: nothing had reached a single other instance. A check that can
+        # only ever say "current" is a check that cannot report the one failure
+        # this instance is actually capable of.
+        #
+        # Only for a maintainer. On a USER instance local commits are normal and
+        # expected - !update rebases them on every release - so the same line
+        # there would be noise about something they cannot act on anyway.
+        ahead_line = ""
+        try:
+            import repo_access
+            if repo_access.can_push()[0]:
+                _rc, ahead = _git("rev-list", "--count", "origin/main..HEAD")
+                ahead_n = int(ahead.strip()) if _rc == 0 and ahead.strip().isdigit() else 0
+                if ahead_n:
+                    _rc, lg = _git("log", "--oneline", "origin/main..HEAD", "-n", "8")
+                    more = "" if ahead_n <= 8 else f"\n… and {ahead_n - 8} more"
+                    ahead_line = (f"\n\n⚠ **but {ahead_n} commit(s) here have never been "
+                                  f"pushed** - they exist on this machine only, and no "
+                                  f"other instance can update to them:\n```\n"
+                                  f"{lg.strip()}{more}\n```\n"
+                                  f"`/release` cuts and ships them when you are ready.")
+        except Exception:  # noqa: BLE001 - a check must never break the check
+            pass
+        api.send_message(cid, f"✅ already current at `{head}` - nothing new on "
+                              f"origin/main{ahead_line}")
         return
     if not go:
         _rc, lg = _git("log", "--oneline", "HEAD..origin/main", "-n", "8")

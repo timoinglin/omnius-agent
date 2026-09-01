@@ -3048,6 +3048,21 @@ try:
           "a zip with .env in it must not be pointed at OneDrive by default")
     check("...and says why in the file itself",
           "NOT a consumer cloud folder" in _ex_ini)
+    # == !update must not call an unshipped machine "current" ==================
+    # 2026-09-01: he ran !update on the MAINTAINER instance with four unpushed
+    # commits on disk - one of them an !update fix - and got "already current".
+    # True about origin, useless to him: nothing had reached another instance,
+    # and the green tick is why he filed !update as still broken. The check has
+    # to name the one failure this particular machine can have.
+    _wd_src = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
+    check("!update reports local commits that were never pushed",
+          "origin/main..HEAD" in _wd_src and "never been\"" not in _wd_src
+          and "have never been" in _wd_src)
+    check("...only for a maintainer (a user's local commits are normal, and rebased)",
+          "repo_access" in _wd_src and "can_push()" in _wd_src)
+    check("...and a failing access probe never breaks the check itself",
+          "a check must never break the check" in _wd_src)
+
     check("docs\\BACKUP.md exists (the owner asked for a real guide 2026-09-01)",
           (real_root / "docs" / "BACKUP.md").is_file())
     _bk = (real_root / "docs" / "BACKUP.md").read_text(encoding="utf-8")
