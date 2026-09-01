@@ -147,7 +147,17 @@ DROPPED = STATE / "dropped"   # cancelled mail, kept rather than deleted.
 # travels - .env never does - so a fresh machine still gets the right
 # behaviour. .env overrides per instance; start_run(model=, effort=) overrides
 # per desk for the rare cheap one.
-VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max")
+# `ultracode` is not a sixth level - it is xhigh PLUS standing dynamic-workflow
+# orchestration, which is why the CLI's own slider stops at max and puts it
+# behind a dotted line. It belongs in this list anyway because `--effort
+# ultracode` is what the CLI accepts: its parser maps the word and sets the
+# workflow flag itself (verified 2026-09-01 against 2.1.252 - `--settings` is
+# NOT needed). Before that it was this tuple, not Claude Code, that threw the
+# word away and silently fell back to xhigh on line 2373.
+# Opt-in per desk only (fleet.json override or `!model <desk> effort
+# ultracode`): it orchestrates a workflow on every substantive turn, so the
+# default stays xhigh and the spend stays predictable.
+VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultracode")
 VALID_PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 DEFAULT_MODEL = (api.ENV.get("OMNIUS_MODEL") or "opus").strip()
 DEFAULT_EFFORT = (api.ENV.get("OMNIUS_EFFORT") or "xhigh").strip().lower()
