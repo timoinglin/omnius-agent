@@ -3048,6 +3048,39 @@ try:
           "a zip with .env in it must not be pointed at OneDrive by default")
     check("...and says why in the file itself",
           "NOT a consumer cloud folder" in _ex_ini)
+    # == one instance publishes, every other one receives =====================
+    # Owner, 2026-09-01: "it is now a public repo damn it. only you here commit
+    # push, all other just get updates." The code already knew (repo_access,
+    # release.ps1's preflight); the INSTRUCTIONS a desk actually reads did not.
+    # /release told the desk to `git push` when the tree was ahead - which a
+    # user's tree usually is - so their desk hit a raw GitHub auth rejection
+    # instead of the calm refusal the script had waiting one step later. And the
+    # memory a fresh instance BOOTS with said nothing at all, so every new
+    # install started out believing it published somewhere.
+    print("== downstream instances are update-only ==")
+    _rel_skill = (real_root / ".claude" / "skills" / "release" / "SKILL.md").read_text(encoding="utf-8")
+    check("/release checks repo_access BEFORE it touches git",
+          _rel_skill.index("repo_access.py") < _rel_skill.index("git status -sb"),
+          "otherwise a user's desk pushes first and gets an auth error")
+    check("...and names what a `user` instance should do instead of failing",
+          "role: user" in _rel_skill and "!update" in _rel_skill)
+    check("...and does not send a fresh install to a topic file it does not have",
+          "exists only on the maintainer's instance" in _rel_skill)
+    _seed_status = (real_root / "templates" / "fresh" / "memory" / "orchestrator"
+                    / "status.md").read_text(encoding="utf-8")
+    check("the fresh memory seed says this install receives, not publishes",
+          "does not publish it" in _seed_status)
+    check("...and points at repo_access rather than letting it guess",
+          "repo_access.py" in _seed_status)
+    check("...and says local commits are SAFE (they are rebased, not lost)",
+          "rebases your commits" in _seed_status)
+    check("...and no longer asks a fresh instance where IT pushes",
+          "record where this instance pushes" not in _seed_status)
+    # The seed is read on every boot of a new install; the budget is why it
+    # stays useful instead of becoming another 65 KB status file.
+    check("...and the seed still fits the 9,000-char status budget",
+          len(_seed_status) <= 9000, f"{len(_seed_status)} chars")
+
     # == !update must not call an unshipped machine "current" ==================
     # 2026-09-01: he ran !update on the MAINTAINER instance with four unpushed
     # commits on disk - one of them an !update fix - and got "already current".

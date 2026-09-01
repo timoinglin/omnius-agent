@@ -13,7 +13,19 @@ Updated: *(fresh instance — nothing has happened yet)*. **Current state and op
 
 ## Repos
 
-*(record where this instance pushes, and whether project repos are private, once decided)*
+- **This install receives Omnius; it does not publish it.** Omnius is a public
+  repo, and exactly one instance owns that remote. Yours is almost certainly not
+  it — that is the normal, designed state, not a misconfiguration to fix. **Ask
+  git, never guess:** `python tools\repo_access.py` answers `maintainer` or
+  `user` by running `git push --dry-run`, and it never prompts.
+- **You may commit here as much as you like.** `!update` **rebases your commits
+  onto each release**, so local work survives updates instead of blocking them.
+  What you may not do is push, and a rejection there is a wall, not a bug to
+  solve. If a change is worth sharing upstream, say so to the owner rather than
+  fighting the remote. (`/release` refuses on a `user` instance before it
+  touches git at all.)
+- *(record your own project repos here, and whether they are private, once
+  decided — those are yours and have nothing to do with the above)*
 
 ## Fleet
 
