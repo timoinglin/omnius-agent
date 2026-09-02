@@ -308,6 +308,15 @@ if ($Fresh) {
   $tarArgs += "--exclude=$leaf/daybook/notes",
               "--exclude=$leaf/media", "--exclude=$leaf/memory",
               "--exclude=$leaf/scratch", "--exclude=$leaf/assets/private"
+  # A DESK's own memory\ is biography too, and `--exclude=<leaf>/memory` is an
+  # exact path that never touched it. `.gitignore`'s `memory/` matches at any
+  # depth; this line is the packer's half of the same rule, and it has to be
+  # explicit because templates\*\memory\ is product and must still ship.
+  # Caught 2026-09-02 by the release audit, which refused the build over
+  # daybook\memory\MEMORY.md (a guild id and an email address) - the file is
+  # days old, so no earlier release could have leaked it. Every non-template
+  # memory\ that exists outside projects\ goes here; the suite enforces it.
+  $tarArgs += "--exclude=$leaf/daybook/memory"
   # tools\remotion ships the TOOL - the README and the pinned package.json.
   # What you WRITE with it is yours: compositions under src\ and the mp4s in
   # out\ are content, and a stranger's fresh install has no business carrying

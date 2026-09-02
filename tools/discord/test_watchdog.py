@@ -3857,6 +3857,30 @@ try:
     check("...and has a -Help that explains the three artefacts",
           "-Help" in _pack and "CLEAN RELEASE for a NEW instance" in _pack)
 
+    # A DESK's own memory\ is biography, and `--exclude=$leaf/memory` is an
+    # EXACT path - it never covered daybook\memory\, which arrived when the
+    # daybook desk went `resume: "fresh"` and needed somewhere to keep what
+    # outlives a run. The release audit refused the build over it on
+    # 2026-09-02 (a guild id and an email address); this check is the half
+    # that fails BEFORE a release does. `.gitignore` says `memory/` and so
+    # matches at any depth; the packer has to name each one, because
+    # templates\*\memory\ is product and must still ship.
+    _mem_dirs = []
+    for _md in _rr.rglob("memory"):
+        if not _md.is_dir():
+            continue
+        _rel = _md.relative_to(_rr).as_posix()
+        if (_rel == "memory" or _rel.startswith(("projects/", "templates/", ".git/", ".claude/"))
+                or "node_modules" in _rel):
+            continue
+        _mem_dirs.append(_rel)
+    for _rel in _mem_dirs:
+        check(f"-Fresh excludes the {_rel}\\ desk memory (biography, never a release)",
+              f"--exclude=$leaf/{_rel}" in _pack,
+              "gitignored on disk, but -Fresh packs the FILESYSTEM")
+    check("...and templates\\fresh\\memory\\ is NOT excluded (it IS the seed)",
+          "--exclude=$leaf/templates/fresh/memory" not in _pack)
+
     check("-Fresh selects config by allow-list, not by an .ini filter",
           "$configKeep" in _pack and "-Filter '*.ini'" not in _pack)
     _m = re.search(r"\$configKeep\s*=\s*@\(([^)]*)\)", _pack)
