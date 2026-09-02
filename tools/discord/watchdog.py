@@ -4672,8 +4672,15 @@ def post_reply(channel_id, data):
             note = voice.prepare(p)
             api.send_voice_message(channel_id, note["path"],
                                    note["duration_secs"], note["waveform"])
-        except (voice.VoiceError, api.ApiError) as e:
-            log(f"voice note refused for {Path(p).name} ({e}) - attaching it instead")
+        except Exception as e:
+            # BROAD ON PURPOSE, and the reason is a real outage: on 2026-09-02
+            # ffmpeg was blocked by Windows App Control (WinError 4551, a bare
+            # OSError), the narrow `except (VoiceError, ApiError)` did not hold
+            # it, and three replies died as `.bad` - the owner got neither the
+            # audio nor the text that came with it. A prettier reply is never
+            # worth a lost one: whatever goes wrong on the voice-note path, the
+            # file still goes out as an attachment.
+            log(f"voice note refused for {Path(p).name} ({e!r}) - attaching it instead")
             api.send_message(channel_id, "", files=[p])
 
 

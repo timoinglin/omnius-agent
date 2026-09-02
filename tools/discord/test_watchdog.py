@@ -251,6 +251,50 @@ try:
     wd.flush_outboxes(mapping)
     check("corrupt outbox renamed .bad, no crash", bool(list((wd.OUTBOX / "demo-app.app").glob("*.bad"))))
 
+    print("== voice notes: the fallback must be unconditional ==")
+    # 2026-09-02, the day the feature shipped: ffmpeg was blocked by Windows
+    # App Control (WinError 4551, a bare OSError). voice._run caught only
+    # FileNotFoundError, the narrow `except (VoiceError, ApiError)` in
+    # post_reply did not hold it either, and THREE replies died as `.bad` -
+    # the owner got neither the audio nor the text that travelled with it,
+    # and asked "y el audio?". An audio reply is his accessible version of an
+    # answer (memory\shared\USER.md), so losing one is worse than sending an
+    # ugly one. These pin BOTH halves of the fallback.
+    import voice as _voice                                        # noqa: E402
+    _clip = SAND / "note.mp3"; _clip.write_bytes(b"fake audio")
+    _prep = _voice.prepare
+    for _label, _boom in (("VoiceError", _voice.VoiceError("no encoder")),
+                          ("a bare OSError (App Control, WinError 4551)",
+                           OSError(4551, "blocked by a policy")),
+                          ("anything at all", RuntimeError("surprise"))):
+        sent.clear()
+        _voice.prepare = (lambda e: (lambda p: (_ for _ in ()).throw(e)))(_boom)
+        try:
+            wd.post_reply("CID_APP", {"text": "aqui va", "files": [str(_clip)]})
+            _crashed = False
+        except Exception:
+            _crashed = True
+        check(f"voice note failing with {_label} still delivers the reply",
+              not _crashed and any(f and str(_clip) in [str(x) for x in f]
+                                   for _, _, f in sent),
+              "the file must go out as a plain attachment")
+        check(f"...and the TEXT that came with it survives too ({_label})",
+              any(t == "aqui va" for _, t, _ in sent),
+              "the 2026-09-02 outage lost the text, not just the audio")
+    _voice.prepare = _prep
+    # The narrow catch is what let WinError 4551 through. FileNotFoundError is
+    # itself an OSError, so widening loses nothing and covers policy blocks,
+    # permission errors and a broken exe.
+    # Read the `except` CLAUSES, not the file: the docstring names
+    # FileNotFoundError precisely to explain why it was not enough, and a check
+    # that forbids the explanation punishes the documentation.
+    _voice_src = Path(_voice.__file__).read_text(encoding="utf-8")
+    _excepts = [l.strip() for l in _voice_src.splitlines() if l.strip().startswith("except ")]
+    check("voice._run turns EVERY OSError into a VoiceError, not just a missing file",
+          any(e.startswith("except OSError") for e in _excepts)
+          and not any(e.startswith("except FileNotFoundError") for e in _excepts),
+          f"except clauses: {_excepts}")
+
     print("== build_map ==")
     api.guild_channels = lambda: [
         {"id": "cat_o", "type": 4, "name": "\U0001f39b ORCHESTRATOR", "position": 0},

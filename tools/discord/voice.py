@@ -58,12 +58,22 @@ def is_audio(path):
 
 
 def _run(cmd, **kw):
+    """Run ffmpeg. EVERY way the OS can refuse to start it becomes a VoiceError.
+
+    `except FileNotFoundError` was too narrow and cost the owner three replies
+    on 2026-09-02: Windows App Control blocked ffmpeg.exe with WinError 4551,
+    which is a bare OSError. It escaped this module, escaped the caller's
+    `except (VoiceError, ApiError)`, and took the whole reply down with it -
+    audio AND text, renamed `.bad`, nothing delivered. FileNotFoundError is an
+    OSError, so the narrow case is still covered; the point is that a policy,
+    a permission or a broken exe now falls back like anything else.
+    """
     try:
         return subprocess.run(cmd, capture_output=True, timeout=120, **kw)
-    except FileNotFoundError:
-        raise VoiceError("ffmpeg is not on PATH")
     except subprocess.TimeoutExpired:
         raise VoiceError("ffmpeg timed out")
+    except OSError as e:
+        raise VoiceError(f"cannot run ffmpeg: {e}")
 
 
 def _pcm(src):
