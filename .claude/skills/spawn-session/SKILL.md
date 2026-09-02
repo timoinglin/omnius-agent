@@ -53,7 +53,13 @@ The desk runs `/omnius` itself and writes its own claim — **never hand-author
 python tools\orchestrator\fleet_ops.py status
 ```
 
-and look for `[listening]`. `alive-not-listening` means the session is up but its
-inbox watcher is not — it will not hear Discord. Note it in your reply.
+and look for `[live]` — an interactive terminal whose claim pid is alive. The
+other states are `working` (a headless run owns the desk), `stale` (dead pid, or
+another machine) and `none` (no claim yet: the claim appears once `/omnius` has
+run in the new window, so give it a moment before re-checking).
+
+There is **no** inbox watcher and no claim heartbeat to verify — nothing
+session-side stays armed (root CLAUDE.md §6). A desk without a terminal still
+hears Discord, because the watchdog starts a headless run when mail arrives.
 
 Then update `memory\orchestrator\status.md` (write-through) and confirm briefly.

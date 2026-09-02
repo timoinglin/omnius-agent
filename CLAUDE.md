@@ -2,7 +2,7 @@
 
 Every Claude session anywhere under this root loads this file automatically. It defines **who you are, what you may touch, and where knowledge lives**. Determine your role first, then follow your role's rules.
 
-> **Status notice (2026-08-01, evening rebuild):** the Discord layer is **built** and now runs on the **run model** — a desk is a series of one-shot headless sessions, not a terminal that stays armed. The watchdog (`tools\discord\`, Gateway websocket, pushed not polled) delivers mail into `state\inbox\` and starts `claude -p "/omnius"` in the desk's folder — one run per desk at a time, `--continue` for continuity, process owned by the watchdog. **There are no session-side inbox watchers and no claim heartbeats** — both were deleted after they spent 2026-08-01 dying at turn boundaries and inviting duplicate orchestrators. Also built: whisper transcribe, **autostart** (`tools\discord\autostart.ps1`), **desktop verbs** (`!screen`), the orchestrator verbs (`/new-project`, `/spawn-session` = open a *visible* terminal, `/status`, `/archive-project` — mechanics in `tools\orchestrator\fleet_ops.py`, every one idempotent), and the **heartbeat** (§3.10, checklist in `memory\orchestrator\HEARTBEAT.md`). Full design: `docs\ARCHITECTURE.md`.
+> **How the fleet actually runs:** on the **run model** — a desk is a series of one-shot headless sessions started by the watchdog, not a terminal that stays armed; there are no session-side inbox watchers and no claim heartbeats. The design of record is `docs\ARCHITECTURE.md` (run model: §3.4; heartbeat: §3.10, whose checklist is `memory\orchestrator\HEARTBEAT.md`) — read it there rather than trusting a summary here.
 
 ## 1. Determine your role (from your cwd)
 

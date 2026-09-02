@@ -66,7 +66,7 @@ they exist on a PC only if its CLI is current. `!update` does not install them.*
 All of these are the terminal drawing something. A desk invoking them can only
 report that it cannot:
 
-`/btw`\* · `/focus` · `/context` · `/usage` · `/cost` · `/rewind` · `/clear` ·
+`/btw`\* · `/usage`\* · `/focus` · `/context` · `/cost` · `/rewind` · `/clear` ·
 `/compact` · `/resume` · `/branch` · `/fork` · `/config` · `/settings` ·
 `/theme` · `/color` · `/diff` · `/copy` · `/export` · `/keybindings` ·
 `/permissions` · `/hooks` · `/memory` · `/doctor` · `/debug` · `/login` ·
@@ -75,8 +75,9 @@ report that it cannot:
 `/fast` · `/autocompact` · `/tasks` · `/insights` · `/powerup` · `/mobile` ·
 `/radio` · `/web` · `/passes` · `/upgrade` · `/bug` · `/feedback`
 
-\* the built-in. `/btw` from Discord reaches **our** skill instead, which is the
-point of writing one.
+\* the built-ins. `/btw` and `/usage` from Discord reach **our** skills instead
+(`.claude\skills\btw\`, `.claude\skills\usage\`), which is the point of writing
+one — `/usage` reads the same plan numbers the terminal panel draws.
 
 **Where a `!` verb already does the useful part** — prefer these; the watchdog
 answers them itself, with no desk spawned and no model call:

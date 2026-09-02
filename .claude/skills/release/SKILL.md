@@ -40,7 +40,10 @@ those steps keeps its own brakes.
      `release.ps1` refuses an unpushed tree on purpose ("a release must be a
      pushed commit"). Name the pushed commits in the report.
 2. `powershell -NoProfile -File <root>\release.ps1`
-   — no flags. It preflights (main, clean, pushed), runs **all four suites**,
+   — no flags. It preflights (main, clean, pushed), runs **every suite
+   `release.ps1` lists** (its own `$suites` array — today watchdog, daybook
+   storage, email, documents, telegram; the list is the authority, not a count
+   written here),
    builds `pack.ps1 -Fresh -Yes`, force-moves the `rolling` tag, replaces the
    release assets, and verifies `releases/latest` actually serves the new
    zip. `-SkipTests` exists and is not yours to use — a release that skipped

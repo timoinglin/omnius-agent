@@ -10,12 +10,29 @@ reading difficulties). A spoken answer is not a nicety for him, it is the
 accessible version — so treat "mándamelo en audio" as a first-class request,
 not an extra.
 
-**Engine: Piper, already installed at `C:\ai\piper`.** His instruction,
-2026-09-01, verbatim: *"It is already fully set up — do not reinstall, do not
-upgrade, and do not start any server."*
+## First: find Piper, do not assume it
+
+**The install path is config, not a constant.** Resolve `<PIPER>` before any
+command — `[tts] piper_root` in `config\ai.ini`, default `C:\ai\piper`:
+
+```
+python -c "import sys;sys.path.insert(0,'tools');import omnius_config as c;print((c.load('ai').get('tts') or {}).get('piper_root') or r'C:\ai\piper')"
+```
+
+Then check that `<PIPER>\venv\Scripts\python.exe` actually exists.
+
+**If it does not, stop and say so in one line** — *"no Piper on this machine;
+set `[tts] piper_root` in `config\ai.ini` if it lives elsewhere, or I can answer
+in text"* — and answer in text. **Do not install it, do not download voices, do
+not fall back to a cloud TTS service.** A missing optional capability disables
+exactly one thing and breaks nothing else (`config\ai.ini`'s own rule).
+
+Where Piper *is* installed, his instruction, 2026-09-01, verbatim: *"It is
+already fully set up — do not reinstall, do not upgrade, and do not start any
+server."*
 
 - ⛔ Never `pip install -U piper-tts`. Never `python -m piper.http_server`.
-- ⛔ Never install anything outside `C:\ai\piper` without asking him first.
+- ⛔ Never install anything outside `<PIPER>` without asking him first.
 - CLI and the Python API only.
 
 ## The command that works
@@ -25,8 +42,8 @@ work for one short line, but the file route removes every codepage risk with
 Spanish accents — and your text will have accents.
 
 ```
-C:\ai\piper\venv\Scripts\python.exe -m piper -m es_ES-davefx-medium ^
-    --data-dir C:\ai\piper\voices -i <utf8-text-file> -f <output.wav>
+<PIPER>\venv\Scripts\python.exe -m piper -m es_ES-davefx-medium ^
+    --data-dir <PIPER>\voices -i <utf8-text-file> -f <output.wav>
 ```
 
 - **Spanish (default): `es_ES-davefx-medium`** — Castilian, single speaker.
@@ -38,8 +55,8 @@ C:\ai\piper\venv\Scripts\python.exe -m piper -m es_ES-davefx-medium ^
 - `--length-scale` **above 1.0 is SLOWER**, not faster. Also `--noise-scale`,
   `--noise-w-scale`, `--sentence-silence`, `--volume`.
 
-Python API, tuning and streaming: `C:\ai\piper\README.md` and
-`C:\ai\piper\example.py`, already on disk.
+Python API, tuning and streaming: `<PIPER>\README.md` and `<PIPER>\example.py`,
+on disk beside the install.
 
 **Speed, measured 2026-09-01:** 11.2 s of Spanish audio in 1.7 s wall clock,
 model load included. A three-minute explanation is seconds of work — never a

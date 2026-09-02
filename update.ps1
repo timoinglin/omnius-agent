@@ -262,8 +262,12 @@ function Get-SuiteResult([string]$root) {
   $out = & python (Join-Path $root 'tools\discord\test_watchdog.py') 2>&1
   $rc = $LASTEXITCODE
   $lines = @($out | ForEach-Object { $_.ToString() } | Where-Object { $_.Trim() })
-  $fails = @($lines | Select-String -Pattern '\[FAIL\]' | ForEach-Object {
-    ($_.ToString() -replace '.*\[FAIL\]\s*', '') -split '\s{2,}' | Select-Object -First 1
+  # ANCHORED to the start of the line, like watchdog.py's parser. Matching
+  # "[FAIL]" anywhere turned a PASSING check whose NAME mentions "[FAIL]" (the
+  # gate's own regression test, 2026-09-02) into an "introduced failure", and the
+  # baseline drill rolled a good release back for it.
+  $fails = @($lines | Select-String -Pattern '^\s*\[FAIL\]' | ForEach-Object {
+    ($_.ToString() -replace '^\s*\[FAIL\]\s*', '') -split '\s{2,}' | Select-Object -First 1
   })
   $ran = ($lines.Count -gt 0) -and -not ($rc -ne 0 -and $fails.Count -eq 0)
   return @{ Ran = $ran; Fails = $fails

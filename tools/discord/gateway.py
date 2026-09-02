@@ -75,10 +75,15 @@ WS_TEXT, WS_BINARY, WS_CLOSE, WS_PING, WS_PONG = 0x1, 0x2, 0x8, 0x9, 0xA
 
 
 class GatewayClosed(Exception):
-    """The socket ended. `code` is the websocket close code if we got one."""
-    def __init__(self, msg, code=None):
+    """The socket ended. `code` is the websocket close code if we got one.
+
+    `reconnect_now` marks the endings Discord ASKED for (op 7, close 1001).
+    Those are routine load-shedding, not a fault, and backing off on them adds
+    latency for nothing - the server is telling us to come straight back."""
+    def __init__(self, msg, code=None, reconnect_now=False):
         super().__init__(msg)
         self.code = code
+        self.reconnect_now = reconnect_now or code == 1001
 
 
 # --- RFC 6455 framing ---------------------------------------------------------
@@ -155,6 +160,21 @@ class WebSocket:
         self.timeout = timeout
         self.sock = None
         self._buf = b""
+        # Fragment state belongs to the SOCKET, not to one recv_json call. It
+        # was local, so a read deadline that expired after a non-FIN frame had
+        # been consumed threw the fragments away and the next continuation
+        # frame arrived with frag_op None - i.e. a silently truncated message,
+        # for a timeout that is otherwise routine (the caller polls with sub-
+        # second waits so it can heartbeat on time).
+        self._frags = []
+        self._frag_op = None
+        # A send must never inherit the sub-second recv deadline: sendall()
+        # raising socket.timeout after a PARTIAL frame leaves half a frame on
+        # the wire and desyncs the stream for good. Sends get their own
+        # generous timeout, under a lock so a send cannot land between the
+        # settimeout and the sendall of another one.
+        self._send_lock = threading.Lock()
+        self.send_timeout = timeout
 
     def connect(self):
         u = urllib.parse.urlsplit(self.url)
@@ -175,7 +195,7 @@ class WebSocket:
                "Connection: Upgrade\r\n"
                f"Sec-WebSocket-Key: {key}\r\n"
                "Sec-WebSocket-Version: 13\r\n\r\n")
-        self.sock.sendall(req.encode("ascii"))
+        self._sendall(req.encode("ascii"))
 
         # Read headers only - anything after the blank line is already websocket
         # data and must stay in the buffer.
@@ -200,16 +220,34 @@ class WebSocket:
         if got != accept_key(key):
             raise GatewayClosed("handshake accept key mismatch")
 
+    def _sendall(self, data):
+        """Write `data` with a send-sized timeout, never the recv deadline."""
+        with self._send_lock:
+            sock = self.sock
+            if sock is None:
+                raise GatewayClosed("send on a closed socket")
+            sock.settimeout(self.send_timeout)
+            try:
+                sock.sendall(data)
+            finally:
+                # recv_json sets its own deadline on every read, so restoring
+                # the connect-time timeout is enough to leave no surprises.
+                try:
+                    sock.settimeout(self.timeout)
+                except OSError:
+                    pass
+
     def send_text(self, text):
-        self.sock.sendall(encode_frame(WS_TEXT, text.encode("utf-8")))
+        self._sendall(encode_frame(WS_TEXT, text.encode("utf-8")))
 
     def recv_json(self, timeout):
         """Next JSON message, or None if `timeout` passed with none complete.
 
         Control frames are answered here and never surface to the caller.
+        Fragments left over from a previous (timed-out) call are picked up
+        where they were dropped - see _frags in __init__.
         """
         deadline = time.monotonic() + timeout
-        frags, frag_op = [], None
         while True:
             got = parse_frame(self._buf)
             if got is None:
@@ -234,18 +272,18 @@ class WebSocket:
                 reason = payload[2:].decode("utf-8", "replace")
                 raise GatewayClosed(f"closed by server: {code} {reason}".strip(), code)
             if opcode == WS_PING:
-                self.sock.sendall(encode_frame(WS_PONG, payload))
+                self._sendall(encode_frame(WS_PONG, payload))
                 continue
             if opcode == WS_PONG:
                 continue
 
             if opcode in (WS_TEXT, WS_BINARY):
-                frags, frag_op = [payload], opcode
+                self._frags, self._frag_op = [payload], opcode
             elif opcode == 0x0:                     # continuation
-                frags.append(payload)
-            if fin and frag_op is not None:
-                data = b"".join(frags)
-                frags, frag_op = [], None
+                self._frags.append(payload)
+            if fin and self._frag_op is not None:
+                data = b"".join(self._frags)
+                self._frags, self._frag_op = [], None
                 try:
                     return json.loads(data.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError) as e:
@@ -254,8 +292,8 @@ class WebSocket:
     def close(self):
         try:
             if self.sock:
-                self.sock.sendall(encode_frame(WS_CLOSE, struct.pack(">H", 1000)))
-        except OSError:
+                self._sendall(encode_frame(WS_CLOSE, struct.pack(">H", 1000)))
+        except (OSError, GatewayClosed):
             pass
         try:
             if self.sock:
@@ -291,6 +329,14 @@ class Gateway:
         self.fatal = None
         self.last_event_at = 0.0        # monotonic; watchdog reports it as health
         self.reconnects = 0
+        # Instance state, not a local of _run_forever, because the thing that
+        # PROVES a connection was good is READY/RESUMED - and that arrives deep
+        # inside _session(). While this was a local it was only ever reset on a
+        # normal return from _session(), which happens on stop() alone: every
+        # real disconnect leaves through GatewayClosed, so after ~6 drops the
+        # ramp sat at 60s forever and a socket that reconnected fine still took
+        # a minute to come back.
+        self.backoff = 1.0
         self._nagged = False            # a fixable refusal is logged once, not every retry
         self.retry_after = FIXABLE_RETRY_SECONDS   # tests shorten this
 
@@ -302,6 +348,19 @@ class Gateway:
         self._seq = None
 
     # -- lifecycle --
+
+    def event_age(self):
+        """Seconds since the last pushed message, or None if none has arrived.
+
+        Published in the watchdog's beacon so "the socket says connected" can be
+        told apart from "the socket has actually carried something". It is NOT a
+        reconnect trigger: on an idle bus silence is the correct behaviour and
+        indistinguishable from deafness. The liveness signal that CAN tell them
+        apart is the heartbeat ACK, and _session already drops a connection that
+        stops acking (the zombie check)."""
+        if not self.last_event_at:
+            return None
+        return max(0.0, time.monotonic() - self.last_event_at)
 
     def retry_delay_for(self, code):
         """-> seconds to wait before trying this close code again, or None when
@@ -326,15 +385,17 @@ class Gateway:
             ws.close()
 
     def _run_forever(self):
-        backoff = 1.0
+        self.backoff = 1.0
         while not self._stop.is_set():
+            immediate = False
             try:
                 self._session()
-                backoff = 1.0                    # a clean session resets the ramp
+                self.backoff = 1.0               # a clean session resets the ramp
             except GatewayClosed as e:
                 self.connected = False
                 if self._stop.is_set():
                     return
+                immediate = e.reconnect_now
                 if e.code in FATAL_CLOSE:
                     self.fatal = FATAL_CLOSE[e.code]
                     retry_in = self.retry_delay_for(e.code)
@@ -358,7 +419,8 @@ class Gateway:
                         return
                     self.fatal = None            # about to try again: not fatal any more
                     continue
-                self.log(f"gateway: {e} - reconnecting in {backoff:.0f}s")
+                self.log(f"gateway: {e} - reconnecting "
+                         + ("now" if immediate else f"in {self.backoff:.0f}s"))
             except (OSError, ssl.SSLError, ValueError) as e:
                 self.connected = False
                 # stop() closes the socket out from under a blocked recv, which
@@ -366,20 +428,25 @@ class Gateway:
                 # fault - saying "reconnecting" here would be a lie in the log.
                 if self._stop.is_set():
                     return
-                self.log(f"gateway: {type(e).__name__}: {e} - reconnecting in {backoff:.0f}s")
+                self.log(f"gateway: {type(e).__name__}: {e} - reconnecting in {self.backoff:.0f}s")
             except Exception as e:                # never let the thread die quietly
                 self.connected = False
                 self.log(f"gateway: unexpected {type(e).__name__}: {e} - "
-                         f"reconnecting in {backoff:.0f}s")
+                         f"reconnecting in {self.backoff:.0f}s")
             finally:
                 self.connected = False
                 if self._ws:
                     self._ws.close()
                     self._ws = None
-            if self._stop.wait(backoff):
+            if immediate:
+                # Discord asked (op 7 / close 1001). Waiting insults the ask and
+                # costs push latency; the ramp is for FAULTS.
+                self.reconnects += 1
+                continue
+            if self._stop.wait(self.backoff):
                 return
             self.reconnects += 1
-            backoff = min(backoff * 2, 60.0)     # 1,2,4..60s - never a hot loop
+            self.backoff = min(self.backoff * 2, 60.0)   # 1,2,4..60s - never a hot loop
 
     # -- one connection --
 
@@ -422,7 +489,8 @@ class Gateway:
                     self._send({"op": OP_HEARTBEAT, "d": self._seq})
                     next_beat = time.monotonic() + interval
                 elif op == OP_RECONNECT:
-                    raise GatewayClosed("server asked us to reconnect")
+                    raise GatewayClosed("server asked us to reconnect",
+                                        reconnect_now=True)
                 elif op == OP_INVALID_SESSION:
                     # d=false means the session cannot be resumed: forget it so
                     # the next attempt IDENTIFYs fresh instead of looping.
@@ -462,6 +530,11 @@ class Gateway:
     def _dispatch(self, msg):
         t = msg.get("t")
         d = msg.get("d") or {}
+        if t in ("READY", "RESUMED"):
+            # THE proof that a connection works. Anything that follows is a new
+            # fault and deserves the ramp from the bottom, not the tail of the
+            # last one.
+            self.backoff = 1.0
         if t == "READY":
             self._session_id = d.get("session_id")
             self._resume_url = d.get("resume_gateway_url")

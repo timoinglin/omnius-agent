@@ -15,9 +15,12 @@ powershell -File tools\update_drills.ps1   # 28 drills — the updater, against 
 powershell -File install.ps1 -CheckOnly    # environment doctor (report-only)
 ```
 
-**All five suites gate every release** — `release.ps1` runs exactly this list
-before it will cut a zip, so a reader who runs only the first two gets a
-surprise at release time. Counts drift upward; the release is the enforcement,
+**Every suite `release.ps1` lists gates every release** — its `$suites` array is
+the authority (today: `test_watchdog`, `test_storage`, `test_email`,
+`test_documents`, `test_telegram`), and it must be green before it will cut a
+zip, so a reader who runs only the first two gets a surprise at release time.
+The last three commands above are not in that array — run them anyway, they
+catch what the suites cannot. Counts drift upward; the release is the enforcement,
 this table is the map.
 
 `test_watchdog.py` needs no Discord and no network: it monkeypatches the API's network calls and isolates all state into a temp sandbox.

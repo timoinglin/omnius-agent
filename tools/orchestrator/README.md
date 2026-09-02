@@ -40,22 +40,25 @@ a failure and the user's natural next move is to say it again. So:
 - A half-finished run is fixed by running it again; the `discord:` line says
   `FAILED … re-run to finish` when there is more to do.
 
-## `status` tells alive from listening
+## `status` tells a busy desk from an empty one
+
+`claim_state()` returns exactly these:
 
 | State | Means |
 |---|---|
-| `listening` | claim fresh **and** an inbox watcher process alive |
-| `alive-not-listening` | session up, nothing watching its inbox — **it is deaf** |
+| `working` | an active headless run — the run lease's pid is alive |
+| `live` | an interactive terminal — the claim's pid is alive |
 | `stale` | dead pid on this machine, or a claim from another machine |
+| `none` | no claim at all |
 
-Never report health from claim data alone (RELIABILITY R2): the heartbeat is
-written by a *separate* process, so it keeps ticking while a session sits frozen
-on a permission dialog. `--prune` removes only `stale` claims — a dead pid here,
-or a claim from another machine, neither of which can be a session you would
-disturb. Expect a handful right after the workspace moves to a new PC.
-
-`spawning` lists only leases still inside the boot grace, so long-dead spawn
-leases do not show up as phantom work.
+Since the run model (2026-08-01) there is no per-desk watcher and no claim
+heartbeat, so there is no `listening` state to report: an empty desk is still
+reachable, because the watchdog starts a run when mail arrives. Never report
+health from claim data alone (RELIABILITY R2) — every state above is decided by
+checking a real pid, not by trusting a timestamp. `--prune` removes only `stale`
+claims — a dead pid here, or a claim from another machine, neither of which can
+be a session you would disturb. Expect a handful right after the workspace moves
+to a new PC.
 
 ## Notes
 

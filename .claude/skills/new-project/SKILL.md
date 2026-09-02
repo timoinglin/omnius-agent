@@ -53,13 +53,21 @@ category and runs a new session for that task, and this session has all
 context window and new project memory for the task."* You coordinate; the
 desk works. Never do the project's work in your own context.
 
-For each component with work starting **now**, write the task brief as a bus
-envelope — `state\inbox\<name>.<component>\<unix-ms>.json`:
+For each component with work starting **now**, send the brief as **desk mail**:
+one file written with the `Write` tool into your **own outbox** —
+`state\outbox\orchestrator\<unix-ms>.json` (`docs\DELEGATION.md`):
 
 ```json
-{ "id": "brief-<unix-ms>", "from": "omnius", "channel": null, "channelId": null,
-  "category": "📁 <name>", "ts": "<iso>", "text": "<the brief: goal, constraints, where to reply>", "files": [] }
+{ "to": "<name>.<component>",
+  "text": "<the brief: goal, constraints, where to reply>" }
 ```
+
+`to` is the whole discriminator. **Never write into `state\inbox\` yourself** —
+the watchdog owns that directory: it converts your outbox file into a proper
+`kind: "desk"` envelope (deterministic id, `thread`, `hops`, `origin`), mirrors
+the hop into Discord and dedupes redeliveries. A hand-written inbox file gets
+none of that. Add `origin` (`{"channelId": "...", "from": "owner"}`) when the
+chain started from a message of his, so the answer finds its way back to him.
 
 The watchdog starts a headless session on that desk within seconds — fresh
 context window, the project's own `CLAUDE.md` and `memory\`, no terminal, no
@@ -79,7 +87,7 @@ and its desks (root CLAUDE.md §3: every fleet mutation updates status in the sa
 action — you must survive your own restart).
 
 Then confirm in one phone-readable line, e.g.
-*"✅ recipe-app live — app + backend, 2 desks listening, #recipe-app created."*
+*"✅ recipe-app live — app + backend, both briefed, #recipe-app created."*
 Say what actually happened: if Discord failed, say so and say you can re-run.
 
 ## The demo project

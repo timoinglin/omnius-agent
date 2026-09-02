@@ -26,6 +26,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -655,7 +656,7 @@ def alert_no_cli():
         return False
 
 
-def write_beacon(channels, gateway=None):
+def write_beacon(channels, gateway=None, event_age=None):
     """Stamp proof that we are still LISTENING.
 
     lock.json says a process exists; the beacon says it is still listening.
@@ -677,6 +678,14 @@ def write_beacon(channels, gateway=None):
                 "claude": claude_exe()}
         if gateway is not None:
             data["gateway"] = bool(gateway)
+        if event_age is not None:
+            # How long since the socket last CARRIED something, as opposed to
+            # merely claiming to be connected. gateway.py recorded this and
+            # nobody ever read it, so a socket that went quiet looked identical
+            # to a busy one. Reported, not acted on: on an idle bus silence is
+            # correct, and the heartbeat-ACK zombie check in gateway.py is the
+            # signal that can actually tell deafness apart.
+            data["gatewayEventAge"] = round(float(event_age), 1)
         write_json_atomic(WD_STATE / "beacon.json", data)
     except OSError:
         pass
@@ -4789,6 +4798,84 @@ def outbox_files(data):
     return [p for p in (f or []) if isinstance(p, str)]
 
 
+def _under(path, root):
+    """True if `path` (already resolved) is `root` or inside it."""
+    try:
+        root = Path(root).resolve()
+    except (OSError, ValueError):
+        return False
+    return path == root or root in path.parents
+
+
+def attachment_roots(session):
+    """The folders a desk's outbox `files` may name.
+
+    Everything else is out of bounds. `files` used to accept ANY absolute path
+    and nothing on this side looked at it, so one line of model-written JSON
+    could post `.env`, a browser profile or somebody's documents into a channel
+    - the exact class the redactor exists to prevent, walking straight past it
+    because an ATTACHMENT IS NEVER REDACTED (same limitation !screen documents).
+    """
+    roots = [
+        MEDIA,                        # the durable asset archive
+        ROOT / "state" / "voice",     # voice.py's converted-clip cache
+        OUTBOX / session,             # anything the desk staged next to its reply
+        cwd_for(session),             # the desk's own folder
+        # Session scratchpads: %TEMP%\claude\<slug>\<id>\scratchpad, where a
+        # desk is told to put working files.
+        Path(tempfile.gettempdir()) / "claude",
+    ]
+    return [r for r in roots if r is not None]
+
+
+def attachment_denied_roots():
+    """Never sendable, even though they sit inside a root above (the
+    orchestrator's desk IS the workspace root, so denial has to win)."""
+    return [ROOT / "state" / "web", ROOT / "config", ROOT / ".claude"]
+
+
+def attachment_verdict(session, p):
+    """-> (ok, reason). `reason` is empty when ok, else why it was refused."""
+    try:
+        rp = Path(p).resolve()
+    except (OSError, ValueError) as e:
+        return False, f"unreadable path ({type(e).__name__})"
+    if rp.name.lower().startswith(".env"):
+        return False, "a `.env` file is never sendable"
+    for d in attachment_denied_roots():
+        if _under(rp, d):
+            return False, f"`{Path(d).name}\\` holds secrets and is never sendable"
+    for r in attachment_roots(session):
+        if _under(rp, r):
+            return True, ""
+    return False, "outside the folders this desk may send from"
+
+
+def confine_attachments(session, data):
+    """-> (data, refusals). Drops out-of-bounds `files` and says so in the text.
+
+    The reply still goes out: losing the answer because one path was wrong is a
+    worse failure than sending it without the file, and a silent drop would
+    leave a desk convinced it had delivered something."""
+    refusals = []
+    kept = []
+    for p in outbox_files(data):
+        ok, why = attachment_verdict(session, p)
+        if ok:
+            kept.append(p)
+        else:
+            refusals.append((p, why))
+            log(f"outbox {session}: attachment refused - {p} ({why})")
+    if not refusals:
+        return data, refusals
+    note = "\n".join(f"⚠️ attachment refused: `{Path(p).name}` — {why}"
+                     for p, why in refusals)
+    out = dict(data)
+    out["files"] = kept
+    out["text"] = ((data.get("text") or "").rstrip() + "\n" + note).strip()
+    return out, refusals
+
+
 def post_reply(channel_id, data):
     """Post one outbox entry - and send audio as a native VOICE NOTE.
 
@@ -4862,6 +4949,9 @@ def flush_outboxes(mapping):
             if not cid:
                 log(f"outbox {session}: no channel mapped - kept")
                 continue
+            # After channel resolution, before anything leaves: an attachment
+            # cannot be redacted, so the only control is WHERE it may come from.
+            data, _refused = confine_attachments(session, data)
             try:
                 post_reply(cid, data)
                 for p in outbox_files(data):  # sent copies -> durable archive
@@ -6255,7 +6345,8 @@ def main():
             # Either transport being demonstrably healthy earns the stamp, so the
             # beacon stays ~3s fresh however messages are currently arriving.
             if consecutive_deaf == 0 or live:
-                write_beacon(len(mapping), gateway=live)
+                write_beacon(len(mapping), gateway=live,
+                             event_age=gw.event_age() if gw is not None else None)
                 # O2: beacon stamped on a healthy tick = the running code has
                 # PROVEN it took over. Confirm a pending update (or break the
                 # news of a revert), exactly once.

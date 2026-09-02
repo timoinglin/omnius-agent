@@ -240,7 +240,11 @@ try:
     print("== flush_outboxes (+ media archive) ==")
     sent.clear()
     (wd.OUTBOX / "demo-app.app").mkdir(parents=True)
-    asset = SAND / "shot.png"; asset.write_bytes(b"\x89PNG fake")
+    # Inside the sending desk's own folder: attachments are confined now
+    # (confine_attachments), and a path from nowhere in particular is exactly
+    # what is refused.
+    asset = SAND / "projects" / "demo-app" / "app" / "shot.png"
+    asset.write_bytes(b"\x89PNG fake")
     (wd.OUTBOX / "demo-app.app" / "1700000000000.json").write_text(
         json.dumps({"text": "shot", "channel": "app", "files": [str(asset)]}), encoding="utf-8")
     mapping = {"CID_APP": T("app", "demo-app.app")}
@@ -251,6 +255,47 @@ try:
     (wd.OUTBOX / "demo-app.app" / "bad.json").write_text("{not json", encoding="utf-8")
     wd.flush_outboxes(mapping)
     check("corrupt outbox renamed .bad, no crash", bool(list((wd.OUTBOX / "demo-app.app").glob("*.bad"))))
+
+    print("== outbox attachments are confined ==")
+    # `files` accepted ANY absolute path and an ATTACHMENT IS NEVER REDACTED -
+    # so one line of model-written JSON could post .env, a browser profile or
+    # somebody's documents into a channel, straight past the filter that exists
+    # to stop exactly that. The reply must still go out: losing the answer over
+    # a bad path is a worse failure than losing the file.
+    _ok, _why = wd.attachment_verdict("demo-app.app", str(asset))
+    check("a file in the sending desk's own folder is sendable", _ok, _why)
+    check("a file in media\\ is sendable",
+          wd.attachment_verdict("demo-app.app", str(wd.MEDIA / "x.png"))[0])
+    check("a converted clip in state\\voice\\ is sendable",
+          wd.attachment_verdict("demo-app.app", str(SAND / "state" / "voice" / "n.ogg"))[0])
+    check("another desk's folder is not sendable from here",
+          not wd.attachment_verdict("demo-app.app",
+                                    str(SAND / "projects" / "demo-app" / "backend" / "x.png"))[0])
+    for _bad, _label in ((SAND / ".env", ".env at the root"),
+                         (SAND / "projects" / "demo-app" / "app" / ".env.local",
+                          ".env.local sitting in the desk's OWN folder"),
+                         (SAND / "state" / "web" / "session.json", "state\\web\\"),
+                         (SAND / "config" / "omnius.ini", "config\\"),
+                         (SAND / ".claude" / "settings.json", ".claude\\")):
+        check(f"{_label} is refused", not wd.attachment_verdict("demo-app.app", str(_bad))[0])
+    check("the orchestrator's desk being ROOT does not unlock config\\",
+          not wd.attachment_verdict("orchestrator", str(SAND / "config" / "omnius.ini"))[0])
+    check("a path outside the workspace entirely is refused",
+          not wd.attachment_verdict("demo-app.app", str(Path(SAND).parent / "elsewhere.txt"))[0])
+
+    sent.clear()
+    _secret = SAND / ".env"; _secret.write_text("DISCORD_BOT_TOKEN=x", encoding="utf-8")
+    (wd.OUTBOX / "demo-app.app" / "1700000000001.json").write_text(
+        json.dumps({"text": "here you go", "channel": "app",
+                    "files": [str(asset), str(_secret)]}), encoding="utf-8")
+    wd.flush_outboxes(mapping)
+    _files = [str(x) for x in (sent[-1][2] or [])]
+    check("the refused attachment does not leave", str(_secret) not in _files)
+    check("...the allowed one still does", str(asset) in _files)
+    check("...and the reply says which attachment was refused and why",
+          "refused" in sent[-1][1] and ".env" in sent[-1][1])
+    check("the text of the reply is not lost with the file", "here you go" in sent[-1][1])
+    _secret.unlink()
 
     print("== voice notes: the fallback must be unconditional ==")
     # 2026-09-02, the day the feature shipped: ffmpeg was blocked by Windows
@@ -7552,6 +7597,17 @@ try:
     _ok, _tail, _fails, _ran = wd._update_suite()
     check("suite gate: a suite that RAN and failed is still judged on its names",
           _ran is True and _fails == frozenset({"a real check"}))
+    # A PASSING check whose NAME mentions "[FAIL]" (this very block) is not a
+    # failure. update.ps1 matched the marker anywhere on the line and the
+    # baseline drill rolled a good release back for it (2026-09-02).
+    wd.subprocess.run = _fake_suite_proc(
+        0, "  [PASS] a crash with no [FAIL] lines is 'did not run'\n==== 1 passed ====\n")
+    _ok, _tail, _fails, _ran = wd._update_suite()
+    check("suite gate: [FAIL] inside a PASS line's name is not a failure",
+          _ran is True and _ok is True and not _fails)
+    _ps1 = (Path(wd.__file__).resolve().parents[2] / "update.ps1").read_text(encoding="utf-8")
+    check("update.ps1 anchors its [FAIL] parser to the start of the line",
+          "'^\\s*\\[FAIL\\]'" in _ps1 and "'.*\\[FAIL\\]" not in _ps1)
 
     def _boom(argv, **kw):
         raise wd.subprocess.TimeoutExpired(argv, 600)
@@ -8529,6 +8585,119 @@ try:
     check("the retry interval is minutes, not a hot loop",
           gwm.FIXABLE_RETRY_SECONDS >= 300)
 
+    # The reconnect ramp used to be a LOCAL of _run_forever, reset only when
+    # _session() returned normally - which happens on stop() and nowhere else.
+    # Every real disconnect leaves through GatewayClosed, so after ~6 drops a
+    # perfectly healthy reconnect still waited a full minute, forever.
+    g6 = gwm.Gateway("tok", log=lambda *a: None, ws_factory=FakeWS)
+    g6.backoff = 60.0
+    g6._dispatch(READY)
+    check("READY resets the reconnect ramp (a connection that works proves it)",
+          g6.backoff == 1.0)
+    g6.backoff = 32.0
+    g6._dispatch({"op": 0, "t": "RESUMED", "d": {}})
+    check("RESUMED resets it too", g6.backoff == 1.0)
+    # And through the real loop: a drop, a good session, another drop must not
+    # be charged the ramp of the first one.
+    g7 = gwm.Gateway("tok", log=lambda *a: None, ws_factory=FakeWS)
+    _ev7 = threading.Event()
+    _ev7.wait = lambda t=None: False     # the ramp is measured, never slept
+    g7._stop = _ev7
+    _n7 = []
+    def _fault_then_fatal():
+        _n7.append(1)
+        raise gwm.GatewayClosed("drop", 1006 if len(_n7) == 1 else 4004)
+    g7._session = _fault_then_fatal
+    g7._run_forever()
+    _after_fault = g7.backoff
+    g7._dispatch(READY)
+    check("a fault ramps, and a later READY clears it back to 1s",
+          _after_fault == 2.0 and g7.backoff == 1.0)
+
+    # Discord ASKING us to come back (op 7, close 1001) is routine load
+    # shedding, not a fault. Backing off there is pure added latency.
+    check("op7 is flagged reconnect-now", gwm.GatewayClosed("x", reconnect_now=True).reconnect_now)
+    check("close 1001 (going away) is reconnect-now too",
+          gwm.GatewayClosed("x", 1001).reconnect_now)
+    check("an ordinary drop is not", not gwm.GatewayClosed("x", 1006).reconnect_now)
+    g8 = gwm.Gateway("tok", log=lambda *a: None, ws_factory=FakeWS)
+    _waits = []
+    _ev = threading.Event()
+    _ev.wait = lambda t=None: (_waits.append(t), False)[1]
+    g8._stop = _ev
+    _sessions = []
+    def _two_sessions():
+        # op7 first (must come straight back), then a fatal close so the loop
+        # ends without this test having to sleep or thread.
+        _sessions.append(1)
+        if len(_sessions) == 1:
+            raise gwm.GatewayClosed("server asked us to reconnect", reconnect_now=True)
+        raise gwm.GatewayClosed("nope", 4004)
+    g8._session = _two_sessions
+    g8._run_forever()
+    check("an op7 reconnect does not wait on the ramp",
+          _waits == [] and len(_sessions) == 2)
+    check("...but it is still counted as a reconnect", g8.reconnects >= 1)
+
+    import socket as _sockmod
+    print("== gateway: framing survives a timeout between frames ==")
+    # recv_json polls with sub-second deadlines so it can heartbeat on time. The
+    # fragment buffer was a LOCAL of that call, so a deadline expiring after a
+    # non-FIN frame had been consumed threw the first half away and the
+    # continuation arrived orphaned - a silently truncated message.
+    class _SplitSock:
+        """Hands out one chunk per recv(), then times out once, then the rest."""
+        def __init__(self, chunks): self.chunks = list(chunks)
+        def settimeout(self, t): pass
+        def recv(self, n):
+            item = self.chunks.pop(0)
+            if item is None:
+                raise _sockmod.timeout("deadline")
+            return item
+        def sendall(self, b): pass
+        def close(self): pass
+    _first = bytes([0x01, 5]) + b'{"a"'.ljust(5, b" ")   # FIN=0, text
+    _first = bytes([0x01, 4]) + b'{"a"'
+    _cont = bytes([0x80, 4]) + b':1}\n'
+    _ws = gwm.WebSocket("wss://x/")
+    _ws.sock = _SplitSock([_first, None, _cont])
+    check("a half-received message returns None at the deadline, not garbage",
+          _ws.recv_json(0.05) is None)
+    check("the fragments are kept on the socket, not the call", _ws._frag_op is not None)
+    check("the message completes on the next call",
+          _ws.recv_json(0.05) == {"a": 1})
+
+    # A send inheriting the recv deadline (often <1s) raises socket.timeout in
+    # the middle of a frame and desyncs the stream for good.
+    class _TimeoutSock:
+        def __init__(self): self.timeouts = []
+        def settimeout(self, t): self.timeouts.append(t)
+        def sendall(self, b): self.sent_with = self.timeouts[-1]
+        def close(self): pass
+    _ts = _TimeoutSock()
+    _ws2 = gwm.WebSocket("wss://x/", timeout=30)
+    _ws2.sock = _ts
+    _ts.settimeout(0.2)                       # as a recv poll would have left it
+    _ws2.send_text('{"op":1}')
+    check("a send gets its own generous timeout, never the recv deadline",
+          _ts.sent_with == _ws2.send_timeout and _ws2.send_timeout >= 10)
+    check("...and the socket is left with the connect timeout afterwards",
+          _ts.timeouts[-1] == _ws2.timeout)
+
+    # last_event_at was written on every push and read by nobody: a socket that
+    # had gone quiet looked exactly like a busy one. Reported, not acted on -
+    # on an idle bus silence is CORRECT, and the heartbeat-ACK zombie check is
+    # the signal that can actually tell deafness apart.
+    g9 = gwm.Gateway("tok", log=lambda *a: None, ws_factory=FakeWS)
+    check("no push yet reads as no age, not as zero", g9.event_age() is None)
+    g9.last_event_at = time.monotonic() - 5
+    check("event_age reports how long the socket has been silent",
+          4 <= g9.event_age() <= 60)
+    wd.write_beacon(9, gateway=True, event_age=g9.event_age())
+    _b2 = json.loads((wd.WD_STATE / "beacon.json").read_text(encoding="utf-8"))
+    check("the beacon publishes gateway silence, so connected != carrying",
+          isinstance(_b2.get("gatewayEventAge"), (int, float)))
+
     print("== watchdog: two transports, one handler ==")
     check("SeenIds suppresses a repeat", wd.SeenIds().add("1") and not (
         (lambda s: (s.add("1"), s.add("1"))[1])(wd.SeenIds())))
@@ -8805,6 +8974,38 @@ try:
     check("the verbs write through to orchestrator status",
           all("status.md" in (_skills / v / "SKILL.md").read_text(encoding="utf-8")
               for v in ("new-project", "spawn-session", "archive-project")))
+
+    # == the verbs teach the vocabulary the CODE speaks ========================
+    # /status and /spawn-session taught `listening` / `alive-not-listening` and a
+    # "claim heartbeat written by a separate process" long after the run model
+    # (2026-08-01) deleted both the watchers and the heartbeat. A desk reading
+    # the skill looked for a state fleet_ops cannot return, and called a
+    # perfectly reachable desk deaf. The states are read off the function.
+    import inspect as _insp
+    _cs_src = _insp.getsource(fo.claim_state)
+    _cs_states = set(re.findall(r'return "([a-z-]+)"', _cs_src))
+    check("claim_state returns the four run-model states and no more",
+          _cs_states == {"working", "live", "stale", "none"}, f"got {_cs_states}")
+    _status_skill = (_skills / "status" / "SKILL.md").read_text(encoding="utf-8")
+    for _st in sorted(_cs_states):
+        check(f"/status documents the `{_st}` state it will actually see",
+              f"`{_st}`" in _status_skill)
+    for _gone in ("listening", "alive-not-listening"):
+        check(f"/status no longer teaches the deleted `{_gone}` vocabulary",
+              _gone not in _status_skill,
+              "no desk-side watcher exists to be listening or deaf")
+    _spawn_skill = (_skills / "spawn-session" / "SKILL.md").read_text(encoding="utf-8")
+    check("/spawn-session tells the desk to look for `[live]` after a spawn",
+          "[live]" in _spawn_skill and "alive-not-listening" not in _spawn_skill)
+    # Delegation goes through the sender's OWN outbox with a `to` field; the
+    # watchdog owns state\inbox (deterministic ids, thread/hops/origin, dedupe,
+    # the Discord mirror). A hand-written inbox file gets none of that.
+    _np_skill = (_skills / "new-project" / "SKILL.md").read_text(encoding="utf-8")
+    check("/new-project briefs a desk via outbox desk mail, not by hand",
+          "outbox" in _np_skill and '"to"' in _np_skill)
+    check("...and never tells the orchestrator to write into state\\inbox",
+          not re.search(r"inbox[\\/][<\w]", _np_skill),
+          "the watchdog owns the inbox; hand-written envelopes skip every guarantee")
     fo.PROJECTS, fo.TEMPLATE = _real_projects, _real_tmpl
 
     # -------------------------------------------------------------- heartbeat

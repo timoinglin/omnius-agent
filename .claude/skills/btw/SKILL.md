@@ -48,7 +48,7 @@ here. A `/<word>` from Discord reaches a desk and is invoked with the **Skill**
 tool. That works for a skill; it cannot work for a command implemented by the
 terminal UI, because a headless run has no UI to drive:
 
-`/focus` · `/context` · `/usage` · `/cost` · `/rewind` · `/model` (use `!model`)
+`/focus` · `/context` · `/cost` · `/rewind` · `/model` (use `!model`)
 · `/clear` · `/compact` · `/resume` · `/config` · `/theme` · `/diff` · `/copy`
 · `/keybindings` · `/permissions` · `/hooks` · `/memory` · `/doctor` · `/login`
 · `/exit` · `/ide` · `/desktop` · `/teleport` · `/remote-control` · `/agents`
