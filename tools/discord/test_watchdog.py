@@ -3871,6 +3871,35 @@ try:
           "config/$rel" in _pack and "*.example." in _pack)
     check("...and no longer keeps fleet.json by name",
           "$configKeep = @('README.md')" in _pack)
+    # == /usage: the plan percentages, reachable from a phone ==================
+    # He asked for the 5-hour and weekly bars "como en la APP". The first answer
+    # was that they are unreachable - nothing caches them on disk and there is no
+    # `claude usage` subcommand. Both true, and the conclusion was still wrong:
+    # the built-in /usage works HEADLESS, so `claude -p "/usage"` prints the same
+    # numbers. Assumed instead of tested. His reply is why it matters: "si estoy
+    # en discord no puedo poner /usage en terminal".
+    print("== /usage skill ==")
+    _usage_py = real_root / "tools" / "usage.py"
+    check("tools\\usage.py exists", _usage_py.is_file())
+    _us = _usage_py.read_text(encoding="utf-8")
+    check("...and asks the CLI headlessly, which is the whole trick",
+          '"claude", "-p", "/usage"' in _us)
+    check("...and filters the dead-Write-rule warnings that would bury the answer",
+          "Permission deny rule" in _us)
+    check("...but filters them BY SHAPE, so a new warning still surfaces",
+          "NOISE" in _us and "re.compile" in _us)
+    check("...and never raises - a usage check must not break a desk",
+          "FileNotFoundError" in _us and "TimeoutExpired" in _us)
+    check("...and reports the REASON on failure rather than a bare failure",
+          "could not read plan usage" in _us)
+    _usage_skill = real_root / ".claude" / "skills" / "usage" / "SKILL.md"
+    check("the /usage skill exists (he types it from Discord)", _usage_skill.is_file())
+    _uk = _usage_skill.read_text(encoding="utf-8")
+    check("...and says these are plan limits, NOT the cost question",
+          "not** cost" in _uk or "not* cost" in _uk or "It is **not** cost" in _uk)
+    check("...and passes on that the numbers are this machine's view only",
+          "not other devices" in _uk or "only" in _uk)
+
     # == the 2026-09-02 release leak, both halves ==============================
     # A release went out carrying config\signatures\ (a real email signature,
     # its logo, a real address) and docs\HANDOFF-2026-08-12.md (a real
