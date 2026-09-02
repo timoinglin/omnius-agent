@@ -787,6 +787,33 @@ def send_message(channel_id, text, files=None):
     return out
 
 
+IS_VOICE_MESSAGE = 1 << 13   # 8192 - the flag that makes Discord draw a player
+
+
+def send_voice_message(channel_id, path, duration_secs, waveform):
+    """Post ONE Ogg/Opus file as a native voice note - the inline player, not a
+    download. `voice.prepare()` makes the three arguments; see its docstring for
+    why all three must travel together.
+
+    Shape rules, both from Discord and both silent failures if broken: exactly
+    one attachment, and NO content - text belongs in its own message. The
+    attachment's `id` is what binds this metadata to `files[0]` in the
+    multipart body, so the two indices must stay in step.
+
+    Raises ApiError like any other send. That is the point: the caller's
+    fallback to a plain attachment is what keeps an audio reply arriving at all
+    if Discord ever refuses voice notes from bots (the docs do not promise it).
+    """
+    p = Path(path)
+    if not p.exists():
+        raise ApiError(f"voice note file missing: {p}")
+    body = {"flags": IS_VOICE_MESSAGE,
+            "attachments": [{"id": 0, "filename": p.name,
+                             "duration_secs": float(duration_secs),
+                             "waveform": waveform}]}
+    return api("POST", f"/channels/{channel_id}/messages", body, files=[str(p)])
+
+
 OMNIUS_GOLD = 0xC8963E   # the emblem's gold, so fleet posts read as one system
 
 

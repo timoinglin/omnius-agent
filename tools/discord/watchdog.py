@@ -39,6 +39,7 @@ import omnius_config as ocfg  # noqa: E402 - config\*.ini, one reader (config\RE
 import gateway as gw_mod  # noqa: E402  - Gateway websocket (speed); REST stays the authority
 import schedule  # noqa: E402  - scheduled envelopes (pure logic; no network)
 import sync_permissions as perms_sync  # noqa: E402  - the shared desk allow-list
+import voice  # noqa: E402  - audio replies -> native Discord voice notes
 
 ROOT = api.ROOT
 STATE = ROOT / "state"
@@ -4625,6 +4626,57 @@ def resolve_outbox_target(mapping, session, data):
     return None
 
 
+def outbox_files(data):
+    """The `files` of an outbox entry, as a list, whatever the desk wrote.
+
+    A bare string instead of a list is the single most common malformed reply
+    (2026-08-18, one missing bracket), and iterating it hands Path() one
+    CHARACTER at a time. Normalising here means a desk that writes
+    `"files": "C:\\x.mp3"` still gets its file sent instead of nothing.
+    """
+    f = data.get("files")
+    if isinstance(f, str):
+        return [f]
+    return [p for p in (f or []) if isinstance(p, str)]
+
+
+def post_reply(channel_id, data):
+    """Post one outbox entry - and send audio as a native VOICE NOTE.
+
+    His ask, 2026-09-01: *"puedes responder con audio en vez de adjuntarlo?"*
+    An `.mp3` attachment is a download; a voice note plays in the chat with its
+    waveform, which is the accessible shape for him. So any audio attachment
+    now leaves as its own voice note, and the text travels as its own message -
+    Discord allows a voice note NO content and exactly one attachment
+    (tools\\discord\\voice.py). Non-audio files still ride with the text.
+
+    `"voice": false` in the outbox entry opts out and attaches the audio the
+    old way - for the desk that means the file itself, not the sound of it.
+
+    **Every failure falls back to a plain attachment.** The docs do not promise
+    bots may send voice notes, ffmpeg can refuse a file, and none of that is
+    worth an audio reply that never arrives - a download beats silence.
+    """
+    files = outbox_files(data)
+    text = data.get("text", "") or ""
+    as_voice, plain = [], []
+    for p in files:
+        (as_voice if data.get("voice", True) and voice.is_audio(p) else plain).append(p)
+    if text.strip() or plain or not as_voice:
+        # The `not as_voice` arm keeps an empty reply behaving exactly as before
+        # (Discord refuses it, the error is logged); only a voice-note-only
+        # reply is allowed to skip the text message.
+        api.send_message(channel_id, text, files=plain)
+    for p in as_voice:
+        try:
+            note = voice.prepare(p)
+            api.send_voice_message(channel_id, note["path"],
+                                   note["duration_secs"], note["waveform"])
+        except (voice.VoiceError, api.ApiError) as e:
+            log(f"voice note refused for {Path(p).name} ({e}) - attaching it instead")
+            api.send_message(channel_id, "", files=[p])
+
+
 def flush_outboxes(mapping):
     if not OUTBOX.is_dir():
         return
@@ -4655,8 +4707,8 @@ def flush_outboxes(mapping):
                 log(f"outbox {session}: no channel mapped - kept")
                 continue
             try:
-                api.send_message(cid, data.get("text", ""), files=data.get("files"))
-                for p in (data.get("files") or []):  # sent copies -> durable archive
+                post_reply(cid, data)
+                for p in outbox_files(data):  # sent copies -> durable archive
                     src = Path(p)
                     if src.exists() and MEDIA not in src.parents:
                         dest = MEDIA / "sent" / datetime.now().strftime("%Y-%m") / src.name
@@ -4665,7 +4717,7 @@ def flush_outboxes(mapping):
                             shutil.copy2(src, dest)
                 transcribe(session, "out", data.get("text", ""),
                            channel=mapping[cid].channel_name if cid in mapping else None,
-                           channel_id=cid, files=data.get("files"))
+                           channel_id=cid, files=outbox_files(data))
                 f.unlink()
                 # Proof-of-reply for the Stop hook. Posting DELETES the outbox
                 # file, and the flush runs every ~3s - faster than a run ends -
