@@ -317,6 +317,15 @@ if ($Fresh) {
   # days old, so no earlier release could have leaked it. Every non-template
   # memory\ that exists outside projects\ goes here; the suite enforces it.
   $tarArgs += "--exclude=$leaf/daybook/memory"
+  # .claude\projects\ is Claude Code's OWN per-project auto-memory, and the
+  # folder NAME alone is a leak: it encodes the absolute path it was made for,
+  # e.g. "C--Users-<name>-omnius-projects-<project>-<component>". Its files then
+  # name the projects outright. `.claude\` itself is product (settings, skills)
+  # so the folder cannot be excluded wholesale - only this subtree.
+  # Found 2026-09-02 in the SERVED zip, minutes after the audit called that
+  # same zip clean. Third leak of the day with one shape: an exclusion that
+  # names a level instead of a tree.
+  $tarArgs += "--exclude=$leaf/.claude/projects"
   # tools\remotion ships the TOOL - the README and the pinned package.json.
   # What you WRITE with it is yours: compositions under src\ and the mp4s in
   # out\ are content, and a stranger's fresh install has no business carrying

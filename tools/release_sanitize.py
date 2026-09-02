@@ -46,6 +46,14 @@ IDENTIFYING = {
     "real home directory": re.compile(
         r"[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}"
         r"(?!you\b|user\b|username\b|yourname\b|<|%|\$)[^\\/\"'\s<>]+", re.I),
+    # Claude Code's path-encoded folder name: it flattens an absolute path into
+    # a single directory, so `C:\Users\<name>\omnius\projects\<p>\<c>` becomes
+    # `C--Users-<name>-omnius-projects-<p>-<c>`. Every separator is a dash, so
+    # the "real home directory" pattern above cannot see it - which is how
+    # .claude\projects\ shipped in the 2026-09-02 release naming the owner AND
+    # two projects, in the ENTRY NAME, minutes after the audit called that same
+    # zip clean. The folder is worth catching wherever it appears.
+    "claude path-encoded folder": re.compile(r"\b[A-Za-z]--Users-[A-Za-z0-9._-]+"),
     # Credential SHAPES - the same list api.redact strips from outbound posts;
     # the suite pins the two lists together so they cannot drift. Added
     # 2026-08-16 after GitHub's secret scanner proved the gap from OUTSIDE: it
@@ -243,9 +251,20 @@ def audit(zip_path):
             # if it is text, it is checked. Binary falls out on UnicodeDecodeError.
             # (The SCRUB path keeps its suffix list - rewriting a file is not
             # free, and mangling a binary would be worse than not scrubbing it.)
-            if name.endswith("/"):
-                continue
             if any(rel.replace("\\", "/").endswith(x) for x in AUDIT_EXEMPT):
+                continue
+            # THE ENTRY NAME IS AUDITED TOO, and a directory entry counts.
+            # Added 2026-09-02, hours after the audit above learned to read
+            # every entry: a leak can live entirely in the PATH and never
+            # appear in any file's bytes. .claude\projects\ did exactly that -
+            # Claude Code names that folder after the absolute path it belongs
+            # to, so the owner and two project names shipped as a directory
+            # name while every file inside it read clean. Content-only auditing
+            # cannot see that, however many entries it opens.
+            for what, pat in _all_identifying().items():
+                if pat.search(rel):
+                    bad.append((rel, f"{what} (in the path)"))
+            if name.endswith("/"):
                 continue
             try:
                 text = z.read(name).decode("utf-8")

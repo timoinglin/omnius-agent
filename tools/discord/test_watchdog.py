@@ -3958,6 +3958,30 @@ try:
     check("...and templates\\fresh\\memory\\ is NOT excluded (it IS the seed)",
           "--exclude=$leaf/templates/fresh/memory" not in _pack)
 
+    # .claude\projects\ is Claude Code's own per-project memory. The folder NAME
+    # is the leak: it flattens the absolute path it belongs to, so it reads
+    # "C--Users-<owner>-omnius-projects-<project>-<component>". Shipped in the
+    # 2026-09-02 release and found in the SERVED zip, not by the build - the
+    # audit read every file's CONTENT and never looked at a path. `.claude\`
+    # itself is product (settings.json, skills\), so only the subtree goes.
+    check("-Fresh excludes .claude\\projects\\ (its folder name IS the owner's path)",
+          "--exclude=$leaf/.claude/projects" in _pack)
+    check("...but still ships .claude\\ itself - settings and skills are product",
+          "--exclude=$leaf/.claude\"" not in _pack
+          and "--exclude=$leaf/.claude," not in _pack)
+    # The audit must judge the PATH, not only the bytes. A leak that lives in a
+    # directory name is invisible to any amount of content reading.
+    check("the release audit checks the entry NAME as well as its content",
+          "pat.search(rel)" in _san and "(in the path)" in _san)
+    check("...and knows the shape of a Claude path-encoded folder",
+          "claude path-encoded folder" in _san)
+    import release_sanitize as _rsan2
+    _enc = _rsan2.IDENTIFYING["claude path-encoded folder"]
+    check("...matching a real one",
+          bool(_enc.search("omnius/.claude/projects/C--Users-someone-omnius-projects-x/f.md")))
+    check("...and not matching an ordinary double-dashed word",
+          not _enc.search("a well--spaced sentence about Users of the system"))
+
     check("-Fresh selects config by allow-list, not by an .ini filter",
           "$configKeep" in _pack and "-Filter '*.ini'" not in _pack)
     _m = re.search(r"\$configKeep\s*=\s*@\(([^)]*)\)", _pack)
