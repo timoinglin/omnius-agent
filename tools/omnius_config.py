@@ -291,6 +291,12 @@ SPEC = [
     ("omnius", "delegation", "hop_ttl", "OMNIUS_HOP_TTL", "3", "int"),
     ("omnius", "delegation", "loop_budget", "OMNIUS_LOOP_BUDGET", "5", "int"),
     ("omnius", "delegation", "cross_project_requires_ok", "OMNIUS_CROSS_PROJECT_OK", "1", "bool"),
+    # Workflows (docs\DELEGATION.md D11): a chain that must keep running across
+    # desks and runs. The budget is per WORKFLOW, not per hop - inside an open
+    # one the depth cap stops biting, and these three are what end it instead.
+    ("omnius", "delegation", "workflow_budget", "OMNIUS_WORKFLOW_BUDGET", "25", "int"),
+    ("omnius", "delegation", "workflow_deadline_hours", "OMNIUS_WORKFLOW_DEADLINE_HOURS", "24", "int"),
+    ("omnius", "delegation", "workflow_stall_hours", "OMNIUS_WORKFLOW_STALL_HOURS", "3", "int"),
     # Does THIS instance own the public repo? Off by default, because almost
     # every instance is somebody's install rather than the source of the
     # project. It changes one thing only: whether a desk may push. Committing

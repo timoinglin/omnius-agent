@@ -45,6 +45,25 @@ LEGACY_JOBS = ROOT / "state" / "schedule" / "jobs.json"
 # form of the continuation pattern. Machine-local like the claims - a loop is
 # THIS machine's work in progress, not luggage.
 LOOPS = ROOT / "state" / "watchdog" / "loops"
+# Workflow ledgers are the DESK-MAIL thread files (docs\DELEGATION.md D11): a
+# workflow is a property of a chain, not a second record beside it, so the
+# budget a self-continuation spends is the chain's own.
+THREADS = ROOT / "state" / "watchdog" / "threads"
+
+
+def load_thread(tid):
+    """One thread ledger, or None. Read-only here - the watchdog owns writes."""
+    try:
+        d = json.loads((THREADS / f"{tid}.json").read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) and d.get("id") else None
+    except (OSError, ValueError):
+        return None
+
+
+def thread_workflow(tid):
+    """-> the workflow block on that chain, or None."""
+    wf = (load_thread(tid) or {}).get("workflow")
+    return wf if isinstance(wf, dict) else None
 
 
 def desk_cwd(session):
@@ -414,7 +433,7 @@ def stamp_success(jobs, delivered_ids, when=None):
 
 
 def add_job(kind, value, to, text, weekdays=False, between=None,
-            loop=None, channel=None):
+            loop=None, channel=None, workflow=None):
     jobs = load_jobs()
     jid = f"{kind}-{int(datetime.now().timestamp())}"
     job = {"id": jid, "kind": kind, kind: value, "to": to, "text": text,
@@ -423,6 +442,10 @@ def add_job(kind, value, to, text, weekdays=False, between=None,
            "nextRun": None, "lastRun": None}
     if loop:
         job["loop"] = loop           # counted against the loop's ledger at fire time
+    if workflow:
+        job["workflow"] = workflow   # counted against the CHAIN's ledger (D11):
+                                     # one budget for a chain that re-queues
+                                     # itself on several desks in turn
     if channel:
         job["channelId"] = channel   # rides into the fired envelope (D5): the
                                      # channel a loop answers when it must talk
@@ -597,7 +620,36 @@ def main(argv):
         # nothing has to remember.
         me = own_session()
         led = None
-        if a.loop:
+        workflow_tid = None
+        if a.loop and a.loop.startswith("t-"):
+            # A WORKFLOW continuation (D11). The budget lives on the chain's
+            # ledger rather than on a per-desk loop file, which is the whole
+            # point: the same piece of work may re-queue itself on three desks
+            # in turn and still be counted once, against the goal.
+            wf = thread_workflow(a.loop)
+            tled = load_thread(a.loop) or {}
+            home = (tled.get("origin") or {}).get("session") or "the desk that started it"
+            if wf is None:
+                print(f"[X] no workflow on chain {a.loop} - open one by sending "
+                      f"desk mail carrying a `workflow` block, or use "
+                      f"`--loop auto` for an ordinary per-desk loop")
+                return 2
+            if wf.get("status") not in (None, "open", "stalled"):
+                print(f"[X] workflow on {a.loop} is {wf.get('status')} - report what "
+                      f"EXISTS to {home} and let him decide. A fresh instruction "
+                      f"opens a NEW workflow; workflows never extend themselves.")
+                return 2
+            if int(wf.get("runs") or 0) >= int(wf.get("budget") or 0):
+                print(f"[X] workflow on {a.loop} has used its budget "
+                      f"({wf.get('runs')}/{wf.get('budget')} runs) - report what "
+                      f"EXISTS to {home} and ask whether to continue.")
+                return 2
+            if any(j.get("workflow") == a.loop for j in load_jobs()):
+                print(f"[X] workflow {a.loop} already has a queued continuation - "
+                      f"one at a time; a chain is a chain, not a fan")
+                return 2
+            workflow_tid = a.loop
+        elif a.loop:
             budget = loop_budget_default()
             if a.loop == "auto":
                 if a.max is not None and a.max > budget:
@@ -643,6 +695,7 @@ def main(argv):
             job = add_job(kind, value, to, a.text,
                           weekdays=a.weekdays, between=a.between,
                           loop=(led or {}).get("id"),
+                          workflow=workflow_tid,
                           channel=a.channel or (led or {}).get("channelId"))
         except ValueError as e:
             print(f"[X] {e}")
@@ -651,6 +704,10 @@ def main(argv):
         if led:
             print(f"  loop {led['id']} run {int(led.get('fired') or 0) + 1}"
                   f"/{led.get('max')} (fires are counted at delivery)")
+        if workflow_tid:
+            _wf = thread_workflow(workflow_tid) or {}
+            print(f"  workflow {workflow_tid} run {int(_wf.get('runs') or 0) + 1}"
+                  f"/{_wf.get('budget')} (fires are counted at delivery)")
         for when in upcoming(job)[1:]:
             print(f"  then {when.strftime(FMT)}")
         return 0

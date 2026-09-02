@@ -31,7 +31,7 @@ import threading
 import time
 import traceback
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -438,6 +438,32 @@ def model_looks_known(name):
 
 def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_in(hours=0):
+    """now_iso() shifted forward. Deadlines are stored the way times are read."""
+    return (datetime.now(timezone.utc)
+            + timedelta(hours=hours)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def iso_age(stamp):
+    """-> seconds since an iso stamp this file wrote, or None if unreadable.
+
+    None means "cannot tell", and every caller treats that as "not yet", never
+    as "long ago": a deadline nobody can parse must not end a chain by accident.
+    """
+    try:
+        return (datetime.now(timezone.utc) - datetime.strptime(
+            str(stamp), "%Y-%m-%dT%H:%M:%SZ").replace(
+                tzinfo=timezone.utc)).total_seconds()
+    except (TypeError, ValueError):
+        return None
+
+
+def iso_past(stamp):
+    """True only when `stamp` is a readable time that has already gone by."""
+    age = iso_age(stamp)
+    return age is not None and age > 0
 
 
 def log(msg):
@@ -3268,6 +3294,41 @@ def fire_due_schedules(mapping=None):
                     except api.ApiError:
                         pass
                 continue
+        wf_led = None
+        if job.get("workflow"):
+            # The same fire-time belt as a loop, against the CHAIN's budget
+            # (D11). Over budget, past its deadline or gone: the job is dropped
+            # and the chain's origin channel hears it once. A workflow never
+            # fires past its budget, for the reason loops do not - the point of
+            # a budget is that the work stops and ASKS.
+            wf_led = _load_thread(job["workflow"])
+            wf_now = workflow_of(wf_led)
+            gone = workflow_expired(wf_now) if wf_now else "gone"
+            if not wf_now or not workflow_open(wf_led) or gone:
+                kept = [j for j in kept if j.get("id") != job.get("id")]
+                if wf_now and wf_now.get("status") in (None, "open", "stalled"):
+                    wf_now["status"] = "exhausted"
+                    wf_now["endedBy"] = gone
+                    try:
+                        _save_thread(wf_led)
+                    except OSError:
+                        pass
+                log(f"workflow {job.get('workflow')}: over budget or closed - job "
+                    f"{job.get('id')} dropped, nothing fired")
+                cid = job.get("channelId") or (
+                    (wf_led or {}).get("origin") or {}).get("channelId") or (
+                    primary_channel_id(mapping, session) if mapping else None)
+                if cid:
+                    try:
+                        api.send_message(
+                            cid, f"⏸ workflow `{job.get('workflow')}` on `{session}` "
+                                 f"used its {'budget' if gone != 'deadline' else 'time'} "
+                                 f"({(wf_now or {}).get('runs')}/"
+                                 f"{(wf_now or {}).get('budget')} runs) — it will report "
+                                 f"what exists; write here to start a new one")
+                    except api.ApiError:
+                        pass
+                continue
         box = INBOX / session
         try:
             box.mkdir(parents=True, exist_ok=True)
@@ -3287,6 +3348,17 @@ def fire_due_schedules(mapping=None):
                     schedule.save_loop(led)
                 except OSError as e:
                     log(f"loop ledger save failed ({led.get('id')}): {e}")
+            if wf_led is not None:
+                # A scheduled continuation is a run the workflow spent, exactly
+                # like a hop - "runs used" has to count both or the budget
+                # bounds only half of what the chain does.
+                workflow_step(wf_led, session,
+                              f"{session}: scheduled continuation "
+                              f"{str(job.get('text') or '').strip()[:100]}")
+                try:
+                    _save_thread(wf_led)
+                except OSError as e:
+                    log(f"workflow ledger save failed ({wf_led.get('id')}): {e}")
             transcribe(session, "in", f"[scheduled] {job.get('text', '')}")
             log(f"schedule {job['id']} -> inbox {session}"
                 + (f" (loop {led['id']} run {led['fired']}/{led.get('max')})" if led else ""))
@@ -4622,8 +4694,13 @@ def handle_control(text, cid, target, mapping):
                 f" · 📥 {n} queued" if n else "")
             lines.append(f"{'[on] ' if session_alive(s) else '[off]'} {s} · {fmt_model(s)}"
                          f"{stall_note(s)}{queued}{notes_age(s)}")
+        # Open workflows (D11). A desk list answers "what is running"; a chain
+        # spanning three desks and six runs is the thing he actually waits on,
+        # and until now it appeared nowhere at all.
+        wf_lines = describe_open_workflows()
         api.send_message(cid, "**fleet @ " + api.MACHINE + "**\n" +
                          ("\n".join(lines) if lines else "no sessions yet") +
+                         (("\n**workflows**\n" + "\n".join(wf_lines)) if wf_lines else "") +
                          "\n-# model/effort: bare = what that run launched on, "
                          "(parens) = config for its next run")
     elif cmd == "!kill":
@@ -5234,6 +5311,130 @@ def _save_thread(led):
     write_json_atomic(_thread_path(led["id"]), led)
 
 
+# --- D11 workflows: the chain as a whole, not one hop at a time -----------------
+#
+# Desk mail has a DEPTH budget and a work loop has 5 runs per desk. Neither
+# describes the thing the owner actually asked for on 2026-09-02 - a piece of
+# work that keeps moving between desks until it is done - so a long chain died
+# quietly at whichever cap it met first, with nobody holding the goal.
+#
+# A workflow is an optional BLOCK ON THE EXISTING THREAD LEDGER, not a second
+# record beside it. The ledger is already written at every hop and already
+# carries the origin, the edges and the delivery history; a parallel file under
+# state\workflows\ would have been a second source of truth for the same chain,
+# and the two would drift the first time one write failed.
+#
+# A ledger with no `workflow` block behaves exactly as it did before.
+
+def _workflow_budget():
+    return max(1, ocfg.get_int(OMNIUS_CFG, "delegation", "workflow_budget",
+                               "OMNIUS_WORKFLOW_BUDGET", 25, env=api.ENV))
+
+
+def _workflow_deadline_hours():
+    return max(1, ocfg.get_int(OMNIUS_CFG, "delegation", "workflow_deadline_hours",
+                               "OMNIUS_WORKFLOW_DEADLINE_HOURS", 24, env=api.ENV))
+
+
+def _workflow_stall_hours():
+    return max(1, ocfg.get_int(OMNIUS_CFG, "delegation", "workflow_stall_hours",
+                               "OMNIUS_WORKFLOW_STALL_HOURS", 3, env=api.ENV))
+
+
+WORKFLOW_STALL_REPEAT_SECONDS = 6 * 3600
+
+
+def workflow_of(led):
+    """-> the workflow block of a ledger, or None. Shape-checked, never raised."""
+    wf = (led or {}).get("workflow")
+    return wf if isinstance(wf, dict) else None
+
+
+def workflow_open(led):
+    """True while this chain still has a live goal to spend runs on.
+
+    `stalled` counts as live: it means nobody has moved it lately, not that it
+    is over. Only `done` and `exhausted` are terminal.
+    """
+    wf = workflow_of(led)
+    return bool(wf) and wf.get("status") in (None, "open", "stalled")
+
+
+def _attach_workflow(led, block, holder):
+    """Open a workflow on a chain that has none. -> the block, or None.
+
+    Only a `goal` is required. The done-condition is a COMMAND wherever the
+    sender can name one (D5's rule: a claim of doneness that nothing can check
+    is how a loop declares victory over an empty file), but a workflow whose
+    outcome is genuinely a judgement is still worth tracking.
+    """
+    if workflow_of(led) or not isinstance(block, dict):
+        return None
+    goal = str(block.get("goal") or "").strip()
+    if not goal:
+        return None
+    budget = _workflow_budget()
+    want = block.get("budget")
+    try:
+        # A sender may ask for LESS, never more: the config is the ceiling and
+        # a desk cannot vote itself a bigger one.
+        budget = max(1, min(budget, int(want))) if want is not None else budget
+    except (TypeError, ValueError):
+        pass
+    wf = {
+        "goal": goal[:500],
+        "done": str(block.get("done") or "").strip()[:300],
+        "budget": budget,
+        "runs": 0,
+        "openedAt": now_iso(),
+        "deadline": iso_in(hours=_workflow_deadline_hours()),
+        "holder": holder,
+        "lastStep": f"opened by {holder}",
+        "lastAt": now_iso(),
+        "status": "open",
+        "stalledNotifiedAt": None,
+    }
+    led["workflow"] = wf
+    return wf
+
+
+def workflow_expired(wf):
+    """-> 'budget' | 'deadline' | None. The two ways a live workflow ends."""
+    if not wf:
+        return None
+    if int(wf.get("runs") or 0) >= int(wf.get("budget") or 0):
+        return "budget"
+    if iso_past(wf.get("deadline")):
+        return "deadline"
+    return None
+
+
+def workflow_step(led, holder, step):
+    """Record one unit of progress: a hop, or a scheduled loop run.
+
+    Called at every delivery on the chain and by the schedule when a loop run
+    on this thread fires - "runs used" has to mean every run the workflow
+    actually spent, or the budget bounds nothing.
+    """
+    wf = workflow_of(led)
+    # A STALLED workflow that moves again is simply open again - the alarm
+    # described a silence, not a verdict, and the work resuming is the answer
+    # to it. Only done/exhausted are terminal.
+    if not wf or wf.get("status") not in (None, "open", "stalled"):
+        return None
+    wf["runs"] = int(wf.get("runs") or 0) + 1
+    wf["holder"] = holder
+    wf["lastStep"] = str(step or "")[:300]
+    wf["lastAt"] = now_iso()
+    wf["status"] = "open"
+    wf["stalledNotifiedAt"] = None      # it moved; a new silence starts from here
+    gone = workflow_expired(wf)
+    if gone:
+        wf["status"] = "exhausted"
+        wf["endedBy"] = gone
+    return wf
+
+
 def _storm_cap(led):
     """How many messages one chain may carry before it is called a storm.
 
@@ -5244,7 +5445,14 @@ def _storm_cap(led):
     bounds; this bounds volume, and volume grows with participants.
     """
     people = {d for edge in (led.get("edges") or []) for d in edge}
-    return max(_hop_ttl() * 4, 6 * max(2, len(people)))
+    cap = max(_hop_ttl() * 4, 6 * max(2, len(people)))
+    # An open workflow is ALLOWED to be long - that is what it is for - so the
+    # storm cap must not be the thing that ends it. It stays as a backstop
+    # against a genuine runaway, above the budget rather than below it.
+    wf = workflow_of(led)
+    if wf and wf.get("status") in (None, "open"):
+        cap = max(cap, int(wf.get("budget") or 0) * 2)
+    return cap
 
 
 def _new_thread(sender, origin, stem):
@@ -5398,6 +5606,33 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
         return _refuse_desk_mail(mapping, sender, path,
                                  f"chain `{led['id']}` is closed ({led['closed']})")
 
+    # 4b. Workflows (D11). A `workflow` block opens one on a chain that has
+    #     none; from then on the DEPTH cap stops binding this chain and the
+    #     workflow's own budget and deadline bound it instead.
+    _attach_workflow(led, data.get("workflow"), sender)
+    wf = workflow_of(led)
+    gone = workflow_expired(wf) if workflow_open(led) else None
+    if wf and (gone or wf.get("status") == "exhausted"):
+        if wf.get("status") == "open":
+            wf["status"] = "exhausted"
+            wf["endedBy"] = gone
+            _save_thread(led)
+        # THE REPORT HOME IS NOT REFUSED. D3 holds: the desk holding the chain
+        # when it runs dry tells the desk that STARTED it what exists, and that
+        # desk tells him, once. Refusing every message equally would strand the
+        # answer inside a desk that has just been told to stop - the work would
+        # be done and nobody would hear about it, which is the exact failure
+        # this whole phase exists to remove.
+        home = (led.get("origin") or {}).get("session")
+        if to != home:
+            return _refuse_desk_mail(
+                mapping, sender, path,
+                f"workflow on `{led['id']}` is out of "
+                f"{'runs' if wf.get('endedBy') == 'budget' else 'time'} "
+                f"({wf.get('runs')}/{wf.get('budget')} runs) - report what "
+                f"exists to `{home or 'the desk that started this'}` and let "
+                f"him decide; a fresh instruction opens a NEW workflow")
+
     # 5. Idempotence: a crash between inbox-write and unlink redelivers here.
     env_id = f"dm-{sender}-{path.stem}"
     if env_id in _delivery_ids(led):
@@ -5434,7 +5669,12 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
     # and writing again to a desk already involved is a conversation.
     deeper = (not is_reply) and to not in depth \
         and next_depth > max(depth.values() or [0])
-    if deeper and next_depth > _hop_ttl():
+    # An OPEN workflow buys past the depth cap on purpose (D11): the owner asked
+    # for chains that keep running as long as needed, and depth is the wrong
+    # limit for that - it stops a chain for travelling, not for taking too long.
+    # The workflow's budget and deadline are the limits that apply instead, and
+    # they were checked above.
+    if deeper and next_depth > _hop_ttl() and not workflow_open(led):
         _close_thread(led, "hops")
         _thread_notice(mapping, led, sender,
                        f"⛔ delegation chain `{led['id']}` is already "
@@ -5489,6 +5729,10 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
         {"id": env_id, "from": sender, "to": to, "ts": now_iso(),
          "reply": bool(is_reply)})
     led["lastDeliveredTo"] = to
+    # A hop IS a step: the holder moves to the recipient, and the run it is
+    # about to spend counts against the workflow rather than against a per-hop
+    # cap nobody was tracking.
+    workflow_step(led, to, f"{sender} → {to}: {text.strip()[:120]}")
     _save_thread(led)
     # Both halves reach the bus transcript - the paper trail must not go dark
     # just because no Discord channel was involved.
@@ -5668,7 +5912,80 @@ def sweep_gates(mapping):
                 _post_gate_ask(mapping, rec, _load_thread(rec.get("thread") or ""))
                 rec["lastAskTs"] = time.time()
                 write_json_atomic(f, rec)
+    check_workflow_stalls(mapping)
     sweep_threads()
+
+
+def open_workflows():
+    """-> [(ledger, workflow)] for every chain with live work, newest last."""
+    out = []
+    if not THREADS.is_dir():
+        return out
+    for f in sorted(THREADS.glob("*.json")):
+        led = _load_thread(f.stem)
+        if led and not led.get("closed") and workflow_open(led):
+            out.append((led, led["workflow"]))
+    return out
+
+
+def describe_open_workflows():
+    """Bullets for !status. Discord renders no tables, so neither does this."""
+    lines = []
+    for led, wf in open_workflows():
+        idle = iso_age(wf.get("lastAt"))
+        when = f" · idle {int(idle // 60)}m" if idle and idle >= 60 else ""
+        mark = " ⚠️ stalled" if wf.get("status") == "stalled" else ""
+        lines.append(f"`{led['id']}` — {api.redact(str(wf.get('goal') or ''))[:80]}\n"
+                     f"-# holder `{wf.get('holder') or '?'}` · "
+                     f"{wf.get('runs')}/{wf.get('budget')} runs{when}{mark} · "
+                     f"last: {api.redact(str(wf.get('lastStep') or ''))[:80]}")
+    return lines
+
+
+def check_workflow_stalls(mapping):
+    """Tell him when a workflow has stopped moving. D11's alarm.
+
+    The failure this exists for is the quiet one: a chain that is neither
+    refused nor finished, just holding still because the desk that had it
+    stopped and nothing woke it again. Every other alarm in this file watches a
+    DESK; nothing watched the work itself, so a stalled chain looked exactly
+    like a chain that is thinking.
+
+    Mechanical, so it is the watchdog's own line to the origin channel rather
+    than desk mail (the amendment's rule: no mid-chain desk speaks to a human).
+    Marked `stalled` and repeated at most every 6 hours, because a stall that
+    pages every three minutes trains him to ignore the channel.
+    """
+    if not THREADS.is_dir():
+        return
+    limit = _workflow_stall_hours() * 3600
+    for f in sorted(THREADS.glob("*.json")):
+        led = _load_thread(f.stem)
+        wf = workflow_of(led)
+        # `stalled` is included deliberately: marking it must not be what
+        # silences the repeat. Only a workflow that is done or exhausted stops
+        # being watched.
+        if not wf or led.get("closed") or wf.get("status") not in (None, "open", "stalled"):
+            continue
+        idle = iso_age(wf.get("lastAt"))
+        if idle is None or idle < limit:
+            continue
+        since = iso_age(wf.get("stalledNotifiedAt"))
+        if since is not None and since < WORKFLOW_STALL_REPEAT_SECONDS:
+            continue
+        wf["status"] = "stalled"
+        wf["stalledNotifiedAt"] = now_iso()
+        _save_thread(led)
+        _thread_notice(
+            mapping, led, wf.get("holder") or "",
+            f"⚠️ workflow `{led['id']}` has not moved for {int(idle // 3600)}h — "
+            f"`{wf.get('holder') or '?'}` is holding it.\n"
+            f"**goal** — {api.redact(str(wf.get('goal') or ''))[:200]}\n"
+            f"**last step** — {api.redact(str(wf.get('lastStep') or ''))[:200]}\n"
+            f"-# {wf.get('runs')}/{wf.get('budget')} runs used · "
+            f"say what to do, or leave it and I will mention it again in 6h")
+        log(f"workflow {led['id']} stalled ({int(idle // 60)}m idle, "
+            f"holder {wf.get('holder')})")
 
 
 def sweep_threads():

@@ -6729,6 +6729,70 @@ try:
           and not [j for j in sch.load_jobs() if j.get("loop") == _lid2])
     check("loop: list is readable and exits clean",
           sch.main(["loop", "list"]) == 0)
+
+    # --- D11: a continuation counted against the CHAIN, not the desk ----------
+    # A workflow may re-queue itself on several desks in turn; one budget has to
+    # cover all of it, or "runs used" means nothing.
+    _real_sch_threads = sch.THREADS
+    sch.THREADS = wd.THREADS                 # the sandbox's ledgers, not the real ones
+    sch.save_jobs([])
+    _wtid = "t-wf-sched-orchestrator"
+    _wled = {"id": _wtid, "origin": {"channelId": "CID_OM", "from": "owner",
+                                     "session": "orchestrator"},
+             "hopsLeft": 1, "depth": {"orchestrator": 0}, "deliveries": [],
+             "edges": [], "lastDeliveredTo": None, "startedAt": now(),
+             "lastAt": now(), "closed": None,
+             "workflow": {"goal": "get the suite green", "done": "pytest",
+                          "budget": 2, "runs": 0, "openedAt": now(),
+                          "deadline": wd.iso_in(hours=5), "holder": "orchestrator",
+                          "lastStep": "opened", "lastAt": now(), "status": "open",
+                          "stalledNotifiedAt": None}}
+    wd._save_thread(_wled)
+    check("workflow: --loop on a chain with no workflow is refused, with the fix",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop",
+                    "t-nosuch-chain", "--text", "x"]) == 2)
+    check("workflow: --loop <thread> queues a continuation against the chain",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _wtid,
+                    "--channel", "CID_OM", "--text", "Continue: step 1."]) == 0
+          and sch.load_jobs()[0].get("workflow") == _wtid
+          and not sch.load_jobs()[0].get("loop"))
+    check("workflow: one queued continuation at a time, like a loop",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _wtid,
+                    "--text", "again"]) == 2)
+    _fire_loop_job()
+    check("workflow: the fire is counted on the CHAIN's ledger, not a loop file",
+          wd.workflow_of(wd._load_thread(_wtid))["runs"] == 1
+          and "scheduled continuation" in
+              wd.workflow_of(wd._load_thread(_wtid))["lastStep"])
+    sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _wtid,
+              "--text", "Continue: step 2."])
+    _fire_loop_job()
+    check("workflow: the budget is spent run by run",
+          wd.workflow_of(wd._load_thread(_wtid))["runs"] == 2)
+    check("workflow: the add past budget is refused, naming who to report to",
+          sch.main(["add", "--in", "2m", "--to", "orchestrator", "--loop", _wtid,
+                    "--text", "one more"]) == 2)
+    # ...and the fire-time belt, for a job edited by hand around that refusal.
+    sch.save_jobs([{"id": "handmade-wf", "kind": "at",
+                    "at": (D.now() - timedelta(seconds=30)).strftime(sch.FMT),
+                    "to": "orchestrator", "text": "sneak", "weekdays": False,
+                    "workflow": _wtid, "channelId": "CID_OM",
+                    "nextRun": (D.now() - timedelta(seconds=30)).strftime(sch.FMT)}])
+    _before_wf_belt = len(list(_ombox2.glob("sched-*.json")))
+    wd._last_schedule_check = 0
+    wd._last_jobs_written = None
+    sent.clear()
+    wd.fire_due_schedules()
+    check("workflow: fire-time belt - a hand-edited job past budget never fires",
+          len(list(_ombox2.glob("sched-*.json"))) == _before_wf_belt
+          and not sch.load_jobs())
+    check("workflow: ...and the chain's own channel is told once",
+          wd.workflow_of(wd._load_thread(_wtid))["status"] == "exhausted"
+          and any("used its" in s[1] for s in sent),
+          "; ".join(s[1][:60] for s in sent)[:200])
+    sch.THREADS = _real_sch_threads
+    wd._thread_path(_wtid).unlink(missing_ok=True)
+
     sch.save_jobs([])
     for f in _ombox2.glob("sched-*.json"):
         f.unlink()
@@ -7168,6 +7232,161 @@ try:
           and [d for d in _led3["deliveries"] if d["id"].endswith("1700000000051")][0]
               ["reply"] is False,
           f"r={r_f2}")
+    print("== D11 workflows ==")
+    # Owner, 2026-09-02: delegation must keep a chain running as long as needed.
+    # Desk mail had a DEPTH budget and work loops had five runs per desk;
+    # nothing tracked the chain AS A WHOLE, so a long piece of work died at
+    # whichever cap it met first and nobody was holding the goal.
+    _real_wfb = wd._workflow_budget
+    wd._hop_ttl = lambda: 1           # depth budget of ONE: legacy chains die fast
+    wd._workflow_budget = lambda: 6
+    (wd.ROOT / "projects" / "alpha" / "db").mkdir(parents=True, exist_ok=True)
+    wd._desk_id_cache.clear()
+    try:
+        pw1 = dmail("alpha.app",
+                    {"to": "alpha.web", "text": "build the endpoint",
+                     "origin": {"channelId": "id-alpha-app", "from": "owner"},
+                     "workflow": {"goal": "ship /cliq end to end",
+                                  "done": "python -m pytest api"}},
+                    "1700000000200")
+        rw1 = wd.deliver_desk_mail(dm, "alpha.app", pw1,
+                                   json.loads(pw1.read_text(encoding="utf-8")))
+        tw = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
+                        .read_text(encoding="utf-8")).get("thread")
+        _wf = wd.workflow_of(wd._load_thread(tw))
+        check("a `workflow` block on desk mail opens a workflow on that chain",
+              rw1 == "delivered" and _wf and _wf["goal"] == "ship /cliq end to end",
+              f"r={rw1}")
+        check("...carrying the goal, a done-condition, a budget and a deadline",
+              _wf["done"] == "python -m pytest api" and _wf["budget"] == 6
+              and bool(_wf["deadline"]))
+        check("...and the first hop is already a run, held by the recipient",
+              _wf["runs"] == 1 and _wf["holder"] == "alpha.web"
+              and _wf["status"] == "open")
+        check("the workflow lives ON the thread ledger, not in a second file",
+              "workflow" in wd._load_thread(tw)
+              and not (wd.STATE / "workflows").exists())
+
+        # The depth cap must NOT bite inside an open workflow: it stops a chain
+        # for TRAVELLING, which is exactly what this kind of work does.
+        pw2 = dmail("alpha.web", {"to": "alpha.db", "text": "schema next",
+                                  "thread": tw}, "1700000000201")
+        rw2 = wd.deliver_desk_mail(dm, "alpha.web", pw2,
+                                   json.loads(pw2.read_text(encoding="utf-8")))
+        _wf = wd.workflow_of(wd._load_thread(tw))
+        check("an open workflow travels past the depth cap that would refuse it",
+              rw2 == "delivered" and not wd._load_thread(tw).get("closed"), f"r={rw2}")
+        check("...and every hop moves the holder and records the step",
+              _wf["holder"] == "alpha.db" and _wf["runs"] == 2
+              and "schema next" in _wf["lastStep"])
+
+        # ...while a chain with NO block behaves exactly as it always did.
+        pl1 = dmail("alpha.app", {"to": "alpha.web", "text": "legacy chain"},
+                    "1700000000210")
+        wd.deliver_desk_mail(dm, "alpha.app", pl1,
+                             json.loads(pl1.read_text(encoding="utf-8")))
+        tl = json.loads(sorted((wd.INBOX / "alpha.web").glob("*.json"))[-1]
+                        .read_text(encoding="utf-8")).get("thread")
+        check("legacy: a chain with no workflow block carries no workflow record",
+              wd.workflow_of(wd._load_thread(tl)) is None)
+        pl2 = dmail("alpha.web", {"to": "alpha.db", "text": "too far",
+                                  "thread": tl}, "1700000000211")
+        check("legacy: the depth cap still closes such a chain, unchanged",
+              wd.deliver_desk_mail(dm, "alpha.web", pl2,
+                                   json.loads(pl2.read_text(encoding="utf-8"))) == "refused"
+              and wd._load_thread(tl).get("closed") == "hops")
+
+        # Budget. Both halves of D3 matter: forward delegation stops, the report
+        # HOME does not.
+        _ledw = wd._load_thread(tw)
+        _ledw["workflow"]["runs"] = _ledw["workflow"]["budget"]
+        wd._save_thread(_ledw)
+        sent.clear()
+        pw3 = dmail("alpha.web", {"to": "alpha.api", "text": "keep going",
+                                  "thread": tw}, "1700000000202")
+        rw3 = wd.deliver_desk_mail(dm, "alpha.web", pw3,
+                                   json.loads(pw3.read_text(encoding="utf-8")))
+        check("a workflow out of runs refuses further delegation",
+              rw3 == "refused"
+              and wd.workflow_of(wd._load_thread(tw))["status"] == "exhausted",
+              f"r={rw3}")
+        check("...naming the desk to report to, not merely that it stopped",
+              any("alpha.app" in s[1] for s in sent),
+              "; ".join(s[1] for s in sent)[:200])
+        # REFUSING EVERYTHING EQUALLY would strand the answer inside the desk
+        # just told to stop: the work done and nobody told, which is the exact
+        # failure this phase exists to remove.
+        pw4 = dmail("alpha.web", {"to": "alpha.app", "text": "here is what exists",
+                                  "thread": tw}, "1700000000203")
+        check("...but the report back to the desk that started it still goes through",
+              wd.deliver_desk_mail(dm, "alpha.web", pw4,
+                                   json.loads(pw4.read_text(encoding="utf-8"))) == "delivered")
+
+        # Deadline: the other way a workflow ends.
+        _ledw = wd._load_thread(tw)
+        _ledw["workflow"].update({"status": "open", "runs": 0,
+                                  "deadline": "2000-01-01T00:00:00Z"})
+        wd._save_thread(_ledw)
+        pw5 = dmail("alpha.web", {"to": "alpha.api", "text": "still going",
+                                  "thread": tw}, "1700000000204")
+        check("a workflow past its deadline stops even with runs to spare",
+              wd.deliver_desk_mail(dm, "alpha.web", pw5,
+                                   json.loads(pw5.read_text(encoding="utf-8"))) == "refused"
+              and wd.workflow_of(wd._load_thread(tw))["endedBy"] == "deadline")
+
+        # The stalled-chain alarm. Every other alarm in the watchdog watches a
+        # DESK; nothing watched the work, so a chain holding still looked
+        # exactly like a chain thinking.
+        _ledw = wd._load_thread(tw)
+        _ledw["workflow"].update({"status": "open", "runs": 1,
+                                  "deadline": wd.iso_in(hours=5),
+                                  "lastAt": "2000-01-01T00:00:00Z",
+                                  "stalledNotifiedAt": None})
+        wd._save_thread(_ledw)
+        sent.clear()
+        wd.check_workflow_stalls(dm)
+        check("a workflow that stopped moving pages the origin channel",
+              len(sent) == 1 and sent[-1][0] == "id-alpha-app"
+              and "has not moved" in sent[-1][1],
+              "; ".join(f"{s[0]}:{s[1][:60]}" for s in sent)[:200])
+        check("...naming the holder and the last step, so it is actionable",
+              "alpha." in sent[-1][1] and "last step" in sent[-1][1])
+        check("...and marks it stalled without ending it",
+              wd.workflow_of(wd._load_thread(tw))["status"] == "stalled")
+        wd.check_workflow_stalls(dm)
+        check("...once, not every three seconds", len(sent) == 1)
+        _ledw = wd._load_thread(tw)
+        _ledw["workflow"]["stalledNotifiedAt"] = wd.iso_in(hours=-7)
+        wd._save_thread(_ledw)
+        wd.check_workflow_stalls(dm)
+        check("...and again after six hours if it is still not moving",
+              len(sent) == 2)
+        # A stall is a silence, not a verdict: work resuming answers it.
+        _ledw = wd._load_thread(tw)
+        wd.workflow_step(_ledw, "alpha.web", "picked it back up")
+        wd._save_thread(_ledw)
+        check("a stalled workflow that moves again is simply open again",
+              wd.workflow_of(wd._load_thread(tw))["status"] == "open"
+              and wd.workflow_of(wd._load_thread(tw))["stalledNotifiedAt"] is None)
+
+        # !status has to show the chain, not only the desks.
+        _rows = wd.describe_open_workflows()
+        check("!status lists open workflows with holder, runs and last step",
+              any(tw in r and "runs" in r and "ship /cliq" in r for r in _rows),
+              " | ".join(_rows)[:200])
+        check("...as bullets, because Discord renders no tables",
+              not any("|" in r.split("\n")[0] for r in _rows))
+    finally:
+        wd._workflow_budget = _real_wfb
+        wd._hop_ttl = lambda: 2
+        # Take the delivered envelopes back out of the inboxes. Later sections
+        # find "their" envelope with sorted(...)[-1], and these stems sort ABOVE
+        # the ones those tests use - !trace read this section's closed chain and
+        # went red for a reason that had nothing to do with !trace.
+        for _sid in ("alpha.app", "alpha.web", "alpha.api", "alpha.db"):
+            for _f in (wd.INBOX / _sid).glob("*17000000002*.json"):
+                _f.unlink(missing_ok=True)
+
     print("== fleet senders (desk mail classification) ==")
     check("a desk id in 'from' is not a person", wd.is_human_sender("alpha.web") is False)
     check("a '-job' sender is fleet mail too (transcribe-job predates this)",

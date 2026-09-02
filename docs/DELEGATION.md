@@ -521,6 +521,63 @@ one-line check that a session has the feature at all.
 
 ---
 
+## D11 — Workflows: the chain as a whole, not one hop at a time (2026-09-02)
+
+Owner decision, 2026-09-02: **delegation must keep a workflow between desks running as long as
+needed.** Everything above bounds a *piece* of a chain. `hop_ttl` (D1) bounds how far it travels;
+`loop_budget` (D5) bounds how many times **one desk** re-queues itself. Nothing held the *goal*,
+so a long piece of work died at whichever cap it met first — and the desk that hit the cap knew
+only that it had been refused, not what the work was for or who was waiting.
+
+**A workflow is an optional block on the existing D1 thread ledger.** Not a second record beside
+it: `state\watchdog\threads\<id>.json` is already written at every hop and already carries the
+origin, the edges and the delivery history, so a parallel `state\workflows\` would have been a
+second source of truth for one chain, drifting the first time a write failed.
+
+```json
+"workflow": {
+  "goal": "ship /cliq end to end", "done": "python -m pytest api",
+  "budget": 25, "runs": 4, "deadline": "2026-09-03T18:05:00Z",
+  "holder": "linkbox.api", "lastStep": "linkbox.web → linkbox.api: schema next",
+  "lastAt": "2026-09-02T19:40:00Z", "status": "open"
+}
+```
+
+**Opening one.** Desk mail carrying a `workflow` block (`goal` required; `done` should be a command
+with an exit code wherever one exists, for D5's reason) opens a workflow on the chain that mail
+starts. A sender may ask for a **smaller** budget than the configured one, never a larger: a desk
+cannot vote itself more room. **Desk mail with no block behaves exactly as it always did** — no
+block, no record, and every cap in D1–D5 applies unchanged.
+
+**What changes while one is open.** The **depth cap stops binding that chain.** Depth exists to
+stop a chain travelling unattended, and travelling is precisely what this kind of work does; the
+budget and the deadline bound it instead. A desk inside an open workflow may also re-queue itself
+with `schedule.py add --loop <thread-id>`, and that run is counted **against the chain**, not
+against a per-desk loop file — the same work moving across three desks spends one budget. The
+storm cap survives as a backstop, raised above the budget so it is never what ends a workflow.
+
+**Ending one.** `runs >= budget`, or the deadline passing, marks it `exhausted`. Then, per D3:
+forward delegation is refused, **and the report home is not.** Mail addressed to the chain's
+`origin.session` still goes through, because refusing every message equally would strand the answer
+inside the desk that was just told to stop — the work done and nobody told, which is the failure
+this whole document exists to remove. That desk tells the human once and asks whether to continue.
+**Workflows never extend themselves**; a fresh instruction opens a new one, exactly as with loops.
+
+**Stalling.** Every other alarm in the watchdog watches a *desk*; nothing watched the *work*, so a
+chain holding still looked exactly like a chain thinking. A workflow whose last step is older than
+`workflow_stall_hours` gets one line to the origin channel naming the holder and the last step, is
+marked `stalled`, and repeats at most every 6 h. `stalled` is a silence, not a verdict: the next
+step puts it back to `open`. The alarm is **the watchdog's own voice** — mechanical, so no
+mid-chain desk ever speaks to a human.
+
+**Where it shows.** `!status` lists open workflows (id, goal, holder, runs/budget, last step);
+`/brief` reports them under *in flight*; `!trace <thread>` already tells the chain's story.
+
+Config (`[delegation]`, all with SPEC rows): `workflow_budget` 25 · `workflow_deadline_hours` 24 ·
+`workflow_stall_hours` 3.
+
+---
+
 ## The worked example — linkbox audits itself
 
 The shipped demo (`templates\demo-project\`: `back`, `front`, and a read-only `auditor`) already
@@ -571,6 +628,7 @@ never learns what a "changelog" is. The fleet does.
 | **C** — *shipped 2026-08-15* | D6 slash pass-through + `config\skills.ini` (8 checks) | suite green ✓; live half moves to E: `/status` from a phone reaches a desk, an unlisted verb is refused in-channel |
 | **D** — *shipped 2026-08-15* | D5 loops (`--loop`, budgets at add-time AND fire-time, `loop close/list`, `!cron` section, `--to` validation on every add, `--channel` into the envelope) — 16 checks | suite green ✓; live half moves to E: a 3-run loop closes on its done-command; a budget-spent loop checkpoints instead of running again |
 | **E** — *passed 2026-08-15* | live pilot of the worked example on a stamped demo project, on the real watchdog and a real server | ✓ chain closed itself: finding recorded → delegated → fixed → replied → verified → one human summary. **~69 s end to end, ~22 s per hop** (cold headless runs, no warm desks) |
+| **G** — *shipped 2026-09-02* | D11 workflows: the `workflow` block on the D1 ledger, budget/deadline/stall config with SPEC rows, the depth cap suspended inside an open chain, `--loop <thread>` counted against the chain, the stalled alarm, `!status` + `/brief` — 26 checks | suite green ✓ (1854); live half still open: one real chain spanning three desks and its own re-queue, ending on its done-command |
 | **F** — *not needed* | warm desks in the delegation path | the measurement above settled it: ~20 s of cold-start per hop is not what makes a chain slow. Revisit only if longer chains drag |
 
 Each phase lands as one commit with its tests; nothing merges on prose alone. *Documentation is
