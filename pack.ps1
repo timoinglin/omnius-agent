@@ -341,18 +341,38 @@ if ($Fresh) {
   # it, and a routine's text can name an account ("check my gmail every
   # hour"). Deny-by-default is the only version that survives the next file
   # somebody adds to this folder. Mirrors .gitignore's allow-list exactly.
+  #
+  # -RECURSE, and that word is the whole fix (2026-09-02). Without it this
+  # walked only the FILES directly in config\ and never looked inside a
+  # subfolder, so `config\signatures\` shipped whole into the public release:
+  # a real mail signature, its logo and award images, naming a real address.
+  # Found by downloading the served zip and reading it back rather than
+  # trusting the build's own audit. Same shape as the daybook\memory\ leak
+  # fixed hours earlier in 42edc94 - an exclusion that names a level instead
+  # of a tree - which is why this one is written to cover every depth at once.
   $configKeep = @('README.md')
-  Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot 'config') -File `
+  $configRoot = Join-Path $PSScriptRoot 'config'
+  Get-ChildItem -LiteralPath $configRoot -File -Recurse -Force `
                 -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike '*.example.*' -and $configKeep -notcontains $_.Name } |
-    ForEach-Object { $tarArgs += "--exclude=$leaf/config/$($_.Name)" }
+    ForEach-Object {
+      $rel = $_.FullName.Substring($configRoot.Length + 1).Replace('\', '/')
+      $tarArgs += "--exclude=$leaf/config/$rel"
+    }
   # .git carries every note ever committed - tar skipping the working copy is
   # not enough, which is the lesson -Work already learned the hard way.
   $tarArgs += "--exclude=$leaf/.git"
   # Documents belonging to OTHER projects are not Omnius product. The WL
   # support handover carries another server's ids, handles and internals.
-  $tarArgs += "--exclude=*HANDOVER*.md", "--exclude=$leaf/scratch",
-              "--exclude=$leaf/START-HERE.md"
+  #
+  # BOTH SPELLINGS, because one of them cost a release (2026-09-02). The
+  # pattern was `*HANDOVER*.md` and the file on disk was `HANDOFF-2026-08-12.md`
+  # - one letter apart, so -Fresh packed it and it went out to strangers with a
+  # real `C:\Users\<name>` path inside. The suite already refused a TRACKED
+  # docs/HANDOFF-*, so everyone assumed it was covered; it was untracked, and
+  # -Fresh packs the FILESYSTEM. Never trust one spelling of a human word.
+  $tarArgs += "--exclude=*HANDOVER*.md", "--exclude=*HANDOFF*.md",
+              "--exclude=$leaf/scratch", "--exclude=$leaf/START-HERE.md"
   # A stale on-disk stamp from some earlier unzip must not ride along - the
   # ONLY correct stamp is the one injected below, naming THIS build's commit.
   $tarArgs += "--exclude=$leaf/RELEASE-COMMIT"

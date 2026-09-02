@@ -3820,10 +3820,43 @@ try:
           "!config/fleet.json" not in _gitignore
           and "!config/fleet.example.json" in _gitignore)
     _pack = (_rr / "pack.ps1").read_text(encoding="utf-8")
+    # Was `config/$($_.Name)` until 2026-09-02 - a NAME, which is why only the
+    # top level was ever excluded. The path is now relative to config\ so it
+    # carries the subfolder with it; that is the fix, so the check follows it.
     check("-Fresh drops the live config files but ships the templates",
-          "config/$($_.Name)" in _pack and "*.example." in _pack)
+          "config/$rel" in _pack and "*.example." in _pack)
     check("...and no longer keeps fleet.json by name",
           "$configKeep = @('README.md')" in _pack)
+    # == the 2026-09-02 release leak, both halves ==============================
+    # A release went out carrying config\signatures\ (a real email signature,
+    # its logo, a real address) and docs\HANDOFF-2026-08-12.md (a real
+    # C:\Users\<name>). Found by DOWNLOADING the served zip and reading it back,
+    # not by the build's own audit, which reported clean. Three separate
+    # allow-by-list mistakes lined up; each gets a check, because the next one
+    # will be a different file with the same shape.
+    check("-Fresh walks config\\ RECURSIVELY (a subfolder shipped whole)",
+          "-File -Recurse -Force" in _pack and "config/$rel" in _pack,
+          "without -Recurse only config\\*.* is excluded and config\\signatures\\ ships")
+    check("-Fresh drops BOTH spellings of the handover doc",
+          "--exclude=*HANDOVER*.md" in _pack and "--exclude=*HANDOFF*.md" in _pack,
+          "the pattern said HANDOVER, the file on disk was HANDOFF-2026-08-12.md")
+    # The suite refuses TRACKED paperwork, which is why everyone assumed
+    # HANDOFF was covered. -Fresh packs the FILESYSTEM, so an untracked file
+    # never met that check at all. Say so where the next reader will look.
+    _paperwork_local = [p.name for p in (_rr / "docs").glob("HANDOFF*")]
+    check("...which matters because such a file can be UNTRACKED and still packed",
+          "--exclude=*HANDOFF*.md" in _pack,
+          f"present locally and untracked: {_paperwork_local}")
+    _san = (_rr / "tools" / "release_sanitize.py").read_text(encoding="utf-8")
+    check("the release audit no longer gates on a suffix ALLOW-LIST",
+          'if name.endswith("/"):' in _san
+          and 'not name.endswith(TEXT_SUFFIXES)' not in _san,
+          ".html was not on the list, so the signature was never even scanned")
+    check("...and still skips binary safely, via the decode not a list",
+          "except (UnicodeDecodeError, KeyError)" in _san)
+    check("the audit catches a real home directory too",
+          "real home directory" in _san,
+          "the tracked-file suite checked this; the RELEASE audit did not")
     _inst_cfg = (_rr / "install.ps1").read_text(encoding="utf-8")
     check("install seeds every example, .json as well as .ini",
           "'*.example.*'" in _inst_cfg,

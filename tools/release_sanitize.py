@@ -38,6 +38,14 @@ IDENTIFYING = {
     # shipped file is somebody's actual account.
     "email address": re.compile(
         r"[\w.+-]+@(?!example\.(?:com|net|org)\b)[\w-]+\.[\w.-]*[\w]", re.I),
+    # A real Windows home directory names the person. The TRACKED-file suite has
+    # checked this since 2026-08-14, but the RELEASE audit never did - and the
+    # release packs the filesystem, so an untracked doc slips past the suite
+    # entirely. That is exactly how docs\HANDOFF-2026-08-12.md shipped on
+    # 2026-09-02 with a real C:\Users\<name> inside it. Placeholders pass.
+    "real home directory": re.compile(
+        r"[A-Za-z]:[\\/]{1,2}Users[\\/]{1,2}"
+        r"(?!you\b|user\b|username\b|yourname\b|<|%|\$)[^\\/\"'\s<>]+", re.I),
     # Credential SHAPES - the same list api.redact strips from outbound posts;
     # the suite pins the two lists together so they cannot drift. Added
     # 2026-08-16 after GitHub's secret scanner proved the gap from OUTSIDE: it
@@ -221,7 +229,21 @@ def audit(zip_path):
     with zipfile.ZipFile(zip_path) as z:
         for name in z.namelist():
             rel = name.split("/", 1)[1] if "/" in name else name
-            if name.endswith("/") or not name.endswith(TEXT_SUFFIXES):
+            # NO SUFFIX GATE HERE, deliberately (2026-09-02). This used to skip
+            # anything not in TEXT_SUFFIXES, which is allow-by-list - and the
+            # list's own comment predicted how it ends: "an unlisted suffix is
+            # neither scrubbed nor audited". It happened. `.html` was not on the
+            # list, so an .html mail signature under config\signatures\ shipped
+            # in the release with a real address in it, and the audit reported
+            # clean. (Naming the actual file here would re-leak the very name
+            # the sentinel list exists to keep out of a public tree - the suite
+            # caught this comment doing exactly that on its first draft.)
+            # Reading is free and cannot corrupt anything, so the audit now
+            # looks at EVERY entry and lets the decode below be the only gate:
+            # if it is text, it is checked. Binary falls out on UnicodeDecodeError.
+            # (The SCRUB path keeps its suffix list - rewriting a file is not
+            # free, and mangling a binary would be worse than not scrubbing it.)
+            if name.endswith("/"):
                 continue
             if any(rel.replace("\\", "/").endswith(x) for x in AUDIT_EXEMPT):
                 continue
