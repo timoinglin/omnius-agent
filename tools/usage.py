@@ -24,13 +24,11 @@ import subprocess
 import sys
 import tempfile
 
-# Claude Code prints one of these to stderr for every dead `Write(path)` deny
-# rule in settings.json (only `Edit(path)` rules cover file-editing tools). They
-# are harmless and unrelated to usage, but there are a dozen and they would bury
-# the answer. Dropped by shape, not by count, so a NEW warning still shows up.
-NOISE = re.compile(
-    r"Permission deny rule|is not matched by file permission checks"
-    r"|Use Edit\(|Edit rules cover all file-editing tools", re.I)
+# There used to be a NOISE filter here, dropping the warning Claude Code prints
+# for every dead `Write(path)` deny rule in settings.json. It was treating the
+# symptom: the rules did nothing except produce those lines. The four of them
+# were deleted from sync_permissions.py on 2026-09-02, so there is no noise left
+# to filter - and filtering warnings is how a real one goes unread.
 
 # The lines he asked for, in the order the panel shows them.
 WANTED = re.compile(r"Current session:|Current week", re.I)
@@ -69,14 +67,14 @@ def run(timeout=240):
         return "", "the `claude` CLI is not on PATH"
     except subprocess.TimeoutExpired:
         return "", f"the CLI did not answer within {timeout}s"
-    out = "\n".join(l for l in (p.stdout or "").splitlines() if not NOISE.search(l))
+    out = (p.stdout or "").strip("\n")
     if "Current session" not in out and "subscription" not in out:
         # Report what the CLI actually said. The first failure here printed only
         # "no usage block came back", which named the symptom and hid the cause
         # ("Error: Reached max turns (1)") - one line that would have pointed
         # straight at the bug instead of at a mystery.
         detail = [l.strip() for l in (out + "\n" + (p.stderr or "")).splitlines()
-                  if l.strip() and not NOISE.search(l)]
+                  if l.strip()]
         return out.strip(), ("no usage block came back"
                              + (f" - CLI said: {detail[-1][:150]}" if detail else "")
                              + f" (exit {p.returncode})")

@@ -17,12 +17,14 @@
 #                  morning" is how a broken installer ships
 #   3. build     : pack.ps1 -Fresh -Yes (stages the memory seed, refuses on
 #                  identifying data, sanitizes, probes the shipped installer)
-#   4. publish   : force-move the `rolling` tag to HEAD, replace the release's
-#                  assets with the new zip (old assets DELETED first - get.ps1
-#                  takes the first *.zip it sees, and a leftover dated zip from
-#                  yesterday would win the glob)
+#   4. publish   : force-move the `rolling` tag to HEAD, upload the new zip and
+#                  its SHA256SUMS FIRST, then delete whatever else is left over
+#                  (get.ps1 takes the first *.zip it sees, and a leftover dated
+#                  zip from yesterday would win the glob - but deleting before
+#                  uploading left a window with no zip at all)
 #   5. verify    : ask the same API endpoint get.ps1 asks and prove the answer
-#                  is this build - publishing is not the same as being served
+#                  is this build, checksum included - publishing is not the same
+#                  as being served
 #
 #   -SkipTests : emergencies only; the release notes will say tests were skipped.
 param([switch]$SkipTests, [switch]$Help)
@@ -123,6 +125,17 @@ $stamp = Get-Date -Format 'yyyy-MM-dd'
 $zip   = Join-Path (Split-Path $PSScriptRoot -Parent) ("{0}-release-{1}.zip" -f $leaf, $stamp)
 if (-not (Test-Path $zip)) { Fail "expected $zip - pack.ps1 wrote somewhere else?" }
 
+# The checksum ships WITH the zip, as its own asset. get.ps1 refuses to install
+# anything whose hash does not match this file, so a truncated download or a
+# swapped asset stops at the stranger's machine instead of unpacking. Format is
+# the classic `sha256sum` one - `<hash>  <filename>`, two spaces - so anybody
+# can verify it by hand with the tool they already have.
+$zipName = Split-Path $zip -Leaf
+$sha     = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLower()
+$sums    = Join-Path (Split-Path $zip -Parent) 'SHA256SUMS'
+Set-Content -LiteralPath $sums -Value ("{0}  {1}" -f $sha, $zipName) -Encoding ASCII
+Write-Host ("[OK] SHA256 {0}" -f $sha) -ForegroundColor Green
+
 # --- 4. publish ----------------------------------------------------------------
 # The tag moves first, force-pushed: `rolling` is a POINTER, not history - the
 # git log is the history. The release object then follows the tag.
@@ -145,19 +158,26 @@ if ($SkipTests) { $notes = "**Note: test suites were skipped for this build (-Sk
 & gh release view rolling *> $null
 if ($LASTEXITCODE -ne 0) {
   Write-Host '[..] creating the rolling release' -ForegroundColor Cyan
-  & gh release create rolling $zip --title 'Omnius - rolling' --notes $notes
+  & gh release create rolling $zip $sums --title 'Omnius - rolling' --notes $notes
   if ($LASTEXITCODE -ne 0) { Fail 'gh release create failed' }
 } else {
-  # Delete EVERY old asset before uploading. --clobber only replaces same-named
-  # files, and this zip's name carries the date - yesterday's asset would
-  # survive and get.ps1 takes the FIRST *.zip in the list.
+  # UPLOAD FIRST, DELETE SECOND. The old order deleted every asset and then
+  # uploaded, which left a window - seconds on a good line, minutes on a bad
+  # one - where the release everybody's one-liner downloads had no zip at all.
+  # --clobber replaces the same-named assets (SHA256SUMS every time, the zip
+  # when a second release is cut the same day), so the release always serves a
+  # zip and a matching checksum.
+  Write-Host '[..] uploading the new zip + SHA256SUMS' -ForegroundColor Cyan
+  & gh release upload rolling $zip $sums --clobber
+  if ($LASTEXITCODE -ne 0) { Fail 'gh release upload failed' 'the previous zip is still published - nothing was removed. Re-run this script.' }
+  # Only NOW remove what is left over: assets whose names differ from the two
+  # just uploaded. get.ps1 takes the first *.zip it sees, so yesterday's dated
+  # zip must not survive next to today's.
+  $keep = @($zipName, 'SHA256SUMS')
   $old = & gh release view rolling --json assets --jq '.assets[].name'
   foreach ($a in @($old)) {
-    if ($a) { & gh release delete-asset rolling $a --yes *> $null }
+    if ($a -and ($keep -notcontains $a)) { & gh release delete-asset rolling $a --yes *> $null }
   }
-  Write-Host '[..] uploading the new zip' -ForegroundColor Cyan
-  & gh release upload rolling $zip
-  if ($LASTEXITCODE -ne 0) { Fail 'gh release upload failed' 'the release now has NO zip - re-run this script' }
   & gh release edit rolling --title 'Omnius - rolling' --notes $notes *> $null
 }
 
@@ -174,8 +194,14 @@ $asset = $rel.assets | Where-Object { $_.name -like '*.zip' } | Select-Object -F
 if ($rel.tag_name -ne 'rolling') {
   Fail ("releases/latest serves '{0}', not rolling" -f $rel.tag_name) 'is an old release still marked latest? mark it prerelease: gh release edit <tag> --prerelease'
 }
-if (-not $asset -or $asset.name -ne (Split-Path $zip -Leaf)) {
+if (-not $asset -or $asset.name -ne $zipName) {
   Fail 'releases/latest does not serve the zip just built'
+}
+# A zip with no published checksum is a zip get.ps1 refuses to install (it fails
+# closed), so an upload that dropped SHA256SUMS is a broken release, not a
+# cosmetic gap.
+if (-not ($rel.assets | Where-Object { $_.name -eq 'SHA256SUMS' })) {
+  Fail 'releases/latest serves no SHA256SUMS asset' 'get.ps1 refuses to install without it - re-run this script'
 }
 $mb = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 Write-Host ''

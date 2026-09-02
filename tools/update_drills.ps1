@@ -221,6 +221,75 @@ if (Want 'rollback') {
   Check '...and it names the check that broke' ($r.out -match 'Artifact is allowed')
 }
 
+# 7b. A RELEASE WHOSE SUITE CANNOT RUN AT ALL. The gate used to read only [FAIL]
+#     lines: a new commit with a bad import printed nothing, produced no failing
+#     names, and the update read that as green. A crash is not a pass.
+if (Want 'deadsuite') {
+  Write-Host '== deadsuite: the incoming commit makes the suite die on import (runs the suite) =='
+  $bare2 = Join-Path ([IO.Path]::GetTempPath()) ("omnius-deadsuite-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  $script:temps += $bare2
+  & git clone --quiet --bare $repo $bare2 2>&1 | Out-Null
+  $stage2 = Join-Path ([IO.Path]::GetTempPath()) ("omnius-stage2-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
+  $script:temps += $stage2
+  & git clone --quiet $bare2 $stage2 2>&1 | Out-Null
+  & git -C $stage2 config user.email 'drill' 2>&1 | Out-Null
+  & git -C $stage2 config user.name 'drill' 2>&1 | Out-Null
+  $suite = Join-Path $stage2 'tools\discord\test_watchdog.py'
+  Set-Content $suite ("import no_such_module_the_release_forgot`n" +
+                      (Get-Content $suite -Raw)) -Encoding utf8
+  & git -C $stage2 commit --quiet -am 'a release whose suite cannot even import' 2>&1 | Out-Null
+  & git -C $stage2 push --quiet origin HEAD:refs/heads/main 2>&1 | Out-Null
+
+  $d = New-Instance $base
+  & git -C $d remote set-url origin $bare2 2>&1 | Out-Null
+  $before = Head $d
+  # ...with uncommitted work on the disk, because the rollback is where it used
+  # to die: --autostash has already replayed it onto the new code when
+  # `reset --hard` runs.
+  Set-Content (Join-Path $d 'MY-SCRATCH.txt') "work in progress`n" -Encoding utf8
+  $r = Run-Update $d -WithTests
+  Check 'a suite that cannot RUN is not read as green' ($r.rc -ne 0) $r.out
+  Check '...and says so, rather than naming checks it never saw' (
+    $r.out -match 'could not RUN')
+  Check '...and the instance is back on the commit it had' ((Head $d) -eq $before)
+  Check '...and the uncommitted file SURVIVED the rollback' (
+    (Test-Path (Join-Path $d 'MY-SCRATCH.txt')) -and
+    ((Get-Content (Join-Path $d 'MY-SCRATCH.txt') -Raw) -match 'work in progress'))
+}
+
+# 7c. AN INTERRUPTED UPDATE MUST NOT STRAND THE INSTANCE. The machine sleeps,
+#     the window closes, the watchdog restarts mid-rebase - and every git
+#     command afterwards fails with "a rebase is in progress", which nobody
+#     holding a phone can act on. Recover it and carry on.
+if (Want 'interrupted') {
+  Write-Host '== interrupted: a half-finished rebase left over from last time =='
+  $d = New-Instance $base
+  # A genuine interrupted rebase, built out of a purely local conflict so that
+  # what the RELEASE touches plays no part in it.
+  $z = Join-Path $d 'MY-LOCAL.txt'
+  & git -C $d checkout --quiet -b side 2>&1 | Out-Null
+  Set-Content $z "side version`n" -Encoding utf8
+  & git -C $d add -A 2>&1 | Out-Null
+  & git -C $d commit --quiet -m 'local: side' 2>&1 | Out-Null
+  & git -C $d checkout --quiet main 2>&1 | Out-Null
+  Set-Content $z "main version`n" -Encoding utf8
+  & git -C $d add -A 2>&1 | Out-Null
+  & git -C $d commit --quiet -m 'local: main' 2>&1 | Out-Null
+  & git -C $d checkout --quiet side 2>&1 | Out-Null
+  & git -C $d rebase main 2>&1 | Out-Null
+  Check 'the drill really did leave a rebase in progress' (
+    (Test-Path (Join-Path $d '.git\rebase-merge')) -or
+    (Test-Path (Join-Path $d '.git\rebase-apply')))
+  $r = Run-Update $d
+  Check 'an interrupted rebase is recovered, not reported as a git error' (
+    $r.rc -eq 0) $r.out
+  Check '...and it says a previous update was interrupted' (
+    $r.out -match 'interrupted')
+  Check '...and nothing is left half-rebased' (
+    -not (Test-Path (Join-Path $d '.git\rebase-merge')) -and
+    -not (Test-Path (Join-Path $d '.git\rebase-apply')))
+}
+
 # 8. RUN FROM A DESK. Restarting the watchdog from inside one of its own
 #    children kills the process printing the answer.
 if (Want 'desk') {

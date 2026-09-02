@@ -114,23 +114,52 @@ DENY = ["AskUserQuestion"]
 #   and desks answer other people now (guests, Telegram invitees), so the
 #   difference between "reads it by habit" and "has to ask" is worth keeping.
 #
-#   It is NOT a boundary. Bash and PowerShell are allowed, so `type .env` still
-#   works: anything with a shell can read any file on the machine. Treating this
-#   as containment would be a lie - the containment is that only the owner and
-#   people he invites can talk to a desk at all.
+#   It WAS NOT a boundary, and as of 2026-09-02 that is no longer left standing.
+#   Bash and PowerShell are allow-listed fleet-wide, so `type .env`,
+#   `git show HEAD:.env` and `python -c "open('.env')"` all walked straight
+#   through this list - a permission rule can only see a FILE tool. The shell
+#   route is closed by a PreToolUse hook instead (tools\\discord\\secret_guard.py,
+#   stamped onto every desk by fix_hook_paths.py), which reads the command and
+#   the paths of a tool call and refuses .env, state\\web\\ and audit-sentinels.
+#   These rules remain the first line, for the file tools; the hook is the fence.
+#
+#   It is still not containment: anything with a shell can obfuscate a path past
+#   a regex. The containment is that only the owner and people he invites can
+#   talk to a desk at all.
 #
 # Every depth is listed because desks sit at different depths (root, daybook\,
 # tools\<x>\, projects\<p>\<c>\) and a relative rule that misses is a rule that
-# is not there. Stamped by this script now, so every desk carries the same set
-# instead of whatever its file was hand-written with.
+# is not there. The `**/` forms cover any depth in one line; the explicit ones
+# stay because they cost nothing and predate them.
+#
+# NO `Write(...)` RULES. Claude Code prints a warning to stderr for every one of
+# them - "Use Edit(...): Edit rules cover all file-editing tools" - and does not
+# apply them. tools\\usage.py used to filter that noise out of its own output;
+# the four dead rules and that filter both went on 2026-09-02.
+#
+# NO `Grep(...)` RULES either, for the same reason from the other direction: a
+# `Read(...)` rule already covers every read-only file tool (Read, Grep, Glob,
+# LS), so a Grep rule would be the same dead noise wearing a different name.
 DENY_ENV = ["Read(./.env)", "Read(./**/.env)",
             "Read(../.env)", "Read(../**/.env)",
             "Read(../../.env)", "Read(../../**/.env)",
             "Read(../../../.env)", "Read(../../../**/.env)",
+            "Read(**/.env)",
+            # Saved browser sessions - real logged-in cookies for his accounts.
+            # These had no rule at all until 2026-09-02.
+            "Read(**/state/web/**)",
             "Edit(./.env)", "Edit(../.env)", "Edit(../../.env)",
-            "Edit(../../../.env)",
-            "Write(./.env)", "Write(../.env)", "Write(../../.env)",
-            "Write(../../../.env)"]
+            "Edit(../../../.env)", "Edit(**/.env)",
+            "Edit(**/state/web/**)"]
+
+# Deny entries this script actively REMOVES from a desk file. Additive stamping
+# cannot un-say something, and these rules do nothing except make Claude Code
+# print a warning on every start.
+DENY_DEAD = ["Write(./.env)", "Write(./**/.env)",
+             "Write(../.env)", "Write(../**/.env)",
+             "Write(../../.env)", "Write(../../**/.env)",
+             "Write(../../../.env)", "Write(../../../**/.env)",
+             "Write(**/.env)"]
 
 # Claude Code's built-in "Concise" output style: lead with the result, no
 # preamble, no narration, short by default - while keeping error reports,
@@ -293,6 +322,9 @@ def main():
         # file carried rules for two, so the root .env was reachable from it.
         want_deny = DENY + DENY_ENV
         undenied = [t for t in want_deny if t not in held]
+        # ...and the dead Write() rules go, which is the one thing this script
+        # subtracts. See DENY_DEAD.
+        dead = [t for t in held if t in DENY_DEAD]
         auto = data.setdefault("autoMode", {})
         auto_have = auto.get("allow") or []
         auto_missing = [a for a in AUTO_ALLOW if a not in auto_have]
@@ -323,7 +355,7 @@ def main():
         except (OSError, json.JSONDecodeError):
             lhave = []
         local_missing = [t for t in extra if t not in lhave]
-        if not (missing or stale or undenied or misplaced or local_missing
+        if not (missing or stale or undenied or dead or misplaced or local_missing
                 or auto_missing or mode_wrong or mcp_wrong or asks
                 or style_wrong):
             continue
@@ -333,8 +365,8 @@ def main():
         # Additive on purpose: a desk may have earned an entry of its own
         # (a project-specific MCP server), and this script must not eat it.
         perms["allow"] = [t for t in have if t not in DENY and t not in extra] + missing
-        if undenied:
-            perms["deny"] = held + undenied
+        if undenied or dead:
+            perms["deny"] = [t for t in held if t not in DENY_DEAD] + undenied
         if auto_missing:
             # Additive like the allow list: an instance may have added a
             # standing authorisation of its own, and this must not eat it.

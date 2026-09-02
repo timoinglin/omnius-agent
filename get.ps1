@@ -73,13 +73,81 @@ function Install-Omnius {
     Write-Host ("  [X] release {0} has no zip asset - re-cut it with release.bat, or clone instead." -f $rel.tag_name) -ForegroundColor Red
     return
   }
+  # Every release cut since 2026-09-02 publishes a SHA256SUMS asset next to the
+  # zip (release.ps1). No checksum = no install: unpacking an unverified archive
+  # onto a stranger's machine is exactly the thing this file must never do, and
+  # "probably fine" is not a verdict an installer gets to reach on its own.
+  $sumAsset = $rel.assets | Where-Object { $_.name -eq 'SHA256SUMS' } | Select-Object -First 1
+  if (-not $sumAsset) {
+    Write-Host ("  [X] release {0} publishes no checksum (SHA256SUMS)." -f $rel.tag_name) -ForegroundColor Red
+    Write-Host '      This installer will not unpack a download it cannot verify.'
+    Write-Host '      Ask the author to re-cut the release, or install from source:'
+    Write-Host ("      git clone https://github.com/{0}.git `"{1}`"" -f $repo, $Path)
+    return
+  }
   Write-Host ("  [OK] {0}  ({1:N1} MB, release {2})" -f $asset.name, ($asset.size / 1MB), $rel.tag_name)
 
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ("omnius-get-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
   New-Item -ItemType Directory -Path $tmp -Force | Out-Null
   $zip = Join-Path $tmp $asset.name
   Write-Host '  [..] downloading'
-  Invoke-WebRequest $asset.browser_download_url -OutFile $zip -UseBasicParsing
+  # -TimeoutSec so a stalled connection ends in a sentence instead of hanging
+  # the console forever, and try/catch so a dropped line prints one actionable
+  # line rather than a web-exception stack trace on the command the README
+  # tells everybody to run.
+  try {
+    Invoke-WebRequest $asset.browser_download_url -OutFile $zip -UseBasicParsing -TimeoutSec 600
+  } catch {
+    Write-Host ("  [X] the download failed: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    Write-Host '      Check your connection and run the same command again.'
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return
+  }
+  # A truncated download is the common failure and it is silent: unpacking would
+  # report a corrupt-file exception nobody can act on. GitHub tells us how
+  # many bytes it should be, so compare before touching the hash.
+  $got = (Get-Item -LiteralPath $zip).Length
+  if ($asset.size -and $got -ne $asset.size) {
+    Write-Host ("  [X] the download is incomplete ({0:N0} of {1:N0} bytes)." -f $got, $asset.size) -ForegroundColor Red
+    Write-Host '      Nothing was installed. Run the same command again.'
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return
+  }
+
+  Write-Host '  [..] verifying the checksum'
+  $sumFile = Join-Path $tmp 'SHA256SUMS'
+  try {
+    Invoke-WebRequest $sumAsset.browser_download_url -OutFile $sumFile -UseBasicParsing -TimeoutSec 60
+  } catch {
+    Write-Host ("  [X] could not download the checksum: {0}" -f $_.Exception.Message) -ForegroundColor Red
+    Write-Host '      Nothing was installed. Run the same command again.'
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return
+  }
+  # Format: `<hash>  <filename>`, one line per asset. Match on the zip's name so
+  # a multi-line file keeps working if a release ever ships more than one.
+  $want = $null
+  foreach ($line in (Get-Content -LiteralPath $sumFile)) {
+    if ($line -match '^\s*([0-9a-fA-F]{64})\s+\*?(.+?)\s*$') {
+      if ($matches[2] -eq $asset.name) { $want = $matches[1].ToLower() }
+    }
+  }
+  if (-not $want) {
+    Write-Host ("  [X] SHA256SUMS does not list {0} - the release is inconsistent." -f $asset.name) -ForegroundColor Red
+    Write-Host '      Do not install it. Tell the author.'
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return
+  }
+  $have = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLower()
+  if ($have -ne $want) {
+    Write-Host '  [X] the download did not match the published checksum - re-run;' -ForegroundColor Red
+    Write-Host '      if it keeps failing, do not install and tell the author.' -ForegroundColor Red
+    Write-Host ("      expected {0}" -f $want) -ForegroundColor Gray
+    Write-Host ("      got      {0}" -f $have) -ForegroundColor Gray
+    Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue
+    return
+  }
+  Write-Host '  [OK] checksum matches'
 
   Write-Host '  [..] unpacking'
   Expand-Archive -LiteralPath $zip -DestinationPath $tmp -Force

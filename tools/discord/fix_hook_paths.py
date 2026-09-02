@@ -62,34 +62,45 @@ DISCORD = ROOT / "tools" / "discord"
 # hook that fires on one desk and not another is the kind of asymmetry nobody
 # notices until a desk goes quiet.
 #
-#   (event, script, timeout seconds, statusMessage)
+#   (event, script, timeout seconds, statusMessage, matcher)
 #
 # PermissionRequest gets 620s because the owner has to see the ask in Discord
-# and answer it from wherever he is; the other two only move files and must
-# never delay a turn.
+# and answer it from wherever he is; the others only move files or read one
+# string and must never delay a turn.
+#
+# PreToolUse/secret_guard.py is the .env fence (2026-09-02). The deny lists in
+# settings.json only understand FILE rules, and Bash/PowerShell are allow-listed
+# fleet-wide, so `type .env` walked straight through the fence those files
+# advertise. The matcher names the tools that can carry a path or a command;
+# everything else is not even asked.
 HOOK_SPEC = (
     ("PermissionRequest", DISCORD / "permission_relay.py", 620,
-     "asking the owner in Discord..."),
-    ("Stop", DISCORD / "turn_end_hook.py", 10, None),
-    ("UserPromptSubmit", DISCORD / "turn_start_hook.py", 10, None),
+     "asking the owner in Discord...", None),
+    ("Stop", DISCORD / "turn_end_hook.py", 10, None, None),
+    ("UserPromptSubmit", DISCORD / "turn_start_hook.py", 10, None, None),
+    ("PreToolUse", DISCORD / "secret_guard.py", 10, None,
+     "Bash|PowerShell|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit"),
 )
 
 
 def hooks_block():
     """-> the hooks mapping for THIS machine, absolute paths and all."""
     out = {}
-    for event, script, timeout, status in HOOK_SPEC:
+    for event, script, timeout, status, matcher in HOOK_SPEC:
         hook = {"type": "command", "command": f'python "{script}"', "timeout": timeout}
         if status:
             hook["statusMessage"] = status
-        out[event] = [{"hooks": [hook]}]
+        entry = {"hooks": [hook]}
+        if matcher:
+            entry["matcher"] = matcher
+        out.setdefault(event, []).append(entry)
     return out
 
 
 def missing_scripts():
     """-> hook scripts this checkout does not actually have. Should be empty;
     a non-empty answer means a broken checkout, not a broken machine."""
-    return [s for _e, s, _t, _m in HOOK_SPEC if not s.is_file()]
+    return [s for _e, s, _t, _m, _x in HOOK_SPEC if not s.is_file()]
 
 
 def desk_dirs():

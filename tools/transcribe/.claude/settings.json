@@ -81,10 +81,10 @@
       "Edit(../.env)",
       "Edit(../../.env)",
       "Edit(../../../.env)",
-      "Write(./.env)",
-      "Write(../.env)",
-      "Write(../../.env)",
-      "Write(../../../.env)"
+      "Read(**/.env)",
+      "Read(**/state/web/**)",
+      "Edit(**/.env)",
+      "Edit(**/state/web/**)"
     ],
     "defaultMode": "acceptEdits"
   },

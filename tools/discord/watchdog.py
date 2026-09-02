@@ -26,6 +26,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import threading
 import time
 import traceback
 from collections import deque
@@ -3906,14 +3907,20 @@ def _git(*args, timeout=60):
 
 
 def _update_suite():
-    """The gate suite. -> (ok, last line, frozenset of failing check names).
+    """The gate suite. -> (ok, last line, frozenset of failing names, ran).
 
     The NAMES matter as much as the verdict: the suite mixes product checks
     with instance hygiene (memory budgets, desk wiring), so the update gate
     must compare failures BEFORE and AFTER the pull and judge only the delta
     - proven live 2026-08-15, when a second instance's own untidy memory
     blocked its very first !update go and the rollback blamed the commit.
-    Its own function so tests can stub the minute of reality out."""
+    Its own function so tests can stub the minute of reality out.
+
+    THE FOURTH VALUE IS "DID IT RUN AT ALL". Parsing only [FAIL] lines made a
+    suite that CRASHED - a bad import in the new code, a timeout, no output -
+    look identical to a suite that passed: zero failing names, verdict green,
+    update reloaded onto code nothing had tested. A crash is not a pass; it is
+    the loudest possible failure, and the caller must roll back on it."""
     try:
         p = subprocess.run([sys.executable,
                             str(ROOT / "tools" / "discord" / "test_watchdog.py")],
@@ -3922,9 +3929,27 @@ def _update_suite():
         lines = [ln for ln in (p.stdout or "").strip().splitlines() if ln.strip()]
         fails = frozenset(ln.strip()[6:].split("  ")[0].strip()
                           for ln in lines if ln.strip().startswith("[FAIL]"))
-        return p.returncode == 0, (lines[-1] if lines else "(no output)"), fails
+        if not lines or (p.returncode != 0 and not fails):
+            # Exit code says something went wrong and no check owned up to it,
+            # or the suite printed nothing at all: it did not run.
+            err = "\n".join([ln for ln in (p.stderr or "").splitlines()
+                             if ln.strip()][:6]) or "(no output)"
+            return False, err, fails, False
+        return p.returncode == 0, (lines[-1] if lines else "(no output)"), fails, True
+    except subprocess.TimeoutExpired:
+        return False, "the suite ran past 600s and was killed", frozenset(), False
     except Exception as e:                                   # noqa: BLE001
-        return False, f"suite did not run: {type(e).__name__}: {e}", frozenset()
+        return False, f"{type(e).__name__}: {e}", frozenset(), False
+
+
+def _suite_call():
+    """_update_suite(), normalised. Older stubs (and any caller written before
+    the crash-detecting fourth value) return a 3-tuple; treat that as "it ran"."""
+    r = _update_suite()
+    if len(r) == 3:
+        ok, tail, fails = r
+        return ok, tail, fails, True
+    return r
 
 
 def _update_restamp():
@@ -3938,6 +3963,71 @@ def _update_restamp():
                            capture_output=True, timeout=120, creationflags=NO_WINDOW)
         except Exception:                                    # noqa: BLE001
             pass
+
+
+# --- !update runs OFF the main loop --------------------------------------------
+# A fetch is 120s of network and the suite is up to 600s of subprocess, and both
+# used to run inside the message handler - which is the main loop. For those
+# minutes nothing was delivered, no outbox was flushed, and above all no beacon
+# was stamped: autostart.ps1 treats a beacon older than 120s as a dead service
+# and restarts it, so a long `!update go` could get itself killed halfway
+# through. The work goes to one worker thread; the loop keeps ticking and keeps
+# stamping, and the RELOAD is handed back to the loop rather than done from the
+# thread (execv from a worker replaces the process out from under it).
+_update_job = {"thread": None, "reload_cid": None, "startedAt": 0.0}
+
+
+def _update_running():
+    t = _update_job.get("thread")
+    return bool(t is not None and t.is_alive())
+
+
+def _update_reload(cid):
+    """Reload after a successful update. Called from wherever handle_update ran:
+    on the worker thread it is PARKED for the main loop, on the main thread
+    (a desk verb, the tests) it happens right here."""
+    if threading.current_thread() is _update_job.get("thread"):
+        _update_job["reload_cid"] = cid
+        return
+    do_reload(cid, announce=False)
+
+
+def start_update(text, cid):
+    """Dispatch entry for !update: hand the slow half to the worker thread."""
+    if _update_running():
+        api.send_message(cid, "⏳ an update is already running here — one at a time, "
+                              "because two rebases in the same tree is how a "
+                              "half-updated instance happens. I report back when it "
+                              "is done.")
+        return
+    _update_job["reload_cid"] = None
+    _update_job["startedAt"] = time.time()
+    t = threading.Thread(target=_update_thread, args=(text, cid),
+                         name="omnius-update", daemon=True)
+    _update_job["thread"] = t
+    t.start()
+
+
+def _update_thread(text, cid):
+    try:
+        handle_update(text, cid)
+    except Exception as e:                                   # noqa: BLE001
+        log(f"!update worker failed: {type(e).__name__}: {e}")
+        try:
+            api.send_message(cid, f"⛔ the update failed unexpectedly and nothing was "
+                                  f"reloaded: {type(e).__name__}: {e}")
+        except Exception:                                    # noqa: BLE001
+            pass
+
+
+def update_job_tick():
+    """Called once per main-loop tick: pick up a finished update's reload.
+    The gate ran in the thread; the process replacement happens here, on the
+    loop, with no half-finished tick underneath it."""
+    cid = _update_job.get("reload_cid")
+    if cid and not _update_running():
+        _update_job["reload_cid"] = None
+        do_reload(cid, announce=False)
 
 
 def handle_update(text, cid):
@@ -4027,8 +4117,17 @@ def handle_update(text, cid):
     # The in-process path below stays as the fallback for an instance whose
     # update.ps1 is missing (installed before it existed) - which is exactly
     # the case that most needs a fallback.
-    _rc, _ = _git("checkout", "origin/main", "--", "update.ps1")
     updater = ROOT / "update.ps1"
+    _dirty, _ = _git("diff", "--quiet", "--", "update.ps1")
+    if _dirty != 0 and updater.is_file():
+        # A locally edited updater is his work, not ours to clobber: run what
+        # he has, and say so, instead of silently replacing it (sweep 2026-09-02).
+        api.send_message(cid, "ℹ `update.ps1` has local edits — running your version, "
+                              "not the fetched one. Commit or discard them to get "
+                              "the newest updater logic next time.")
+        _rc = 0
+    else:
+        _rc, _ = _git("checkout", "origin/main", "--", "update.ps1")
     if _rc == 0 and updater.is_file():
         api.send_message(cid, f"⬆ updating `{head}` → origin/main via `update.ps1` "
                               f"(fetched fresh, so the newest logic runs) …")
@@ -4050,14 +4149,23 @@ def handle_update(text, cid):
                 "channelId": cid, "startedAt": now_iso(), "startedTs": time.time(),
                 "bootAttempts": 0})
             log(f"!update: {head} -> {new2.strip()} via update.ps1 - reloading")
-            do_reload(cid, announce=False)
+            _update_reload(cid)
             return
         except Exception as e:                                   # noqa: BLE001
             log(f"update.ps1 failed ({type(e).__name__}: {e}) - falling back to the "
                 f"in-process path")
     # BASELINE first: this instance's failures BEFORE the pull are its own
     # housekeeping, not the update's fault. The gate judges only the delta.
-    base_ok, base_tail, base_fails = _update_suite()
+    base_ok, base_tail, base_fails, base_ran = _suite_call()
+    if not base_ran:
+        # No baseline means no gate: every later verdict would be measured
+        # against nothing. Stop BEFORE the pull - the tree is untouched.
+        api.send_message(cid, f"⛔ update stopped: the test suite could not run on the "
+                              f"CURRENT code, so there is nothing to judge the update "
+                              f"against. Nothing was pulled.\n```\n{base_tail[:600]}\n```\n"
+                              f"Run `python tools\\discord\\test_watchdog.py` at the desk "
+                              f"to see why.")
+        return
     if base_fails:
         api.send_message(cid, f"ℹ {len(base_fails)} check(s) already failing on the "
                               f"CURRENT code - noted as this machine's baseline, not "
@@ -4090,16 +4198,28 @@ def handle_update(text, cid):
         _git("checkout", "--", ".")             # drop half-merged content
         _git("reset", "--hard", head_full.strip() or "HEAD")
         _rc, stash_after = _git("rev-parse", "-q", "--verify", "refs/stash")
+        kept = ""
         if stash_after.strip() and stash_after.strip() != stash_before.strip():
             # OUR autostash, identified by ref rather than assumed - popping
             # blind would restore some stash of theirs from last week.
-            _git("stash", "pop")
+            pop_rc, pop_out = _git("stash", "pop")
+            if pop_rc != 0:
+                # "Nothing was lost" has to be TRUE. The work is still in the
+                # stash; say so, and say how to get it back, instead of a
+                # reassurance the tree does not support.
+                kept = (f"\n⚠ your uncommitted work could not be put back "
+                        f"automatically — it is **safe in the stash** "
+                        f"`{stash_after.strip()[:12]}`. At the desk: "
+                        f"`git stash list`, then `git stash pop`.\n"
+                        f"```\n{pop_out.strip()[:300]}\n```")
         listing = ("```\n" + "\n".join(files) + "\n```\n") if files else ""
         api.send_message(cid,
             f"⛔ update stopped: your local changes and the new release both edit the "
-            f"same lines.\n{listing}"
-            f"Nothing was lost — the instance is exactly as it was, still on `{head}`, "
-            f"with your version of those files intact.\n"
+            f"same lines.\n{listing}{kept}"
+            + (f"Nothing was lost — the instance is exactly as it was, still on `{head}`, "
+               f"with your version of those files intact.\n" if not kept else
+               f"The instance is still on `{head}`.\n")
+            +
             f"Both sides changed the same lines, so somebody has to choose — and you "
             f"can do it from here, no shell needed. Say **take the new version of "
             f"`<file>`** (or *of all of them*) and the desk runs it, then `!update go`. "
@@ -4119,10 +4239,39 @@ def handle_update(text, cid):
     # all, and the failing check was literally "every desk carries the full
     # shared allow-list" - a thing the next line fixes.
     _update_restamp()
-    ok, tail, post_fails = _update_suite()
+    ok, tail, post_fails, post_ran = _suite_call()
     new_fails = sorted(post_fails - base_fails)
-    if new_fails:
+    if new_fails or not post_ran:
+        # THE RESET IS A DEMOLITION. --autostash has already replayed their
+        # uncommitted edits onto the new code, so `reset --hard` here would
+        # delete work that was on the disk before the update started. Park it
+        # first, put it back after - and if putting it back fails, it stays in
+        # the stash and he is told where, never dropped silently.
+        _rc, rb_before = _git("rev-parse", "-q", "--verify", "refs/stash")
+        _git("stash", "push", "-u", "-m", "omnius-update-rollback")
+        _rc, rb_after = _git("rev-parse", "-q", "--verify", "refs/stash")
+        parked = bool(rb_after.strip() and rb_after.strip() != rb_before.strip())
         _git("reset", "--hard", head)
+        kept = ""
+        if parked:
+            pop_rc, pop_out = _git("stash", "pop")
+            if pop_rc != 0:
+                kept = (f"\n⚠ your uncommitted work is **safe in the stash** "
+                        f"`{rb_after.strip()[:12]}` (`omnius-update-rollback`) — it "
+                        f"could not be re-applied automatically. At the desk: "
+                        f"`git stash list`, then `git stash pop`.\n"
+                        f"```\n{pop_out.strip()[:300]}\n```")
+    if not post_ran and not new_fails:
+        _update_restamp()
+        log(f"!update: the suite did not run after {head} -> {new} - rolled back")
+        api.send_message(cid, f"⛔ pulled `{head}` → `{new}` and **the test suite could "
+                              f"not run** on the new code — that is not a pass, so the "
+                              f"update was **rolled back** to `{head}`.\n```\n"
+                              f"{str(tail)[:600]}\n```{kept}\n"
+                              f"Nothing was reloaded. Report this - a released commit "
+                              f"should never do it.")
+        return
+    if new_fails:
         # Restamp on the RESTORED code too: the stamps above were written by the
         # version we just threw away, and a machine left half-stamped by a
         # rejected update is exactly the drift this whole path exists to avoid.
@@ -4132,8 +4281,8 @@ def handle_update(text, cid):
                               f"{len(new_fails)} check(s) that were green before - "
                               f"**rolled back** to `{head}`.\n```\n"
                               + "\n".join(new_fails[:5])
-                              + ("\n…" if len(new_fails) > 5 else "") + "\n```\n"
-                              f"Nothing was reloaded; investigate at the desk.")
+                              + ("\n…" if len(new_fails) > 5 else "") + "\n```" + kept
+                              + "\nNothing was reloaded; investigate at the desk.")
         return
     # (already stamped above, before the suite - kept idempotent, not repeated)
     # O2: the handoff. The new watchdog must confirm it took over (healthy
@@ -4150,7 +4299,7 @@ def handle_update(text, cid):
     api.send_message(cid, f"✅ updated `{head}` → `{new}` - {verdict} (`{tail}`). "
                           f"Reloading now; the new watchdog reports back when it "
                           f"is up - or reverts itself if it cannot get healthy.")
-    do_reload(cid, announce=False)
+    _update_reload(cid)
 
 
 # --- the update handshake (docs\OBSERVABILITY.md O2) ----------------------------
@@ -4449,7 +4598,7 @@ def handle_control(text, cid, target, mapping):
         except Exception as e:
             api.send_message(cid, f"could not read config: {type(e).__name__}: {e}")
     elif cmd == "!update":
-        handle_update(text, cid)
+        start_update(text, cid)
     elif cmd == "!trace":
         handle_trace(text, cid)
     elif cmd == "!reload":
@@ -6102,6 +6251,7 @@ def main():
             fleet_board(mapping)
             fire_due_schedules(mapping)
             fire_heartbeat()
+            update_job_tick()
             # Either transport being demonstrably healthy earns the stamp, so the
             # beacon stays ~3s fresh however messages are currently arriving.
             if consecutive_deaf == 0 or live:

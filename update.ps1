@@ -111,10 +111,32 @@ function Update-Omnius {
   # and reverts a perfectly good update. Found on the owner's own machine
   # 2026-08-19, where "memory budget: topics/discord-fleet.md <= 13,000" would
   # have rolled back every release until someone noticed.
+  # A REBASE LEFT HALF-DONE blocks everything below with a git error nobody
+  # outside a terminal can read ("cannot pull with rebase: you have unstaged
+  # changes" / "a rebase is in progress"). It happens for ordinary reasons - the
+  # machine slept, the window was closed, the watchdog was restarted mid-update.
+  # Clearing it is safe: --abort is exactly "put the tree back the way it was".
+  foreach ($d in @('.git\rebase-merge', '.git\rebase-apply')) {
+    if (Test-Path (Join-Path $root $d)) {
+      Say '!' 'a previous update was interrupted and left a rebase half-finished' 'Yellow'
+      & git -C $root rebase --abort 2>&1 | Out-Null
+      Say 'OK' 'that rebase was aborted - your tree is back as it was; carrying on' 'Green'
+      break
+    }
+  }
+
   $baseFails = @()
   if (-not $NoTests) {
     Say '..' 'baseline: running the suite on the CURRENT code first'
-    $baseFails = Get-SuiteFailures $root
+    $baseRes = Get-SuiteResult $root
+    if (-not $baseRes.Ran) {
+      Say 'X' 'the test suite could not RUN on the current code - nothing was pulled' 'Red'
+      Write-Host '      There is no baseline to judge an update against, so this stops here.'
+      $baseRes.Err -split "`n" | ForEach-Object { Write-Host "      $_" }
+      Write-Host '      Run: python tools\discord\test_watchdog.py'
+      return 1
+    }
+    $baseFails = $baseRes.Fails
     if ($baseFails.Count) {
       Say '!' "$($baseFails.Count) check(s) already failing here - noted, not held against the update" 'Yellow'
       $baseFails | Select-Object -First 3 | ForEach-Object { Write-Host "      $_" }
@@ -148,10 +170,22 @@ function Update-Omnius {
     & git -C $root checkout -- . 2>&1 | Out-Null
     & git -C $root reset --hard $before 2>&1 | Out-Null
     $stashAfter = (& git -C $root rev-parse -q --verify refs/stash 2>$null)
-    if ($stashAfter -and $stashAfter -ne $stashBefore) { & git -C $root stash pop 2>&1 | Out-Null }
+    $kept = $null
+    if ($stashAfter -and $stashAfter -ne $stashBefore) {
+      & git -C $root stash pop 2>&1 | Out-Null
+      # "Nothing was lost" has to be TRUE. If the pop failed the work is still in
+      # the stash - name it, rather than print a reassurance the tree does not
+      # support.
+      if ($LASTEXITCODE -ne 0) { $kept = $stashAfter }
+    }
     Say 'X' 'your local changes and the new release edit the same lines' 'Red'
     if ($conflicted.Count) { $conflicted | ForEach-Object { Write-Host "      $_" } }
-    Write-Host "      Nothing was lost - still on $before, with your version intact."
+    if ($kept) {
+      Write-Host "      Your uncommitted work is SAFE IN THE STASH ($($kept.Substring(0, [Math]::Min(12, $kept.Length))))" -ForegroundColor Yellow
+      Write-Host '      but could not be re-applied. Recover it with:  git stash list'
+      Write-Host '      then  git stash pop'
+    }
+    Write-Host "      Still on $before, with your version intact."
     Write-Host '      Somebody has to choose which version wins. From Discord you do not'
     Write-Host '      need a shell for it: say in the channel "take the new version of'
     Write-Host '      <file>" (or "of all of them") and the desk runs it, then `!update go`.'
@@ -173,16 +207,29 @@ function Update-Omnius {
     Say '!' 'suite skipped (-NoTests)' 'Yellow'
   } else {
     Say '..' 'running the test suite on the new code'
-    $postFails = Get-SuiteFailures $root
+    $postRes = Get-SuiteResult $root
+    $postFails = $postRes.Fails
     # ONLY the delta. A check that was already red before the pull is this
     # machine's housekeeping; a check the update BREAKS is the release's fault
-    # and the only thing worth reverting for.
+    # and the only thing worth reverting for. A suite that did not RUN at all is
+    # the third case, and it is a hard failure: no evidence is not good news.
     $introduced = @($postFails | Where-Object { $baseFails -notcontains $_ })
-    if ($introduced.Count) {
-      & git -C $root reset --hard $before 2>&1 | Out-Null
+    if ($introduced.Count -or -not $postRes.Ran) {
+      $kept = Undo-Pull $root $before
       Stamp-Machine $root        # restore stamps to match the restored code
-      Say 'X' "the update BROKE $($introduced.Count) check(s) that were green - rolled back to $before" 'Red'
-      $introduced | Select-Object -First 5 | ForEach-Object { Write-Host "      $_" }
+      if (-not $postRes.Ran) {
+        Say 'X' "the test suite could not RUN on the new code - rolled back to $before" 'Red'
+        Write-Host '      A crash is not a pass, so the update was reverted.'
+        $postRes.Err -split "`n" | ForEach-Object { Write-Host "      $_" }
+      } else {
+        Say 'X' "the update BROKE $($introduced.Count) check(s) that were green - rolled back to $before" 'Red'
+        $introduced | Select-Object -First 5 | ForEach-Object { Write-Host "      $_" }
+      }
+      if ($kept) {
+        Write-Host "      Your uncommitted work is SAFE IN THE STASH ($($kept.Substring(0, [Math]::Min(12, $kept.Length))))" -ForegroundColor Yellow
+        Write-Host '      but could not be re-applied. Recover it with:  git stash list'
+        Write-Host '      then  git stash pop'
+      }
       Write-Host '      Nothing was reloaded. Report this - a released commit should never do it.'
       return 1
     }
@@ -203,14 +250,45 @@ function Update-Omnius {
   return 0
 }
 
-function Get-SuiteFailures([string]$root) {
-  # -> the NAMES of failing checks, so before and after can be compared. The
-  # exit code alone cannot tell "this machine has an untidy memory file" from
-  # "the release is broken", and those need opposite reactions.
+function Get-SuiteResult([string]$root) {
+  # -> @{ Ran; Fails; Err }. The NAMES of failing checks let before and after be
+  # compared: the exit code alone cannot tell "this machine has an untidy memory
+  # file" from "the release is broken", and those need opposite reactions.
+  #
+  # RAN IS THE OTHER HALF. Reading only [FAIL] lines made a suite that never got
+  # off the ground - a bad import in the new code, no output at all - look
+  # exactly like a green one: no failing names, verdict green, and the update
+  # reloaded onto code nothing had tested. A crash is not a pass.
   $out = & python (Join-Path $root 'tools\discord\test_watchdog.py') 2>&1
-  return @($out | Select-String -Pattern '\[FAIL\]' | ForEach-Object {
+  $rc = $LASTEXITCODE
+  $lines = @($out | ForEach-Object { $_.ToString() } | Where-Object { $_.Trim() })
+  $fails = @($lines | Select-String -Pattern '\[FAIL\]' | ForEach-Object {
     ($_.ToString() -replace '.*\[FAIL\]\s*', '') -split '\s{2,}' | Select-Object -First 1
   })
+  $ran = ($lines.Count -gt 0) -and -not ($rc -ne 0 -and $fails.Count -eq 0)
+  return @{ Ran = $ran; Fails = $fails
+            Err = (($lines | Select-Object -Last 6) -join "`n") }
+}
+
+function Undo-Pull([string]$root, [string]$before) {
+  # Roll the tree back to $before WITHOUT eating uncommitted work.
+  #
+  # `git reset --hard` after the pull is a demolition: --autostash has already
+  # replayed their uncommitted edits on top of the new code, so resetting there
+  # deletes files that existed on the disk before the update was ever asked for.
+  # Park them, reset, put them back - and if putting them back fails, they stay
+  # in the stash and the caller says where. -> the stash ref if the work is
+  # still parked, $null if the tree is whole.
+  $stashBefore = (& git -C $root rev-parse -q --verify refs/stash 2>$null)
+  & git -C $root stash push -u -m 'omnius-update-rollback' 2>&1 | Out-Null
+  $stashAfter = (& git -C $root rev-parse -q --verify refs/stash 2>$null)
+  $parked = ($stashAfter -and $stashAfter -ne $stashBefore)
+  & git -C $root reset --hard $before 2>&1 | Out-Null
+  if ($parked) {
+    & git -C $root stash pop 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) { return $stashAfter }
+  }
+  return $null
 }
 
 function Stamp-Machine([string]$root) {

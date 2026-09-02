@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import pathlib
 import tempfile
@@ -1060,13 +1061,17 @@ try:
     # otherwise hang forever on a terminal widget nobody can reach - not a
     # capability judgement at all. Anything else here would be re-growing the
     # rails he removed on 2026-08-06.
+    # A third kind joined them on 2026-09-02, and it is the same SECRECY reason
+    # as .env: state\web\ holds saved browser sessions - live logged-in cookies
+    # for his accounts - and had no rule at all until then.
     _allowed_denies = set()
     for _t in ("AskUserQuestion",):
         _allowed_denies.add(_t)
-    check("only the .env fence and the unanswerable-widget denies survive on the fleet desk",
-          all("env" in x.lower() or x in _allowed_denies
-              for x in _fs["permissions"]["deny"]),
-          f"unexpected: {[x for x in _fs['permissions']['deny'] if 'env' not in x.lower() and x not in _allowed_denies]}")
+    _odd = [x for x in _fs["permissions"]["deny"]
+            if "env" not in x.lower() and "state/web" not in x.lower()
+            and x not in _allowed_denies]
+    check("only the secrecy fences and the unanswerable-widget denies survive on the fleet desk",
+          not _odd, f"unexpected: {_odd}")
 
     print("== !reload ==")
     # Until this existed, every watchdog.py edit needed physical access: Python
@@ -1709,8 +1714,9 @@ try:
     check("no settings file has gone back to a depth-relative hook path",
           not any("${CLAUDE_PROJECT_DIR}" in p.read_text(encoding="utf-8")
                   for p in _fhp.tracked_settings()))
-    check("the hooks written are all three (permission relay + both turn stamps)",
-          set(_fhp.hooks_block()) == {"PermissionRequest", "Stop", "UserPromptSubmit"})
+    check("the hooks written are all four (permission relay, both turn stamps, secret guard)",
+          set(_fhp.hooks_block()) == {"PermissionRequest", "Stop",
+                                      "UserPromptSubmit", "PreToolUse"})
     check("...and every one points at a script this checkout actually has",
           not _fhp.missing_scripts(), f"missing: {_fhp.missing_scripts()}")
     # A desk is a CWD, not a settings file: the watchdog starts a component in
@@ -3896,10 +3902,12 @@ try:
     # name the flag to explain why it is gone, and a looser check fails on that.
     check("...and does NOT cap turns (the cap ate the answer on his first try)",
           '"--max-turns"' not in _us)
-    check("...and filters the dead-Write-rule warnings that would bury the answer",
-          "Permission deny rule" in _us)
-    check("...but filters them BY SHAPE, so a new warning still surfaces",
-          "NOISE" in _us and "re.compile" in _us)
+    # It USED to filter the warnings Claude Code printed for the dead
+    # `Write(path)` deny rules. Those rules were deleted on 2026-09-02, so there
+    # is nothing left to filter - and a standing filter over warnings is how a
+    # real one goes unread.
+    check("...and filters nothing: the warnings it hid no longer exist",
+          "NOISE" not in _us.replace("NOISE filter", ""))
     check("...and never raises - a usage check must not break a desk",
           "FileNotFoundError" in _us and "TimeoutExpired" in _us)
     check("...and reports the REASON on failure rather than a bare failure",
@@ -4632,6 +4640,39 @@ try:
     _get = (real_root / "get.ps1").read_text(encoding="utf-8")
     check("get.ps1 finds the unpacked root by install.bat, not by a hardcoded name",
           "install.bat" in _get and "Join-Path $tmp 'omnius'" not in _get)
+    # == the download is verified before it is unpacked (2026-09-02) ===========
+    # get.ps1 used to Expand-Archive whatever came down the wire. A truncated
+    # download died in a corrupt-file exception nobody can act on, and a swapped
+    # asset would simply have installed. Both are now refusals with a sentence.
+    check("get.ps1 downloads the published SHA256SUMS",
+          "SHA256SUMS" in _get)
+    check("...and verifies the zip against it BEFORE unpacking",
+          "Get-FileHash" in _get
+          and _get.index("Get-FileHash") < _get.index("Expand-Archive"))
+    check("...and says what to do on a mismatch, in his words",
+          "did not match the published checksum" in _get
+          and "tell the author" in _get)
+    # FAIL CLOSED. An older release with no checksum must stop, not install -
+    # "probably fine" is not a verdict an installer reaches on its own.
+    check("...and refuses a release that publishes no checksum at all",
+          "publishes no checksum" in _get)
+    check("...and checks the byte count against what GitHub advertises",
+          "$asset.size" in _get and "incomplete" in _get)
+    check("...with a timeout, so a stalled line ends in a sentence not a hang",
+          "-TimeoutSec" in _get)
+    _rel1 = (real_root / "release.ps1").read_text(encoding="utf-8")
+    check("release.ps1 publishes a SHA256SUMS asset next to the zip",
+          "Get-FileHash" in _rel1 and "SHA256SUMS" in _rel1)
+    # Delete-then-upload left a window - seconds on a good line, minutes on a
+    # bad one - where the release everybody's one-liner downloads had no zip.
+    check("...and uploads BEFORE deleting the old assets (no zip-less window)",
+          "gh release upload" in _rel1 and "delete-asset" in _rel1
+          and _rel1.index("gh release upload rolling") < _rel1.index("delete-asset"))
+    check("...deleting only what is not part of this build",
+          "$keep -notcontains $a" in _rel1)
+    check("...and verifies the served release carries the checksum too",
+          "serves no SHA256SUMS asset" in _rel1)
+
     check("Node has a direct route too, so a winget-less box is not half-installed",
           "Install-NodeDirect" in _inst0 and "nodejs.org/dist/index.json" in _inst0)
     # The direct routes are for machines nobody here owns, so they need a way to
@@ -7298,6 +7339,7 @@ try:
         (("rev-list",), (0, "3\n")),
         (("status", "--porcelain"), (0, " M tools/discord/watchdog.py\n")),
     ])
+    wd._update_suite = lambda: (True, "ok", frozenset())
     wd.handle_update("!update go", "CID_OM")
     check("update go: a dirty tree is NOT refused - autostash carries it through",
           not any("not updating" in m[1] for m in sent)
@@ -7487,6 +7529,162 @@ try:
           and any("baseline" in s[1] for s in sent)
           and any("pre-existing" in s[1] for s in sent)
           and not any(c[:2] == ("reset", "--hard") for c in _upd_calls))
+    # A SUITE THAT CRASHED IS NOT A GREEN SUITE. Both gates used to read only
+    # [FAIL] lines: a new commit with a bad import printed nothing, produced no
+    # failing names, and the update reloaded the fleet onto code that had never
+    # been tested. The exit code and the presence of output decide "did it run".
+    _real_sub_run = wd.subprocess.run
+
+    def _fake_suite_proc(rc, out, err=""):
+        return lambda argv, **kw: type("P", (), {"returncode": rc, "stdout": out,
+                                                 "stderr": err})()
+
+    wd._update_suite = _real_us
+    wd.subprocess.run = _fake_suite_proc(1, "", "ImportError: no module named api")
+    _ok, _tail, _fails, _ran = wd._update_suite()
+    check("suite gate: a crash with no [FAIL] lines is 'did not run', not green",
+          _ran is False and _ok is False and not _fails and "ImportError" in _tail,
+          "no evidence is not good news")
+    wd.subprocess.run = _fake_suite_proc(0, "")
+    _ok, _tail, _fails, _ran = wd._update_suite()
+    check("suite gate: empty output is 'did not run' too", _ran is False)
+    wd.subprocess.run = _fake_suite_proc(1, "[FAIL] a real check  detail\n==== 1 failed ====\n")
+    _ok, _tail, _fails, _ran = wd._update_suite()
+    check("suite gate: a suite that RAN and failed is still judged on its names",
+          _ran is True and _fails == frozenset({"a real check"}))
+
+    def _boom(argv, **kw):
+        raise wd.subprocess.TimeoutExpired(argv, 600)
+    wd.subprocess.run = _boom
+    _ok, _tail, _fails, _ran = wd._update_suite()
+    check("suite gate: a timeout is a hard failure, not a pass",
+          _ran is False and "600" in _tail)
+    wd.subprocess.run = _real_sub_run
+
+    # the baseline half: no baseline, no gate - so nothing is pulled at all
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    wd._git = _upd_happy
+    wd._update_suite = lambda: (False, "ImportError: boom", frozenset(), False)
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: a suite that cannot run on the CURRENT code stops before the pull",
+          any("could not run" in s[1] for s in sent)
+          and not any(c[:1] == ("-c",) for c in _upd_calls)
+          and _reloaded == [])
+    # the post-pull half: it rolls back, and says the suite could not run
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    wd._update_suite = _suite_seq(
+        (True, "==== all green ====", frozenset(), True),
+        (False, "ImportError: no module named api", frozenset(), False))
+    wd.handle_update("!update go", "CID_OM")
+    check("update go: a suite that cannot run on the NEW code rolls back, never reloads",
+          any("could not run" in s[1] for s in sent)
+          and any("rolled back" in s[1].lower() for s in sent)
+          and any(c[:2] == ("reset", "--hard") for c in _upd_calls)
+          and _reloaded == [])
+    check("update go: ...and the message carries the reason, not just a verdict",
+          any("ImportError" in s[1] for s in sent))
+
+    # THE ROLLBACK MUST NOT EAT UNCOMMITTED WORK. --autostash has already
+    # replayed their edits onto the new code by the time the gate says no, so
+    # `reset --hard` there deletes files that were on the disk before the update
+    # was asked for. Park, reset, put back.
+    def _rollback_git(pop_rc=0):
+        state = {"stash": 0}
+
+        def fake(*args, timeout=60):
+            _upd_calls.append(args)
+            if args[:2] == ("rev-parse", "--is-inside-work-tree"):
+                return (0, "true")
+            if args[:3] == ("rev-parse", "--short", "HEAD"):
+                _seq["n"] += 1
+                return (0, "aaa1111\n" if _seq["n"] == 1 else "eee5555\n")
+            if args[:1] == ("rev-list",):
+                return (0, "2\n")
+            if args[:3] == ("rev-parse", "-q", "--verify"):
+                return (0, f"stash{state['stash']}0000\n")
+            if args[:2] == ("stash", "push"):
+                state["stash"] += 1
+                return (0, "Saved working directory")
+            if args[:2] == ("stash", "pop"):
+                return (pop_rc, "" if pop_rc == 0 else "CONFLICT: MY-SCRATCH.txt")
+            if args[:1] in (("pull",), ("-c",)):
+                return (0, "Successfully rebased and updated refs/heads/main.\n")
+            return (0, "")
+        return fake
+
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    wd._git = _rollback_git()
+    wd._update_suite = _suite_seq(
+        (True, "green", frozenset(), True),
+        (False, "1 failed", frozenset({"the new thing broke"}), True))
+    wd.handle_update("!update go", "CID_OM")
+    _names = [c[:2] for c in _upd_calls]
+    check("rollback: uncommitted work is stashed BEFORE the reset and popped after",
+          ("stash", "push") in _names and ("reset", "--hard") in _names
+          and _names.index(("stash", "push")) < _names.index(("reset", "--hard"))
+          < len(_names) - 1 - _names[::-1].index(("stash", "pop")) + 1,
+          "reset --hard after an autostash deletes work that predates the update")
+    check("rollback: ...and with the work put back, nothing is said about a stash",
+          not any("stash" in s[1] for s in sent))
+    sent.clear(); _upd_calls[:] = []; _reloaded[:] = []; _seq["n"] = 0
+    wd._git = _rollback_git(pop_rc=1)
+    wd._update_suite = _suite_seq(
+        (True, "green", frozenset(), True),
+        (False, "1 failed", frozenset({"the new thing broke"}), True))
+    wd.handle_update("!update go", "CID_OM")
+    check("rollback: a pop that fails LEAVES the work in the stash and says where",
+          any("safe in the stash" in s[1].lower() and "git stash list" in s[1]
+              for s in sent),
+          "losing it silently is the one outcome an updater may never have")
+
+    # == !update must not block the bus =======================================
+    # fetch is 120s of network and the suite up to 600s of subprocess; run on
+    # the main loop they stop delivery AND the beacon, and autostart.ps1 kills a
+    # service whose beacon is 120s old - so a long update could get itself
+    # killed halfway through. One worker thread does the slow half.
+    print("== !update off the main loop ==")
+    _src_upd = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
+    check("update: the message handler dispatches to start_update, not the slow body",
+          "start_update(text, cid)" in _src_upd)
+    check("update: the loop picks the finished job up on a tick",
+          "update_job_tick()" in _src_upd.split("fire_heartbeat()")[-1][:200],
+          "the reload must happen on the loop, not inside the worker thread")
+    _gate = threading.Event()
+    sent.clear(); _reloaded[:] = []
+    wd._update_suite = _real_us
+
+    def _slow_update(text, cid):
+        _gate.wait(5)
+    _real_hu = wd.handle_update
+    wd.handle_update = _slow_update
+    try:
+        wd.start_update("!update go", "CID_OM")
+        wd.start_update("!update go", "CID_OM")
+        check("update: a second !update go while one runs is refused, not queued",
+              any("already running" in s[1] for s in sent),
+              "two rebases in one tree is how a half-updated instance happens")
+        check("...and the first one is still running off the loop",
+              wd._update_running())
+    finally:
+        _gate.set()
+        for _ in range(50):
+            if not wd._update_running():
+                break
+            time.sleep(0.05)
+        wd.handle_update = _real_hu
+    check("update: the worker leaves the loop free while it works",
+          not wd._update_running())
+    # the handback: the worker parks the reload, the tick performs it
+    wd._update_job["thread"] = threading.current_thread()
+    wd._update_reload("CID_OM")
+    check("update: a reload asked for by the worker is parked for the main loop",
+          wd._update_job["reload_cid"] == "CID_OM" and _reloaded == [])
+    wd._update_job["thread"] = None
+    wd.update_job_tick()
+    check("update: ...and the next tick is what actually reloads",
+          _reloaded == ["CID_OM"] and wd._update_job["reload_cid"] is None)
+    _reloaded[:] = []
+
     # == boot release notice ==================================================
     # Owner ask 2026-08-16: when the watchdog STARTS, say once what origin/main
     # has and how to apply it - never apply on its own. "Once" is per origin
@@ -8827,8 +9025,24 @@ try:
               not _pp.get("ask"))
         check(f"{_sf2}: carries the standing authorisation for auto mode",
               "$defaults" in (_pj.get("autoMode", {}).get("allow") or []))
-        check(f"{_sf2}: .env is denied for writing too, not only reading",
-              any(x.startswith("Write(") and "env" in x for x in _pp.get("deny", [])))
+        # Editing, not writing. `Write(path)` deny rules are DEAD - Claude Code
+        # prints "Use Edit(...): Edit rules cover all file-editing tools" for
+        # each one and applies none of them. Four of them sat in every desk file
+        # until 2026-09-02, doing nothing but making noise tools\usage.py then
+        # had to filter back out. Edit() is the rule that actually bites.
+        check(f"{_sf2}: .env is denied for editing too, not only reading",
+              any(x.startswith("Edit(") and "env" in x for x in _pp.get("deny", [])))
+        check(f"{_sf2}: carries no dead Write() deny rule",
+              not [x for x in _pp.get("deny", []) if x.startswith("Write(")],
+              "Write() rules are ignored and warn on every start")
+        # Depth-independent rules: a desk sits anywhere from the root to
+        # projects\<p>\<c>\, and the relative list can always be one `..` short.
+        check(f"{_sf2}: denies .env at any depth in one rule",
+              "Read(**/.env)" in _pp.get("deny", []))
+        # Saved browser sessions - live logged-in cookies for his accounts. They
+        # had no deny rule at all until 2026-09-02.
+        check(f"{_sf2}: denies the saved browser sessions in state\\web\\",
+              "Read(**/state/web/**)" in _pp.get("deny", []))
         # Owner, 2026-08-29, the fourth time he has asked for shorter answers:
         # "i want by default all sessions in consise mode responses". Shipped in
         # the settings rather than left to his user config, so a desk on another
@@ -8848,6 +9062,139 @@ try:
               _pj.get("crossSessionInbound") != "accept",
               "a project-scope 'accept' is ignored - the scopes that can say it "
               "are user settings, --settings and managed (see sync_permissions)")
+
+    # === the .env fence is a HOOK, not a deny rule (2026-09-02) ===============
+    # The deny rules above only reach FILE tools. Bash and PowerShell are
+    # allow-listed fleet-wide - they have to be - so every one of the commands
+    # below used to read the token file with nothing in its way. secret_guard.py
+    # runs as PreToolUse and exits 2 on them. These checks are the fence: if a
+    # later edit widens the regex into false positives, or narrows it until
+    # `type .env` walks through again, one of them goes red.
+    print("\n--- secret_guard (the .env fence) ---")
+    import secret_guard as _sg                                        # noqa: E402
+
+    def _guard(tool, **inp):
+        """-> (rc, stderr) for one tool call, in-process."""
+        why = _sg.verdict({"tool_name": tool, "tool_input": inp})
+        return (2, why) if why else (0, "")
+
+    for _cmd in ("type .env",
+                 "cat .env",
+                 "cat ../.env",
+                 "cat ../../.env",
+                 "type W:\\omnius\\.env",
+                 'python -c "open(\'.env\')"',
+                 "git show HEAD:.env",
+                 "gc .env | select -first 5",
+                 "cat .env.local",
+                 "cat .envrc",
+                 "findstr TOKEN .env",
+                 "ls state\\web\\",
+                 "cat state/web/session.json",
+                 "grep -r audit-sentinels ."):
+        _rc, _why = _guard("Bash", command=_cmd)
+        check(f"secret_guard blocks: {_cmd}", _rc == 2 and bool(_why), f"rc={_rc}")
+
+    # FALSE POSITIVES ARE THE FAILURE MODE THAT MATTERS. A guard that stops
+    # ordinary work gets switched off, and then there is no guard at all. The
+    # posture here is that routine work never asks - so these must all pass.
+    for _cmd in ("cat .env.example",
+                 "copy config\\omnius.example.ini config\\omnius.ini",
+                 "cp .env.example env-template.txt",
+                 "python tools/discord/watchdog.py",
+                 "echo the environment variable is set",
+                 "git status --porcelain",
+                 "grep -n environment tools/usage.py",
+                 "ls state/web-ui/",
+                 "python -m pytest tests/test_environment.py",
+                 "npm run dev -- --env production",
+                 # a commit message is prose about the work - the first commit
+                 # after the guard shipped was blocked by its own message
+                 "git commit -m \"update: the .env deny was decorative\"",
+                 "git commit -q -F - @'\nfence: state\\web had no rule\n'@",
+                 "git commit -F - <<'EOF'\nthe .env fence is real now\nEOF"):
+        _rc, _why = _guard("Bash", command=_cmd)
+        check(f"secret_guard allows: {_cmd!r}", _rc == 0, f"blocked: {_why}")
+    # ...but only the MESSAGE is exempt, and only for git commit
+    _rc, _why = _guard("Bash", command="git commit -m \"x\" -- .env")
+    check("secret_guard still blocks `git commit -- .env` (path, not prose)", _rc == 2)
+    _rc, _why = _guard("Bash", command="echo -m \"the .env file\" && cat .env")
+    check("secret_guard exempts nothing outside git commit", _rc == 2)
+
+    # PowerShell goes through the same field, and the file tools through paths.
+    check("secret_guard covers PowerShell, not only Bash",
+          _guard("PowerShell", command="Get-Content .env")[0] == 2)
+    check("secret_guard blocks Read of a .env path",
+          _guard("Read", file_path="W:\\omnius\\.env")[0] == 2)
+    check("secret_guard blocks a Grep aimed at state\\web\\",
+          _guard("Grep", path="W:\\omnius\\state\\web")[0] == 2)
+    check("secret_guard blocks a Glob for .env",
+          _guard("Glob", glob="**/.env")[0] == 2)
+    check("secret_guard lets an ordinary Read through",
+          _guard("Read", file_path="W:\\omnius\\README.md")[0] == 0)
+    # Content is NOT inspected on purpose: writing a document that mentions the
+    # file is ordinary work. Only commands and paths are read.
+    check("secret_guard does not police file CONTENT (docs mention .env)",
+          _guard("Write", file_path="docs\\SECURITY.md",
+                 content="the .env file holds the token")[0] == 0)
+    check("secret_guard blocks a Write AT the .env path itself",
+          _guard("Write", file_path=".env", content="X=1")[0] == 2)
+    # A hook that crashes BLOCKS the tool call, so malformed input must be a
+    # pass-through, never an exception.
+    check("secret_guard survives garbage input instead of blocking everything",
+          _sg.verdict("not a dict") is None and _sg.verdict({}) is None
+          and _sg.verdict({"tool_input": None}) is None)
+
+    # ...and the hook is actually STAMPED, on every desk. A guard nobody wires
+    # up is the decorative fence this replaced.
+    import fix_hook_paths as _fhp                                     # noqa: E402
+    _hb = _fhp.hooks_block()
+    check("fix_hook_paths stamps a PreToolUse guard hook", "PreToolUse" in _hb)
+    _guard_cmd = (_hb.get("PreToolUse") or [{}])[0].get("hooks", [{}])[0].get("command", "")
+    check("...pointing at secret_guard.py, absolute path",
+          "secret_guard.py" in _guard_cmd and str(_fhp.DISCORD) in _guard_cmd,
+          _guard_cmd)
+    check("...matched to the tools that can carry a command or a path",
+          all(t in (_hb.get("PreToolUse") or [{}])[0].get("matcher", "")
+              for t in ("Bash", "PowerShell", "Read", "Grep")))
+    check("...and the script it names exists in this checkout",
+          (_fhp.DISCORD / "secret_guard.py").is_file() and not _fhp.missing_scripts())
+    check("the three original hooks survived the fourth being added",
+          all(e in _hb for e in ("PermissionRequest", "Stop", "UserPromptSubmit")))
+    # --check must FAIL a desk that is missing the new hook, or the stamp is
+    # unverified and drifts the way the allow-list did in August.
+    _probe = SAND / "hookprobe"
+    (_probe / ".claude").mkdir(parents=True, exist_ok=True)
+    _old_desks = _fhp.desk_dirs
+    _fhp.desk_dirs = lambda: [_probe]
+    try:
+        _partial = {k: v for k, v in _hb.items() if k != "PreToolUse"}
+        _fhp.write_json(_fhp.local_for(_probe), {"hooks": _partial})
+        check("fix_hook_paths --check flags a desk without the guard hook",
+              any("PreToolUse" in x for x in _fhp.problems()))
+        _fhp.ensure_hooks(_probe)
+        check("...and is quiet once the desk is stamped",
+              not [x for x in _fhp.problems() if str(_probe) in x or "hookprobe" in x])
+    finally:
+        _fhp.desk_dirs = _old_desks
+
+    # sync_permissions is the single writer, so the rules are asserted at the
+    # source too - a desk file can only ever be as right as this list.
+    import sync_permissions as _sp3                                   # noqa: E402
+    check("sync_permissions no longer defines any Write() deny rule",
+          not [x for x in _sp3.DENY_ENV if x.startswith("Write(")])
+    check("sync_permissions actively REMOVES the dead Write() rules",
+          "Write(./.env)" in _sp3.DENY_DEAD and _sp3.DENY_DEAD)
+    check("sync_permissions defines no Grep() rule (Read() already covers Grep)",
+          not [x for x in _sp3.DENY_ENV if x.startswith("Grep(")])
+    check("sync_permissions denies state\\web\\ for reading and editing",
+          "Read(**/state/web/**)" in _sp3.DENY_ENV
+          and "Edit(**/state/web/**)" in _sp3.DENY_ENV)
+    # usage.py filtered the warnings those dead rules produced. Rules gone,
+    # filter gone - a permanent filter is how a real warning goes unread.
+    _usage_src = (HERE.parent / "usage.py").read_text(encoding="utf-8")
+    check("tools\\usage.py no longer filters the dead-rule warnings",
+          "NOISE" not in _usage_src.replace("NOISE filter", ""))
 
     print(f"\n==== {passed} passed, {failed} failed ====")
 finally:
