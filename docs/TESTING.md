@@ -5,13 +5,13 @@ How to run the automated tests, and what has been validated. Keep this current a
 ## Run the tests
 
 ```
-python tools\discord\test_watchdog.py      # 1,600+ checks — watchdog, bus, delegation, skills, installer, packaging
+python tools\discord\test_watchdog.py      # 1,800+ checks — watchdog, bus, delegation, workflows, skills, installer, packaging
 python daybook\test_storage.py             # 141 checks — daybook storage + API
-python tools\email\test_email.py           # 86 checks — IMAP/SMTP + Graph contract
+python tools\email\test_email.py           # 116 checks — IMAP/SMTP + Graph contract
 python tools\documents\test_documents.py   # 39 checks — PDF text, OCR fallback, schema validation
 python tools\telegram\test_telegram.py     # 104 checks — the invite list, both directions, the reply window
 python tools\discord\desk_audit.py         # every desk: no stalling prompts, hooks wired, self-recovery
-powershell -File tools\update_drills.ps1   # 28 drills — the updater, against instances that are already broken
+powershell -File tools\update_drills.ps1   # 36 drills — the updater, against instances that are already broken
 powershell -File install.ps1 -CheckOnly    # environment doctor (report-only)
 ```
 
