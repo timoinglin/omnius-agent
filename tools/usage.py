@@ -18,9 +18,11 @@ plan is spent. He is on a subscription, so this is the number that can
 actually run out.
 """
 import argparse
+import os
 import re
 import subprocess
 import sys
+import tempfile
 
 # Claude Code prints one of these to stderr for every dead `Write(path)` deny
 # rule in settings.json (only `Edit(path)` rules cover file-editing tools). They
@@ -34,10 +36,33 @@ NOISE = re.compile(
 WANTED = re.compile(r"Current session:|Current week", re.I)
 
 
-def run(timeout=120):
-    """-> (text, error). Never raises: a usage check must not break a desk."""
+def run(timeout=240):
+    """-> (text, error). Never raises: a usage check must not break a desk.
+
+    TWO THINGS HERE ARE SCARS, both from the hour this shipped (2026-09-02).
+
+    NO --max-turns. The first version capped it at 1. That passed my test,
+    because that run happened to answer in one turn - then failed the very
+    first time he typed `/usage`, the cap swallowing the output and reporting
+    only `Error: Reached max turns (1)`. How many turns the CLI needs to render
+    its own panel is not ours to predict; the timeout is the real bound.
+
+    RUN FROM A NEUTRAL DIRECTORY, and this one is the important one. Started
+    inside the workspace, `claude -p "/usage"` loads THIS repo's CLAUDE.md and
+    finds the /usage SKILL - which tells it to run this script, which starts
+    another `claude -p "/usage"`. I built that loop by adding the skill, so the
+    tool worked when tested and broke the moment it was wired up: a desk sat
+    there for 218 seconds answering itself. An empty cwd has no CLAUDE.md and
+    no skills, so the built-in slash command is all that remains. It also drops
+    the round trip from minutes to ~5 seconds.
+    """
+    neutral = os.path.join(tempfile.gettempdir(), "omnius-usage-cwd")
     try:
-        p = subprocess.run(["claude", "-p", "/usage", "--max-turns", "1"],
+        os.makedirs(neutral, exist_ok=True)
+    except OSError:
+        neutral = tempfile.gettempdir()
+    try:
+        p = subprocess.run(["claude", "-p", "/usage"], cwd=neutral,
                            capture_output=True, text=True, timeout=timeout,
                            encoding="utf-8", errors="replace")
     except FileNotFoundError:
@@ -46,9 +71,15 @@ def run(timeout=120):
         return "", f"the CLI did not answer within {timeout}s"
     out = "\n".join(l for l in (p.stdout or "").splitlines() if not NOISE.search(l))
     if "Current session" not in out and "subscription" not in out:
-        detail = (p.stderr or "").strip().splitlines()
+        # Report what the CLI actually said. The first failure here printed only
+        # "no usage block came back", which named the symptom and hid the cause
+        # ("Error: Reached max turns (1)") - one line that would have pointed
+        # straight at the bug instead of at a mystery.
+        detail = [l.strip() for l in (out + "\n" + (p.stderr or "")).splitlines()
+                  if l.strip() and not NOISE.search(l)]
         return out.strip(), ("no usage block came back"
-                             + (f" ({detail[-1][:120]})" if detail else ""))
+                             + (f" - CLI said: {detail[-1][:150]}" if detail else "")
+                             + f" (exit {p.returncode})")
     return out.strip(), None
 
 

@@ -3884,6 +3884,18 @@ try:
     _us = _usage_py.read_text(encoding="utf-8")
     check("...and asks the CLI headlessly, which is the whole trick",
           '"claude", "-p", "/usage"' in _us)
+    # THE RECURSION. Started inside the workspace, the nested run loads this
+    # repo's CLAUDE.md, finds the /usage SKILL, and is told to run this script -
+    # which starts another nested run. Adding the skill created the loop, so the
+    # tool tested fine and broke the moment it was wired up: 218 seconds of a
+    # desk answering itself. A neutral cwd has no CLAUDE.md and no skills.
+    check("...from a NEUTRAL cwd, or the skill calls itself forever",
+          "cwd=neutral" in _us and "tempfile" in _us,
+          "without this, /usage recurses into its own skill")
+    # Matches the ARGUMENT form, not the bare word: the comment above it has to
+    # name the flag to explain why it is gone, and a looser check fails on that.
+    check("...and does NOT cap turns (the cap ate the answer on his first try)",
+          '"--max-turns"' not in _us)
     check("...and filters the dead-Write-rule warnings that would bury the answer",
           "Permission deny rule" in _us)
     check("...but filters them BY SHAPE, so a new warning still surfaces",
