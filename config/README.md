@@ -50,7 +50,7 @@ flush left and it never arises.
 
 | File | What it configures |
 |---|---|
-| `omnius.ini` | **what you call the agent**, machine label, heartbeat interval, Discord gateway on/off, desk-mail delegation budgets |
+| `omnius.ini` | **what you call the agent**, machine label, heartbeat interval, Discord gateway on/off, desk-mail delegation budgets, how often a busy desk says it is still working |
 | `notes.ini` | the notes web server — folder, port, bind address |
 | `fleet.json` | which model and effort each desk runs with |
 | `guests.ini` | people who are **not you** and may write to one desk (see `guests.example.ini`) |

@@ -59,6 +59,28 @@ def now_iso():
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def note_run_log(session, msg):
+    """Append one line to the desk's own run log. Never raises.
+
+    `state\\logs\\runs\\<sid>.log` is the first place anyone looks when a run
+    did nothing, and until now it held only the model's prose about what it
+    could not do - never the machine's reason. On 2026-09-02 twelve runs on
+    tool.discord were refused `python` and the log said only that the model
+    had been blocked, which reads as the model being unhelpful rather than as
+    a permission profile that needs one line added to it.
+
+    Appended, not written: the run's own stdout owns this file, and a short
+    append under 4KB does not interleave in practice.
+    """
+    try:
+        d = STATE / "logs" / "runs"
+        d.mkdir(parents=True, exist_ok=True)
+        with open(d / f"{session}.log", "a", encoding="utf-8", errors="replace") as fh:
+            fh.write(f"[permission] {now_iso()} {msg}\n")
+    except OSError:
+        pass                                 # logging must never block a turn
+
+
 def session_id_for(cwd):
     """cwd -> session id, the same mapping CLAUDE.md par.1 uses. None = not a desk."""
     try:
@@ -217,6 +239,7 @@ def main():
                 fh.write(f"{now_iso()} auto-allow {session} {tool_name} {own}\n")
         except OSError:
             pass                                     # logging must never block a turn
+        note_run_log(session, f"auto-allow {tool_name} ({own})")
         print(json.dumps({"hookSpecificOutput": {
             "hookEventName": "PermissionRequest",
             "decision": {"behavior": "allow"},
@@ -268,6 +291,8 @@ def main():
             time.sleep(POLL_SECONDS)
             continue
         behavior = "allow" if verdict.get("behavior") == "allow" else "deny"
+        note_run_log(session, f"{behavior} {tool_name} `{describe(tool_name, event.get('tool_input'))}`"
+                              f" — answered in Discord (code {code})")
         req.unlink(missing_ok=True)
         answer.unlink(missing_ok=True)
         print(json.dumps({"hookSpecificOutput": {
@@ -294,6 +319,9 @@ def main():
         }, ensure_ascii=False, indent=2), encoding="utf-8")
     except OSError:
         pass
+    note_run_log(session, f"BLOCKED {tool_name} `{describe(tool_name, event.get('tool_input'))}`"
+                          f" — no answer within {wait_seconds()}s (code {code}); "
+                          f"a headless run skips the action")
     req.unlink(missing_ok=True)
     # Honest about both worlds: an interactive terminal now shows the local
     # dialog; a headless run has no dialog - the action is simply denied and

@@ -44,6 +44,14 @@ short. One bullet per incident, dated.
   construir X. Te aviso cuando esté."* Nothing was building and no notice was
   ever coming. Indistinguishable from a crash, and worse, because it reads like
   progress. → Never promise to continue; open a counted work loop instead.
+- **2026-09-02** — *"better inform user every couple of minutes that session is
+  working."* A desk past ten minutes with his mail queued was told to reply
+  `!restart`, which he reads as *it is dead* — and restarting kills the honest
+  work the message was describing. The 2026-08-12 half-fix (one "still working"
+  line at minute 15) still left fourteen silent minutes to read as death, and
+  the terminal-turn path said nothing at all while working. → One notice every
+  `[bus] working_notice_minutes`, on both paths, stopping the moment the desk
+  speaks for itself; `!restart` only for genuine silence.
 
 ## Prompts nobody can see
 
@@ -72,6 +80,15 @@ short. One bullet per incident, dated.
   no matter where … what you can do is that you as LLM ask twice."* Deny-lists
   were emptied to `.env`; the model became the brake. Full statement in
   `memory\shared\USER.md`.
+- **2026-09-02** — `tools\discord` had no `.claude\settings.json` at all, so
+  every `python` call on that desk was refused and the run could not even reach
+  its own check-in. Twelve runs failed five minutes apart; the failure ledger
+  counted all twelve and **nobody was told**, because the desk is reached only
+  by desk mail, has no channel, and the alert resolved `None` and gave up. The
+  audit meant to catch this only looked at folders that already had a
+  settings.json, so the missing file was also the reason the folder was never
+  inspected. → An alarm falls back to the mail's origin channel and then
+  `#alerts`; a tools\ folder with code and no profile is a `[FAIL]`.
 - **2026-08-06 / browser** — the Chrome extension refuses to act with more than
   one browser connected and demands a pick, which is a click in Chrome. His
   objection: *"how am i gonna accept if i am on mobile on discord?"* → The

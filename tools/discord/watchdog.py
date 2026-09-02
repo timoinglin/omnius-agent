@@ -1139,6 +1139,43 @@ def fleet_channel_id(mapping, name, session=None):
     return next((c for c, t in mapping.items() if t.channel_name == name), None)
 
 
+def alert_channel_id(session):
+    """Where a MECHANICAL alarm about this desk must land. -> cid or None.
+
+    Its own channel when it has one. But a desk reached only by desk mail has
+    NO channel, and primary_channel_id returning None silently dropped every
+    alarm it could ever raise. 2026-09-02, tool.discord: twelve runs failed
+    five minutes apart with `exited clean but left its oldest envelope
+    unhandled`, the failure ledger counted every one, and not a word reached
+    anyone - because the alert resolved a channel that does not exist and the
+    `if cid:` guard swallowed it. The desk could not report either; being
+    unable to speak was the fault being reported.
+
+    So fall back to where the work came FROM - the origin channel of the mail
+    it is still holding (D3: the chain answers the human who started it) - and
+    to #alerts when even that is gone.
+    """
+    mapping = build_map(api.load_schema())
+    cid = primary_channel_id(mapping, session)
+    if cid:
+        return cid
+    try:
+        waiting = sorted((INBOX / session).glob("*.json"),
+                         key=lambda f: f.stat().st_mtime)
+    except OSError:
+        waiting = []
+    for f in waiting:
+        try:
+            env = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        cid = str(env.get("channelId") or "").strip() or \
+            str((env.get("origin") or {}).get("channelId") or "").strip()
+        if cid:
+            return cid
+    return fleet_channel_id(mapping, "alerts")
+
+
 # --- claims / sessions --------------------------------------------------------
 
 def read_claim(session):
@@ -1371,7 +1408,7 @@ def run_active(session):
         if fails >= RUN_FAILURES_BEFORE_ALERT and session not in _run_alerted:
             _run_alerted.add(session)
             try:
-                cid = primary_channel_id(build_map(api.load_schema()), session)
+                cid = alert_channel_id(session)
                 if cid:
                     api.send_message(cid, f"🛑 `{session}`: its desk window opens but never "
                                           f"connects ({fails} tries). Something in that desk's "
@@ -1419,7 +1456,7 @@ def _tab_fast_death(session):
     if fails >= RUN_FAILURES_BEFORE_ALERT and session not in _run_alerted:
         _run_alerted.add(session)
         try:
-            cid = primary_channel_id(build_map(api.load_schema()), session)
+            cid = alert_channel_id(session)
             if cid:
                 api.send_message(cid, f"🛑 `{session}`: its desk window connects and then "
                                       f"dies within seconds ({fails} tries). Check "
@@ -1862,7 +1899,7 @@ def recover_bridge(session):
     if fails >= RUN_FAILURES_BEFORE_ALERT and session not in _run_alerted:
         _run_alerted.add(session)
         try:
-            cid = primary_channel_id(build_map(api.load_schema()), session)
+            cid = alert_channel_id(session)
             if cid:
                 api.send_message(cid, f"🛑 `{session}`: mail keeps not being picked up, even "
                                       f"after replacing its window {fails} times.{desk_fault(session)}")
@@ -2004,6 +2041,10 @@ def interactive_busy(session):
     try:
         age = time.time() - stamp.stat().st_mtime
     except OSError:
+        # No stamp = no turn. Forget its working-notice clock, so the next long
+        # turn on this desk starts its cadence from zero instead of inheriting
+        # the last one's and skipping its first line.
+        _working_notified.pop(f"{session}/turn", None)
         return False
     c = read_claim(session)
     if c and str(c.get("machine") or "") == api.MACHINE:
@@ -2048,10 +2089,21 @@ def interactive_busy(session):
     # was pending - and the alarm told him it was "most likely frozen on a
     # local permission dialog". A warning that fires during honest work is
     # worse than none, because the next real one gets ignored too.
-    if age > STUCK_TURN_SECONDS and inbox_backlog(session)[0]:
+    #
+    # And when the evidence says WORKING, SAY SO rather than saying nothing.
+    # That was this branch's 2026-09-02 hole: the quiet check below is the only
+    # thing that ever spoke here, so a desk writing continuously with his mail
+    # queued behind it was silent for the whole task - and the one message the
+    # path could produce offered `!restart`, which kills the work it describes.
+    every = working_notice_seconds()
+    # Ask native_in_use only when one of the two notices could actually fire:
+    # it walks a conversation folder, and this runs every poll, for every desk.
+    if inbox_backlog(session)[0] and (age > STUCK_TURN_SECONDS or (every and age >= every)):
         quiet = native_in_use(session)
-        if quiet is None or quiet > STUCK_QUIET_SECONDS:
+        if age > STUCK_TURN_SECONDS and (quiet is None or quiet > STUCK_QUIET_SECONDS):
             report_stuck_turn(session, age, quiet)
+        elif quiet is not None and quiet <= STUCK_QUIET_SECONDS:
+            report_working_turn(session, age)
     return True
 
 
@@ -2140,7 +2192,7 @@ def report_native_in_use(session):
                 f"**`no`** — leave it alone; I will stay quiet and the messages keep waiting\n\n"
                 f"*Or just answer at the desk with `/omnius` — that clears the queue too.*")
     try:
-        cid = primary_channel_id(build_map(api.load_schema()), session)
+        cid = alert_channel_id(session)
         if cid:
             api.send_message(cid, text)
     except Exception as e:
@@ -2209,7 +2261,7 @@ def report_stuck_turn(session, age, quiet=None):
                    if quiet else "it has not written anything since")
     log(f"{session}: turn stuck for {int(age / 60)}m with {n} unread - notifying the owner")
     try:
-        cid = primary_channel_id(build_map(api.load_schema()), session)
+        cid = alert_channel_id(session)
         if cid:
             api.send_message(cid, f"⚠️ `{session}` has been mid-turn for {int(age / 60)} minutes "
                                   f"with {n} message(s) waiting — {why}.\n"
@@ -2348,7 +2400,7 @@ def _unrunnable(session, why):
     if fails >= RUN_FAILURES_BEFORE_ALERT and session not in _run_alerted:
         _run_alerted.add(session)
         try:
-            cid = primary_channel_id(build_map(api.load_schema()), session)
+            cid = alert_channel_id(session)
             if cid:
                 api.send_message(cid, f"🛑 `{session}` cannot be started — {why}. "
                                       f"Its mail is waiting and nothing can handle it. "
@@ -2558,7 +2610,7 @@ def _reap(session):
     if fails >= RUN_FAILURES_BEFORE_ALERT and session not in _run_alerted:
         _run_alerted.add(session)
         try:
-            cid = primary_channel_id(build_map(api.load_schema()), session)
+            cid = alert_channel_id(session)
             if cid:
                 api.send_message(cid, f"🛑 `{session}` keeps failing to handle its mail "
                                       f"({fails} runs, last: {why}). "
@@ -2726,7 +2778,7 @@ def deaf_desk_alarm(session):
     log(f"{session}: DEAF DESK - oldest owner mail {int(age)}s old, {n} queued, and "
         f"nothing alive is handling it (alarm of last resort)")
     try:
-        cid = primary_channel_id(build_map(api.load_schema()), session)
+        cid = alert_channel_id(session)
         if cid:
             quote = f' ("{snippet}")' if snippet else ""
             # Name what is actually true. The old text said "no live session"
@@ -3639,12 +3691,77 @@ def fleet_board(mapping):
 
 
 BACKLOG_NOTICE_SECONDS = 90     # how long a desk may sit on a message in silence
-# ...and how long a desk that IS working may stay silent about it. Deliberately
-# far above the first: a run in progress is not a fault, and "still working"
-# every 90 seconds is the info-message noise he banned on 2026-08-03. But past
-# the quarter hour the honest reading from a phone is "it died", and on
-# 2026-08-12 he acted on exactly that reading and restarted a healthy desk.
-LONG_WORK_NOTICE_SECONDS = 15 * 60
+# ...and how often a desk that IS working says so. Deliberately above the first:
+# a run in progress is not a fault, and "still working" every 90 seconds is the
+# info-message noise he banned on 2026-08-03.
+#
+# But it REPEATS, and that is the 2026-09-02 correction. One line at minute 15
+# (what this replaced) still leaves fourteen silent minutes to read as death -
+# 2026-08-12, after 20 quiet minutes of real work: "you got stuck, I had to
+# restart it - a user must never be left hanging." Owner, 2026-09-02: "better
+# inform user every couple of minutes that session is working". A desk that
+# says nothing and a desk that died are the same thing on a phone, and he pays
+# for the difference by killing healthy work.
+WORKING_NOTICE_DEFAULT_MINUTES = 3
+
+
+def working_notice_seconds():
+    """Seconds between "still working" lines. 0 = he turned them off."""
+    return max(0, ocfg.get_int(OMNIUS_CFG, "bus", "working_notice_minutes",
+                               "OMNIUS_WORKING_NOTICE_MINUTES",
+                               WORKING_NOTICE_DEFAULT_MINUTES, api.ENV)) * 60
+
+
+_working_notified = {}          # "<session>/<key>" -> when its last line went out
+
+
+def send_working_notice(cid, session, key, age, tail):
+    """ONE working line per interval, for both paths. -> True when sent.
+
+    Shared on purpose: the headless path and the terminal-turn path had
+    different wording for the same fact, and only one of them was right. The
+    terminal one shipped `!restart` next to honest work, so the remedy on offer
+    was the one that destroyed it.
+    """
+    every = working_notice_seconds()
+    if not every or age < every:
+        return False
+    now = time.time()
+    last = _working_notified.get(key)
+    if last is not None and now - last < every:
+        return False
+    mins = int(age // 60)
+    waited = f"{mins}m" if mins else f"{int(age)}s"
+    try:
+        api.send_message(cid, f"⏳ `{session}` is still working ({waited}) "
+                              f"— not stuck, no dialog waiting. {tail}")
+    except api.ApiError:
+        return False
+    _working_notified[key] = now
+    return True
+
+
+def report_working_turn(session, age):
+    """The terminal-turn half: a long turn that is PROVABLY working says so.
+
+    This branch used to return in silence. report_stuck_turn only fires once
+    the conversation has gone quiet, so a desk writing continuously with mail
+    queued said nothing at all for as long as the work took - and the only
+    message he ever got on this path carried `!restart`. Say the true thing on
+    a clock instead, and leave `!restart` to the three silent cases.
+    """
+    n, oldest = inbox_backlog(session)
+    if not n or heard_from(session, oldest):
+        return
+    try:
+        cid = alert_channel_id(session)
+    except Exception as e:                                          # noqa: BLE001
+        log(f"working-turn notice failed for {session}: {e}")
+        return
+    if not cid:
+        return
+    send_working_notice(cid, session, f"{session}/turn", age,
+                        "Nothing is lost — the queue moves the moment that turn ends.")
 
 
 def heard_from(session, age):
@@ -3742,23 +3859,25 @@ def check_backlogs():
                 # Something is working on it. "Still working" is the definition
                 # of an info message - the reply itself is the notification.
                 #
-                # Except when the reply is a long time coming. 2026-08-12, after
-                # 20 silent minutes of real work: "you got stuck, I had to
-                # restart it - a user must never be left hanging." From a phone,
-                # a desk deep in a long task and a desk that died look exactly
-                # the same, and he pays for the difference by killing healthy
-                # work. So ONE line, once per message, only after the wait has
-                # become unreasonable - not a heartbeat, not a progress bar.
-                if age < LONG_WORK_NOTICE_SECONDS or heard_from(session, age):
+                # Except when the reply is a long time coming, and then it is
+                # not one message but a CADENCE. 2026-08-12, after 20 silent
+                # minutes of real work: "you got stuck, I had to restart it - a
+                # user must never be left hanging." The single line this used to
+                # send at minute 15 still left fourteen minutes of nothing, so
+                # 2026-09-02: "better inform user every couple of minutes that
+                # session is working". It stops the moment the desk speaks for
+                # itself - an ack explains the wait, and a second voice on top
+                # is the info-noise he banned on 2026-08-03.
+                if heard_from(session, age):
                     _backlog_notified.add(key)
                     continue
-                try:
-                    api.send_message(cid, f"⏳ `{session}` is still working on this ({waited}) "
-                                          f"— not stuck, no dialog waiting. "
-                                          f"`!status` for detail, `!stop {session}` to cancel it.")
-                    _backlog_notified.add(key)
-                except api.ApiError:
-                    pass
+                if not working_notice_seconds():
+                    _backlog_notified.add(key)      # notices off: stay silent
+                    continue
+                # NOT marked notified: the key is what lets it repeat. The
+                # per-interval throttle lives in send_working_notice.
+                send_working_notice(cid, session, key, age,
+                                    f"`!status` for detail, `!stop {session}` to cancel it.")
                 continue
             # Nothing holds this desk and nothing is working: that is a real
             # problem, and the only case still worth interrupting him for.
@@ -3769,8 +3888,13 @@ def check_backlogs():
             except api.ApiError:
                 pass
     # Forget envelopes that have been handled, so the set cannot grow forever
-    # on an always-on service.
+    # on an always-on service. The working-notice clock is keyed the same way
+    # and is pruned with it - minus the terminal-turn keys, which are not
+    # envelopes and are cleared when their own turn ends.
     _backlog_notified.intersection_update(live)
+    for key in [k for k in _working_notified
+                if k not in live and not k.endswith("/turn")]:
+        del _working_notified[key]
 
 
 def stall_note(session):

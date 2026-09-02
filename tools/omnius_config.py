@@ -279,6 +279,10 @@ SPEC = [
     ("omnius", "omnius", "gateway", "DISCORD_GATEWAY", "1", "bool"),
     ("omnius", "backup", "folder", "OMNIUS_BACKUP_DIR", "", "str"),
     ("omnius", "browser", "device_id", "OMNIUS_BROWSER_DEVICE_ID", "", "str"),
+    # The bus talking about itself. working_notice_minutes = how often the
+    # watchdog says "still working" while a desk is provably working with his
+    # mail queued behind it; 0 turns the notices off entirely.
+    ("omnius", "bus", "working_notice_minutes", "OMNIUS_WORKING_NOTICE_MINUTES", "3", "int"),
     # Desk mail (docs\DELEGATION.md). hop_ttl = forward hops a delegation chain
     # may spend (replies are free); loop_budget = scheduled continuation runs
     # before a loop must checkpoint with the owner (consumed by schedule.py in

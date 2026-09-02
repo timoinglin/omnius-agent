@@ -1944,12 +1944,19 @@ try:
         # dialog that did not exist. A long turn and a frozen turn look
         # identical on the clock; on disk they do not - a working session
         # writes continuously, a stopped one writes nothing.
-        sent.clear(); wd._stuck_notified.clear()
+        sent.clear(); wd._stuck_notified.clear(); wd._working_notified.clear()
         wd.native_in_use = lambda s: 36.0          # actively writing
         check("a LONG turn that is still writing is not called stuck",
-              wd.interactive_busy("stuck.desk") is True and sent == [])
+              wd.interactive_busy("stuck.desk") is True
+              and not any("!restart" in m[1] for m in sent))
+        # ...and it no longer says NOTHING either. Until 2026-09-02 this branch
+        # returned in silence, so the only line this path could ever produce was
+        # the stuck one - with `!restart` attached to healthy work.
+        check("...it is announced as WORKING instead of left silent",
+              len(sent) == 1 and "still working" in sent[-1][1])
+        sent.clear()
         wd.native_in_use = lambda s: 9999.0
-        wd._stuck_notified.clear()
+        wd._stuck_notified.clear(); wd._working_notified.clear()
         wd.interactive_busy("stuck.desk")
         check("...but one that has gone silent still is",
               len(sent) == 1 and "written nothing" in sent[-1][1])
@@ -6155,30 +6162,77 @@ try:
     wd.RUNNING["demo-app.app"] = FakeProc()
     sent.clear()
     wd.check_backlogs()
-    check("a desk with a run in progress says NOTHING - the reply is the notification",
-          sent == [])
-    # ...but silence has a limit. 2026-08-12, after 20 minutes of real work with
-    # his message queued behind it: "you got stuck, I had to restart it - a user
-    # must never be left hanging." A working desk and a dead one are the same
-    # thing on a phone, and he acted on that reading by killing healthy work.
-    _os.utime(env2b, (_time.time() - wd.LONG_WORK_NOTICE_SECONDS - 60,) * 2)
-    sent.clear()
-    wd._backlog_notified.clear()
+    # "Will answer when it wakes" next to an actively working run read as a
+    # broken system (2026-08-01). That lesson is about the WORDING, not about
+    # silence: since 2026-09-02 a working desk does say so, on a clock - it
+    # just never claims to be asleep.
+    check("a desk with a run in progress is never described as asleep",
+          not any("has not picked this up" in m[1] for m in sent))
+    # ...but silence has a limit, and the limit REPEATS. 2026-08-12, after 20
+    # minutes of real work with his message queued behind it: "you got stuck, I
+    # had to restart it - a user must never be left hanging." The single line
+    # this used to send at minute 15 still left fourteen minutes of nothing, so
+    # 2026-09-02: "better inform user every couple of minutes that session is
+    # working."
+    def _age_env(f, secs):
+        t = _time.time() - secs
+        _os.utime(f, (t, t))
+
+    # One envelope at a time: 999.json is still queued and would emit its own
+    # notices on the same clock, which is true behaviour but makes the counts
+    # below untestable. It comes back for the forgetting test further down.
+    _env_saved = env.read_text(encoding="utf-8")
+    env.unlink()
+    _every = wd.working_notice_seconds()
+    _key2b = f"demo-app.app/{env2b.stem}"
+    check("the working notice has an interval, from [bus] working_notice_minutes",
+          _every > 0 and wd.WORKING_NOTICE_DEFAULT_MINUTES == 3)
+
+    sent.clear(); wd._backlog_notified.clear(); wd._working_notified.clear()
+    _age_env(env2b, _every - 60)
     wd.check_backlogs()
-    check("a run working THIS long says so once - the silence is what he reads as dead",
+    check("a working desk stays quiet before the first interval", sent == [])
+    _age_env(env2b, _every + 10)
+    wd.check_backlogs()
+    check("a run working past the interval says so - minute 3",
           len(sent) == 1 and "still working" in sent[-1][1] and "!stop" in sent[-1][1])
     wd.check_backlogs()
-    check("...once per message, never a progress bar", len(sent) == 1)
+    check("...but not twice inside one interval (not a progress bar)", len(sent) == 1)
+    # Minute 6 and minute 9. The repeat is the whole fix: one notice and then
+    # silence again is the same wait he reads as death.
+    for _mark in (2, 3):
+        _age_env(env2b, _every * _mark + 10)
+        wd._working_notified[_key2b] -= _every      # ...and that interval elapsed
+        wd.check_backlogs()
+    check("...and repeats every interval while the work continues - minutes 6 and 9",
+          len(sent) == 3)
+    check("...naming the desk every time, so it is answerable from a phone",
+          all("demo-app.app" in m[1] for m in sent))
     # An ack already explained the wait; a second voice on top is the info-noise
-    # he banned on 2026-08-03.
+    # he banned on 2026-08-03. The desk speaking for itself ends the cadence.
     _box_out = wd.OUTBOX / "demo-app.app"
     _box_out.mkdir(parents=True, exist_ok=True)
     (_box_out / ".last-posted").write_text("", encoding="utf-8")
     sent.clear()
-    wd._backlog_notified.clear()
+    wd._backlog_notified.clear(); wd._working_notified.clear()
+    _age_env(env2b, _every * 4)
     wd.check_backlogs()
     check("...and not at all if the desk already acknowledged him", sent == [])
     (_box_out / ".last-posted").unlink(missing_ok=True)
+    # 0 disables. An owner who does not want them must be able to say so, and
+    # the notices are the one thing here that is a preference rather than a fault.
+    sent.clear(); wd._backlog_notified.clear(); wd._working_notified.clear()
+    _rwns = wd.working_notice_seconds
+    wd.working_notice_seconds = lambda: 0
+    try:
+        _age_env(env2b, _every * 10)
+        wd.check_backlogs()
+        check("working_notice_minutes = 0 turns the notices off entirely", sent == [])
+    finally:
+        wd.working_notice_seconds = _rwns
+    wd._working_notified.clear()
+    env.write_text(_env_saved, encoding="utf-8")
+    _os.utime(env, (old_t, old_t))
     wd.RUNNING.pop("demo-app.app", None)
     env2b.unlink()
     wd._backlog_notified.clear()
@@ -6215,6 +6269,40 @@ try:
     loop_tail = src_wd2[src_wd2.index(call_site):]
     check("check_backlogs actually runs in the poll loop",
           "check_backlogs()" in loop_tail[:600])
+
+    print("== alarms for a desk with no channel ==")
+    # 2026-09-02, tool.discord: twelve runs failed five minutes apart with
+    # "exited clean but left its oldest envelope unhandled", the ledger counted
+    # every one - and not a word reached anyone. It is reached only by desk
+    # mail, so it HAS no channel; primary_channel_id returned None and every
+    # `if cid:` swallowed the alarm. The desk could not report either: being
+    # unable to speak was the fault being reported.
+    _rbm3, _rpc3, _rfc3 = wd.build_map, wd.primary_channel_id, wd.fleet_channel_id
+    _nobox = wd.INBOX / "tool.nochannel"
+    _nobox.mkdir(parents=True, exist_ok=True)
+    for f in _nobox.glob("*.json"):
+        f.unlink()
+    try:
+        wd.build_map = lambda schema: {}
+        wd.fleet_channel_id = lambda m, name, session=None: "C-alerts"
+        wd.primary_channel_id = lambda m, s: "C-own"
+        check("a desk with its own channel is still alerted there",
+              wd.alert_channel_id("tool.nochannel") == "C-own")
+        wd.primary_channel_id = lambda m, s: None
+        check("a desk with NO channel reaches #alerts instead of nowhere",
+              wd.alert_channel_id("tool.nochannel") == "C-alerts")
+        (_nobox / "dm-1.json").write_text(json.dumps(
+            {"id": "dm-1", "from": "orchestrator", "channelId": None,
+             "origin": {"channelId": "C-origin"}}), encoding="utf-8")
+        check("...but the ORIGIN of the mail it is holding comes first (D3)",
+              wd.alert_channel_id("tool.nochannel") == "C-origin")
+    finally:
+        wd.build_map, wd.primary_channel_id = _rbm3, _rpc3
+        wd.fleet_channel_id = _rfc3
+        for f in _nobox.glob("*.json"):
+            f.unlink()
+    check("every desk alarm resolves its channel through alert_channel_id",
+          "primary_channel_id(build_map(api.load_schema()), session)" not in src_wd2)
 
     print("== fleet.json ==")
     check("role_of: orchestrator", wd.role_of("orchestrator") == "orchestrator")
@@ -8156,8 +8244,26 @@ try:
     _da = subprocess.run([sys.executable,
                           str(real_root / "tools" / "discord" / "desk_audit.py"), "--quiet"],
                          capture_output=True, text=True)
-    check("desk audit: this fleet passes its own stability review",
-          _da.returncode == 0, (_da.stdout or _da.stderr or "").strip()[:300])
+    # It used to assert returncode 0 outright. That is no longer the honest
+    # question: since 2026-09-02 the audit also reports tools\ folders a desk id
+    # can reach that have NO permission profile, and this checkout really has
+    # seven of them (bridge, desktop, documents, orchestrator, playwright,
+    # telegram, whisper - libraries, not desks). Asserting green would mean
+    # either hiding that or stamping seven libraries as desks.
+    #
+    # So: every problem the audit reports must be THAT one. Any new class of
+    # failure - a desk that can stall on a dialog, a missing hook, a stub gone -
+    # still turns this red, which is what the check was for.
+    _da_out = (_da.stdout or "") + (_da.stderr or "")
+    _da_bad = [l.strip() for l in _da_out.splitlines() if "[X ]" in l]
+    _da_unprofiled = [l for l in _da_bad if "no .claude\\settings.json" in l]
+    check("desk audit: nothing is wrong with this fleet except desks with no profile",
+          len(_da_bad) == len(_da_unprofiled), "; ".join(_da_bad)[:300])
+    # The 2026-09-02 blind spot itself: the old test was `settings.json exists`,
+    # so a desk WITHOUT one was never looked at and therefore passed - while
+    # tool.discord could not even run its own check-in, twelve times.
+    check("desk audit: a tools\\ folder with no settings.json is a FAIL, not invisible",
+          _da_unprofiled != [], _da_out.strip()[:200])
     _da_src = (real_root / "tools" / "discord" / "desk_audit.py").read_text(encoding="utf-8")
     check("desk audit: it REPORTS and never edits a settings file",
           "write_text" not in _da_src and "never fixes" in _da_src)

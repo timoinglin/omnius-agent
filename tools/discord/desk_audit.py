@@ -44,6 +44,16 @@ MUST_DENY = ("AskUserQuestion",)
 HOOKS = ("PermissionRequest", "UserPromptSubmit", "Stop")
 
 
+def is_desk_target(d):
+    """True when `tool.<d.name>` would land a run in a folder with code in it.
+
+    Not "is it meant to be a desk" - nothing on disk records that - but "would
+    a run started here have somewhere to work". README or a .py is the whole
+    test; __pycache__ and dotfolders are excluded by the caller.
+    """
+    return (d / "README.md").is_file() or any(d.glob("*.py"))
+
+
 def desk_dirs():
     """Every folder that is a desk: root, daybook, tool.<x> and project
     components. Mirrors fix_hook_paths.desk_dirs - a desk is a folder with a
@@ -52,12 +62,20 @@ def desk_dirs():
     if (ROOT / "daybook").is_dir():
         out.append(("daybook", ROOT / "daybook"))
     for d in sorted((ROOT / "tools").glob("*")):
-        # settings.json, not merely .claude\: fix_hook_paths wires hooks into
-        # any tool folder that has a .claude, which leaves LIBRARY folders
-        # (tools\discord itself) holding a settings.local.json and nothing
-        # else. A desk is a folder somebody deliberately gave a permission
-        # profile - the schema's tool desks are exactly those.
-        if d.is_dir() and (d / ".claude" / "settings.json").is_file():
+        if not d.is_dir() or d.name.startswith((".", "__")):
+            continue
+        # EVERY tools\<t> folder a desk id can reach, not only those that
+        # already have a permission profile.
+        #
+        # The old test was exactly `settings.json exists`, which made a desk
+        # WITHOUT one invisible here - and therefore green. On 2026-09-02
+        # tool.discord had no settings.json, so twelve consecutive runs were
+        # refused `python` and could not even check in, and this audit reported
+        # the fleet clean throughout: the missing file was also the reason the
+        # folder was never looked at. `cwd_for` maps tool.<name> to tools\<name>
+        # blindly, so a folder with code in it is a desk somebody can address
+        # whether or not anyone meant it to be one.
+        if (d / ".claude" / "settings.json").is_file() or is_desk_target(d):
             out.append((f"tool.{d.name}", d))
     projects = ROOT / "projects"
     if projects.is_dir():
@@ -83,6 +101,16 @@ def audit_desk(sid, folder):
     if not folder.is_dir():
         return False, [f"folder missing ({folder})"]
     tracked = read_json(folder / ".claude" / "settings.json") or {}
+    # A tool desk inherits nothing: tools\ has no .claude\ of its own, so a
+    # missing profile here is not "falls back to the project's" (the component
+    # case below) - it is a run with no allow-list at all, refused its own
+    # check-in. ONE problem naming ONE fix, rather than the four confusing
+    # symptoms an empty permission block would otherwise produce.
+    if not tracked and folder.parent == ROOT / "tools":
+        return False, ["no .claude\\settings.json — a run here gets no allow-list "
+                       "and can be refused even its own check-in; copy "
+                       "tools\\fleet\\.claude\\settings.json, or retire the folder "
+                       "so no desk id reaches it"]
     local = read_json(folder / ".claude" / "settings.local.json") or {}
     perms = (tracked.get("permissions") or {})
     allow = set(perms.get("allow") or [])
