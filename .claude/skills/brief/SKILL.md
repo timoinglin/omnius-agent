@@ -17,8 +17,10 @@ in one line. Gather, then compose; never paste raw command output.
 3. **Open work**: the "Open work" section of
    `memory\orchestrator\status.md` — the standing list, not a dump of it.
 4. **In flight**: open loop ledgers (`state\watchdog\loops\*.json`, not
-   closed), pending gate holds (`state\gate\*.json`), and anything waiting in
-   `state\inbox\*\` older than a few minutes.
+   closed), **open workflows** (`state\watchdog\threads\*.json` with a
+   `workflow` block whose `status` is `open` or `stalled` — goal, holder,
+   `runs`/`budget`, `lastStep`), pending gate holds (`state\gate\*.json`), and
+   anything waiting in `state\inbox\*\` older than a few minutes.
 
 ## Compose — strictly in this order
 

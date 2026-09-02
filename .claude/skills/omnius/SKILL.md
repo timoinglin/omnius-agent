@@ -273,6 +273,12 @@ enforced by the schedule:
   never self-extend** — a fresh instruction opens a NEW loop.
 - A self-addressed `add` without `--loop` is refused outright.
 
+**A WORKFLOW is the same idea for a chain that crosses desks** (docs\DELEGATION.md
+D11). Desk mail carrying `"workflow": {"goal": …, "done": "<command>"}` opens one;
+inside it the hop cap stops biting, `--loop <thread-id>` counts against the chain
+instead of this desk, and when its budget or deadline runs out you report what
+EXISTS to the desk that started the chain — that one answers him, once.
+
 Then:
 
 - **Long task? Re-drain between major steps** — run the check-in again. A queued
