@@ -2650,6 +2650,33 @@ def reap_runs():
         _reap(session)
 
 
+def unprofiled_tool_desk(session):
+    """-> why this `tool.<x>` id must not be run, or "". Owner decision 2026-09-02.
+
+    `cwd_for` maps tool.<name> to tools\\<name> BLINDLY, so before this any
+    optimistic or typo'd tool id started a real run in a folder that was never
+    meant to be a desk - and a folder with no `.claude\\settings.json` has no
+    allow-list, no PermissionRequest hook and therefore no way to escalate or
+    even report. That is not a desk working badly; it is a desk that cannot run
+    its own check-in, which tool.discord demonstrated twelve consecutive times
+    on 2026-09-02 while every surface called the fleet healthy.
+
+    A permission profile is the only on-disk fact that separates a desk somebody
+    MEANT from a library that merely has code in it, so it is the test. The
+    alternative - stamping seven libraries as desks to quiet the audit - was
+    considered and refused: it would have invented seven desks nobody wants.
+    """
+    if not str(session or "").startswith("tool."):
+        return ""            # projects inherit their project's file; root has its own
+    folder = cwd_for(session)
+    if (folder / ".claude" / "settings.json").is_file():
+        return ""
+    return (f"`{folder.name}` is a library folder, not a desk — it has no "
+            f"`.claude\\settings.json`, so a run there would get no allow-list "
+            f"and could not even check in. Give it a profile to make it a desk, "
+            f"or address a desk that exists")
+
+
 def ensure_runner(session):
     """Make sure queued mail on this desk will be handled. -> status token.
 
@@ -2662,6 +2689,14 @@ def ensure_runner(session):
         return "empty"
     if run_active(session):
         return "run-in-progress"
+    # A tools\ folder with no permission profile is a LIBRARY, and a run there
+    # is worse than no run at all (owner decision 2026-09-02, after this desk
+    # spent twelve of them proving it). _unrunnable so it backs off AND pages -
+    # a refusal nobody hears is the shape of the original fault.
+    why = unprofiled_tool_desk(session)
+    if why:
+        _unrunnable(session, why)
+        return "unrunnable"
     # A live bridge is the FASTEST path: it types the mail into a session that
     # is already warm, so the reply costs thinking time and nothing else. But
     # trust it only while it is DELIVERING - alive is not the same as working,
@@ -5594,6 +5629,15 @@ def deliver_desk_mail(mapping, sender, path, data, gate_approved=False):
     if not cwd_for(to).is_dir():
         return _refuse_desk_mail(mapping, sender, path,
                                  f"no such desk `{to}` (no folder)")
+
+    #    ...and a folder is not a desk. Refused HERE, at send time, with the
+    #    reason - not five minutes later as a run that failed to start. The
+    #    sender is a desk that can act on "that is a library": it can pick a
+    #    real desk, or ask him. A brief that dies quietly in someone else's
+    #    failure ledger cannot be acted on by anyone.
+    unprofiled = unprofiled_tool_desk(to)
+    if unprofiled:
+        return _refuse_desk_mail(mapping, sender, path, unprofiled)
 
     # 4. Thread: echoed id (unknown ones are NOT resurrected) -> inferred ->
     #    fresh with the configured TTL.

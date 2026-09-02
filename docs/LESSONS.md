@@ -88,7 +88,11 @@ short. One bullet per incident, dated.
   audit meant to catch this only looked at folders that already had a
   settings.json, so the missing file was also the reason the folder was never
   inspected. → An alarm falls back to the mail's origin channel and then
-  `#alerts`; a tools\ folder with code and no profile is a `[FAIL]`.
+  `#alerts`; and a `tools\` folder with no profile is a **library** — the
+  watchdog refuses to run it and refuses desk mail addressed to it, rather than
+  starting a run that cannot speak. The fix he rejected is worth recording too:
+  giving the seven libraries a profile each would have quieted the audit by
+  inventing seven desks nobody wants.
 - **2026-08-06 / browser** — the Chrome extension refuses to act with more than
   one browser connected and demands a pick, which is a click in Chrome. His
   objection: *"how am i gonna accept if i am on mobile on discord?"* → The

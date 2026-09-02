@@ -7232,6 +7232,42 @@ try:
           and [d for d in _led3["deliveries"] if d["id"].endswith("1700000000051")][0]
               ["reply"] is False,
           f"r={r_f2}")
+    print("== a library is not a desk ==")
+    # Owner decision 2026-09-02, after tool.discord spent twelve runs proving
+    # it: cwd_for maps tool.<name> to tools\<name> BLINDLY, so any optimistic
+    # or typo'd tool id used to start a real run in a folder with no
+    # allow-list, no hooks, and therefore no way to escalate or even report.
+    (wd.ROOT / "tools" / "libthing").mkdir(parents=True, exist_ok=True)
+    (wd.ROOT / "tools" / "libthing" / "README.md").write_text("lib", encoding="utf-8")
+    (wd.ROOT / "tools" / "realdesk" / ".claude").mkdir(parents=True, exist_ok=True)
+    (wd.ROOT / "tools" / "realdesk" / ".claude" / "settings.json").write_text(
+        json.dumps({"permissions": {"allow": ["Bash"], "deny": []}}), encoding="utf-8")
+    wd._desk_id_cache.clear()
+    check("a tools\\ folder with no permission profile is not a desk",
+          bool(wd.unprofiled_tool_desk("tool.libthing"))
+          and "library" in wd.unprofiled_tool_desk("tool.libthing"))
+    check("...one WITH a profile is",
+          wd.unprofiled_tool_desk("tool.realdesk") == "")
+    check("...and the rule is about tool desks only - projects inherit theirs",
+          wd.unprofiled_tool_desk("alpha.app") == ""
+          and wd.unprofiled_tool_desk("orchestrator") == "")
+    _libbox = wd.INBOX / "tool.libthing"
+    _libbox.mkdir(parents=True, exist_ok=True)
+    (_libbox / "1.json").write_text(json.dumps(
+        {"id": "1", "from": "owner", "channelId": "id-alerts", "text": "hi"}),
+        encoding="utf-8")
+    wd._run_failures.pop("tool.libthing", None)
+    wd._run_backoff.pop("tool.libthing", None)
+    wd._run_alerted.discard("tool.libthing")
+    check("a run is never started in a library folder",
+          wd.ensure_runner("tool.libthing") == "unrunnable"
+          and "tool.libthing" not in wd.RUNNING)
+    check("...and it goes through the ledger, so it backs off and pages",
+          wd._run_failures.get("tool.libthing") == 1
+          and wd._run_backoff.get("tool.libthing", 0) > _bt.time())
+    for f in _libbox.glob("*.json"):
+        f.unlink()
+
     print("== D11 workflows ==")
     # Owner, 2026-09-02: delegation must keep a chain running as long as needed.
     # Desk mail had a DEPTH budget and work loops had five runs per desk;
@@ -7279,6 +7315,25 @@ try:
         check("...and every hop moves the holder and records the step",
               _wf["holder"] == "alpha.db" and _wf["runs"] == 2
               and "schema next" in _wf["lastStep"])
+
+        # A brief addressed to a library is refused AT SEND TIME with the
+        # reason. The sender is a desk that can act on "that is a library" -
+        # pick a real desk, or ask him. Five minutes later, in someone else's
+        # failure ledger, nobody can act on it at all.
+        sent.clear()
+        plib = dmail("alpha.app", {"to": "tool.libthing", "text": "do the thing"},
+                     "1700000000220")
+        _rlib = wd.deliver_desk_mail(dm, "alpha.app", plib,
+                                     json.loads(plib.read_text(encoding="utf-8")))
+        check("desk mail to a library is refused when it is SENT, not when it fails",
+              _rlib == "refused"
+              and not list((wd.INBOX / "tool.libthing").glob("dm-*.json")),
+              f"r={_rlib}")
+        check("...and the sender is told it is a library, not merely 'no'",
+              any("library" in s[1] for s in sent),
+              "; ".join(s[1][:80] for s in sent)[:200])
+        # (that a PROFILED tool desk passes the same check is asserted in the
+        # section above, without dragging the cross-project gate into it)
 
         # ...while a chain with NO block behaves exactly as it always did.
         pl1 = dmail("alpha.app", {"to": "alpha.web", "text": "legacy chain"},
@@ -8463,26 +8518,25 @@ try:
     _da = subprocess.run([sys.executable,
                           str(real_root / "tools" / "discord" / "desk_audit.py"), "--quiet"],
                          capture_output=True, text=True)
-    # It used to assert returncode 0 outright. That is no longer the honest
-    # question: since 2026-09-02 the audit also reports tools\ folders a desk id
-    # can reach that have NO permission profile, and this checkout really has
-    # seven of them (bridge, desktop, documents, orchestrator, playwright,
-    # telegram, whisper - libraries, not desks). Asserting green would mean
-    # either hiding that or stamping seven libraries as desks.
-    #
-    # So: every problem the audit reports must be THAT one. Any new class of
-    # failure - a desk that can stall on a dialog, a missing hook, a stub gone -
-    # still turns this red, which is what the check was for.
-    _da_out = (_da.stdout or "") + (_da.stderr or "")
-    _da_bad = [l.strip() for l in _da_out.splitlines() if "[X ]" in l]
-    _da_unprofiled = [l for l in _da_bad if "no .claude\\settings.json" in l]
-    check("desk audit: nothing is wrong with this fleet except desks with no profile",
-          len(_da_bad) == len(_da_unprofiled), "; ".join(_da_bad)[:300])
-    # The 2026-09-02 blind spot itself: the old test was `settings.json exists`,
-    # so a desk WITHOUT one was never looked at and therefore passed - while
-    # tool.discord could not even run its own check-in, twelve times.
-    check("desk audit: a tools\\ folder with no settings.json is a FAIL, not invisible",
-          _da_unprofiled != [], _da_out.strip()[:200])
+    check("desk audit: this fleet passes its own stability review",
+          _da.returncode == 0, (_da.stdout or _da.stderr or "").strip()[:300])
+    # The 2026-09-02 blind spot: a tools\ folder with no permission profile was
+    # not merely unaudited, it was *invisible* - and tool.discord, which had
+    # lost its profile, could not run its own check-in twelve times while this
+    # said the fleet was clean. The line is enforced now (a library cannot be
+    # run or addressed), so the audit NAMES them instead of hiding them.
+    _da_full = subprocess.run([sys.executable,
+                               str(real_root / "tools" / "discord" / "desk_audit.py")],
+                              capture_output=True, text=True)
+    _da_out = (_da_full.stdout or "") + (_da_full.stderr or "")
+    check("desk audit: library folders are named, not silently skipped",
+          "=== libraries" in _da_out and "tool.whisper" in _da_out,
+          _da_out.strip()[-300:])
+    check("desk audit: ...and none of them is counted as a desk",
+          not any(f"[OK] {lib}" in _da_out
+                  for lib in ("tool.whisper", "tool.playwright", "tool.bridge")))
+    check("desk audit: it checks that a library cannot be run or addressed",
+          "cannot be run as a desk" in _da_out)
     _da_src = (real_root / "tools" / "discord" / "desk_audit.py").read_text(encoding="utf-8")
     check("desk audit: it REPORTS and never edits a settings file",
           "write_text" not in _da_src and "never fixes" in _da_src)

@@ -54,29 +54,35 @@ def is_desk_target(d):
     return (d / "README.md").is_file() or any(d.glob("*.py"))
 
 
-def desk_dirs():
+def desk_dirs(with_libraries=False):
     """Every folder that is a desk: root, daybook, tool.<x> and project
-    components. Mirrors fix_hook_paths.desk_dirs - a desk is a folder with a
-    .claude\\ (for tools) or a component of a project."""
+    components. A `tools\\<x>` folder is a desk exactly when somebody gave it a
+    permission profile; the rest are LIBRARIES.
+
+    That line used to be invisible rather than stated. This function tested
+    `settings.json exists` and silently dropped everything else, so a desk that
+    had LOST its profile was never looked at and therefore passed: on
+    2026-09-02 tool.discord could not run its own check-in, twelve runs in a
+    row, while this audit called the fleet clean. The missing file was also the
+    reason the folder was never inspected.
+
+    The line is now enforced rather than assumed - `watchdog.unprofiled_tool_
+    desk` refuses to start a run in a library and refuses desk mail addressed
+    to one - so this reports them as what they are (owner decision 2026-09-02:
+    "do not stamp seven libraries as desks"). `with_libraries` returns that
+    second list for the report.
+    """
     out = [("orchestrator", ROOT)]
+    libs = []
     if (ROOT / "daybook").is_dir():
         out.append(("daybook", ROOT / "daybook"))
     for d in sorted((ROOT / "tools").glob("*")):
         if not d.is_dir() or d.name.startswith((".", "__")):
             continue
-        # EVERY tools\<t> folder a desk id can reach, not only those that
-        # already have a permission profile.
-        #
-        # The old test was exactly `settings.json exists`, which made a desk
-        # WITHOUT one invisible here - and therefore green. On 2026-09-02
-        # tool.discord had no settings.json, so twelve consecutive runs were
-        # refused `python` and could not even check in, and this audit reported
-        # the fleet clean throughout: the missing file was also the reason the
-        # folder was never looked at. `cwd_for` maps tool.<name> to tools\<name>
-        # blindly, so a folder with code in it is a desk somebody can address
-        # whether or not anyone meant it to be one.
-        if (d / ".claude" / "settings.json").is_file() or is_desk_target(d):
+        if (d / ".claude" / "settings.json").is_file():
             out.append((f"tool.{d.name}", d))
+        elif is_desk_target(d):
+            libs.append(f"tool.{d.name}")
     projects = ROOT / "projects"
     if projects.is_dir():
         for p in sorted(projects.iterdir()):
@@ -85,7 +91,7 @@ def desk_dirs():
             for c in sorted(p.iterdir()):
                 if c.is_dir() and not c.name.startswith(".") and c.name != "memory":
                     out.append((f"{p.name}.{c.name}", c))
-    return out
+    return (out, libs) if with_libraries else out
 
 
 def read_json(path):
@@ -101,16 +107,6 @@ def audit_desk(sid, folder):
     if not folder.is_dir():
         return False, [f"folder missing ({folder})"]
     tracked = read_json(folder / ".claude" / "settings.json") or {}
-    # A tool desk inherits nothing: tools\ has no .claude\ of its own, so a
-    # missing profile here is not "falls back to the project's" (the component
-    # case below) - it is a run with no allow-list at all, refused its own
-    # check-in. ONE problem naming ONE fix, rather than the four confusing
-    # symptoms an empty permission block would otherwise produce.
-    if not tracked and folder.parent == ROOT / "tools":
-        return False, ["no .claude\\settings.json — a run here gets no allow-list "
-                       "and can be refused even its own check-in; copy "
-                       "tools\\fleet\\.claude\\settings.json, or retire the folder "
-                       "so no desk id reaches it"]
     local = read_json(folder / ".claude" / "settings.local.json") or {}
     perms = (tracked.get("permissions") or {})
     allow = set(perms.get("allow") or [])
@@ -132,6 +128,12 @@ def audit_desk(sid, folder):
             problems.append(f"does not deny {d} (a menu nobody can reach)")
     if tracked.get("hooks"):
         problems.append("tracked settings.json carries hooks (machine paths must not be in git)")
+    # A desk that lost its profile is the 2026-09-02 failure exactly: no
+    # allow-list, no hooks, and it cannot even run its own check-in to say so.
+    # It reaches here only for root/daybook/components, since an unprofiled
+    # tools\ folder is classified a library above and never audited as a desk.
+    if not tracked and folder == ROOT:
+        problems.append("no tracked .claude\\settings.json at the workspace root")
 
     hooks = (local.get("hooks") or {})
     for h in HOOKS:
@@ -175,6 +177,12 @@ def fleet_checks():
     out.append(("no session-side watcher can go deaf",
                 "there is no watch mode" in
                 (ROOT / "tools" / "discord" / "inbox_watch.py").read_text(encoding="utf-8")))
+    # The invariant that lets the library list below be information rather than
+    # a hole: nothing may START a run in a folder with no permission profile,
+    # and desk mail addressed to one is refused at SEND time with the reason.
+    out.append(("a library folder cannot be run as a desk, or addressed as one",
+                "unprofiled_tool_desk" in wd
+                and wd.count("unprofiled_tool_desk(") >= 3))
     return out
 
 
@@ -186,7 +194,7 @@ def main(argv=None):
     ap.add_argument("--quiet", action="store_true", help="only print what is wrong")
     a = ap.parse_args(argv)
 
-    desks = desk_dirs()
+    desks, libraries = desk_dirs(with_libraries=True)
     bad = 0
     if not a.quiet:
         print(f"=== desks ({len(desks)}) " + "=" * 40)
@@ -198,6 +206,14 @@ def main(argv=None):
         else:
             bad += 1
             print(f"  [X ] {sid:28} " + "; ".join(problems))
+    if libraries and not a.quiet:
+        # Named, not silently skipped. These are the folders a `tool.<x>` id
+        # could once have started a run in; saying which they are is how the
+        # next person tells "library" from "desk that lost its profile".
+        print(f"\n=== libraries ({len(libraries)}) " + "=" * 36)
+        print("  not desks: no permission profile, so the watchdog refuses to run")
+        print("  them and refuses desk mail addressed to them.")
+        print("  " + ", ".join(libraries))
     if not a.quiet:
         print("\n=== fleet " + "=" * 45)
     for label, ok in fleet_checks():

@@ -521,6 +521,31 @@ one-line check that a session has the feature at all.
 
 ---
 
+## A library is not a desk (2026-09-02)
+
+`cwd_for` maps `tool.<name>` to `tools\<name>` **blindly**, so before this any optimistic or
+typo'd tool id started a real run in a folder nobody meant as a desk — no allow-list, no
+`PermissionRequest` hook, and therefore no way to escalate or even report. That is not a desk
+working badly; it is a desk that cannot run its own check-in, which `tool.discord` demonstrated
+twelve consecutive times on 2026-09-02 while every surface called the fleet healthy.
+
+**A `tools\<x>` folder is a desk exactly when somebody gave it `.claude\settings.json`.** That is
+the only on-disk fact separating a desk from a library with code in it, so it is the test:
+
+- `ensure_runner` refuses to start a run in a library, through `_unrunnable` — so it backs off
+  **and pages**, because a refusal nobody hears is the shape of the original fault.
+- `deliver_desk_mail` refuses mail addressed to one **at send time, with the reason**. The sender
+  is a desk that can act on *"that is a library"*; five minutes later, inside someone else's
+  failure ledger, nobody can act on it at all.
+- `desk_audit.py` lists them under **libraries** rather than auditing them as desks. Owner
+  decision: *"do not stamp seven libraries as desks"* — the alternative would have invented seven
+  desks nobody wants, to quiet a check.
+
+Today those are `tool.bridge`, `tool.desktop`, `tool.documents`, `tool.orchestrator`,
+`tool.playwright`, `tool.telegram`, `tool.whisper`. Giving one a profile is what promotes it.
+
+---
+
 ## D11 — Workflows: the chain as a whole, not one hop at a time (2026-09-02)
 
 Owner decision, 2026-09-02: **delegation must keep a workflow between desks running as long as
