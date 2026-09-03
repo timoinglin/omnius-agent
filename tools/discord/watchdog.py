@@ -1712,16 +1712,32 @@ def turn_died(session):
     try:
         if not stamp.is_file():
             return False
+        err, when, _what = conversation_api_error(session)
+        if not when or when < stamp.stat().st_mtime:
+            return False                      # no conversation, or error predates this turn
+        if time.time() - when < API_ERROR_QUIET_SECONDS:
+            return False                      # may still be retrying
+        return err
+    except (OSError, ValueError):
+        return False                          # cannot tell -> leave the stamp alone
+
+
+def conversation_api_error(session):
+    """Read the LAST assistant block of this desk's newest conversation.
+
+    -> (is_api_error, mtime, text). (False, 0.0, "") when there is nothing to
+    read. Split out of turn_died 2026-09-03: the outage reporter needs the same
+    evidence WITHOUT a busy stamp to compare against, because turn_busy clears
+    that stamp the moment it sees the error - so anything asking "is the API
+    still failing?" one poll later had nothing left to look at.
+    """
+    try:
         d = history_dir_for(cwd_for(session))
         files = [p for p in d.glob("*.jsonl")] if d.is_dir() else []
         if not files:
-            return False
+            return False, 0.0, ""
         f = max(files, key=lambda p: p.stat().st_mtime)
         when = f.stat().st_mtime
-        if when < stamp.stat().st_mtime:
-            return False                      # error predates this turn
-        if time.time() - when < API_ERROR_QUIET_SECONDS:
-            return False                      # may still be retrying
         # Tail only: these files reach tens of MB and this runs every poll.
         with open(f, "rb") as fh:
             fh.seek(0, os.SEEK_END)
@@ -1737,11 +1753,101 @@ def turn_died(session):
             content = (e.get("message") or {}).get("content")
             blocks = content if isinstance(content, list) else []
             text = " ".join(str(b.get("text") or "") for b in blocks
-                            if isinstance(b, dict))
-            return text.strip().startswith("API Error")
-        return False
+                            if isinstance(b, dict)).strip()
+            return text.startswith("API Error"), when, text[:200]
+        return False, when, ""
     except (OSError, ValueError):
-        return False                          # cannot tell -> leave the stamp alone
+        return False, 0.0, ""
+
+
+# --- the API outage reporter ----------------------------------------------------
+#
+# 2026-09-03, 13:37-15:00: Claude's API answered 529 Overloaded for ~85 minutes.
+# The watchdog SAW it - turn_died logged "turn ended in an API error" 25 times -
+# and said nothing in Discord. Meanwhile it read the same silence as a broken
+# bridge and killed and reopened a window 3x for the orchestrator and 3x for
+# a second one, and the deaf-desk alarm told him to `!restart`. So the
+# one thing he could not have guessed - that none of it was his fleet's fault -
+# was the one thing no surface said, and every remedy on offer was wrong.
+_api_outage = {}       # session -> mtime of the error that opened the outage
+
+
+def api_outage(session):
+    """True while Claude's API is the reason this desk is not answering.
+
+    Consulted by the remedies, not just the reporters: during an outage the
+    session is healthy and the CLI retries by itself, so killing its bridge or
+    advising `!restart` destroys working state to fix nothing.
+    """
+    return session in _api_outage
+
+
+def _api_error_headline(text):
+    """-> "529 Overloaded"-ish, from whatever the CLI wrote. Never raises."""
+    m = re.search(r"\b(4\d\d|5\d\d)\b", str(text or ""))
+    code = m.group(1) if m else ""
+    if "overload" in str(text or "").lower():
+        return f"overloaded ({code})" if code else "overloaded"
+    return f"error {code}" if code else "error"
+
+
+def check_api_outages(mapping):
+    """Say it once when the API breaks, and once when it comes back.
+
+    Detection does NOT use the busy stamp (turn_busy clears it) - it reads the
+    desk's own conversation, where the CLI wrote the error itself. Recovery is
+    the same file moving on with something that is not an error, which is the
+    turn actually completing.
+    """
+    seen = set()
+    for src in (SESSIONS.glob("*.json") if SESSIONS.is_dir() else []):
+        seen.add(src.stem)
+    for box in (INBOX.iterdir() if INBOX.is_dir() else []):
+        if box.is_dir():
+            seen.add(box.name)
+    seen.update(_api_outage)
+    for session in sorted(seen):
+        check_api_outage(session)
+
+
+def check_api_outage(session):
+    """The per-desk half. -> "opened" | "closed" | "" (nothing changed).
+
+    Split from the sweep so it can be exercised for ONE desk: the outage is a
+    per-desk fact (its own conversation, its own channel), and a per-desk
+    answer is also what the remedies ask for.
+    """
+    err, when, text = conversation_api_error(session)
+    was = _api_outage.get(session)
+    if err and when and time.time() - when >= API_ERROR_QUIET_SECONDS:
+        if was:
+            return ""                          # already said so; do not repeat
+        _api_outage[session] = when
+        log(f"{session}: Claude API is failing ({_api_error_headline(text)}) "
+            f"- telling him once, and holding every remedy")
+        cid = alert_channel_id(session)
+        if cid:
+            try:
+                api.send_message(
+                    cid, f"⚠️ Claude API {_api_error_headline(text)} — `{session}` is "
+                         f"waiting on it, not stuck. It retries by itself; "
+                         f"**nothing to do**, and `!restart` would not help.")
+            except api.ApiError:
+                pass
+        return "opened"
+    if was and when and when > was and not err:
+        # The conversation moved on and its tail is no longer an error: that IS
+        # a completed turn, which is the only honest "back".
+        del _api_outage[session]
+        log(f"{session}: the API is answering again")
+        cid = alert_channel_id(session)
+        if cid:
+            try:
+                api.send_message(cid, f"✅ Claude API is back — `{session}` is working again.")
+            except api.ApiError:
+                pass
+        return "closed"
+    return ""
 
 
 def turn_busy(session):
@@ -1804,6 +1910,15 @@ def bridge_not_delivering(session):
     """
     n, oldest = inbox_backlog(session)
     if not n:
+        return False
+    # AN OUTAGE IS NOT A BRIDGE FAULT. 2026-09-03: Claude's API was down for 85
+    # minutes, the bridge was healthy and the CLI was retrying on its own - and
+    # this function read "mail waiting, no turn started" and had the window
+    # killed and reopened three times for the orchestrator and three more for
+    # a second desk. Replacing a working window cannot make a remote API
+    # answer; it only throws away a warm conversation and leaves a dead
+    # "Press any key" window behind. Back off and let it retry.
+    if api_outage(session):
         return False
     if turn_busy(session) and not turn_stalled(session):
         return False                     # a turn IS running: delivery worked, it is just slow
@@ -2363,18 +2478,25 @@ def open_tab(session, cwd, model, effort):
     # cmd /c, not /k: a killed or closed desk must take its WINDOW with it.
     # With /k the shell outlived the bridge, so every kill/restart left a dead
     # tab behind and they piled up (owner, 2026-08-02: "daybook opened 2 tabs").
-    # `|| pause` keeps the window only on a non-zero exit, so a genuine startup
-    # failure is still readable - and state\logs\bridge-<id>.log has it too.
+    #
+    # And it pauses ONLY on desk_bridge.BOOT_FAILURE (3), not on any non-zero
+    # exit. `|| pause` was every non-zero code, so a !kill, a !restart and a
+    # bridge replaced during an API outage each left a dead "Press any key"
+    # window behind - six of them in 85 minutes on 2026-09-03, which is the
+    # pile-up he described. `if errorlevel 3 if not errorlevel 4` is cmd's way
+    # of saying EXACTLY 3 (`errorlevel N` means ">= N"), and `&` rather than
+    # `||` so the test runs whatever the exit code was.
     bridge = ROOT / "tools" / "bridge" / "desk_bridge.py"
     if not bridge.is_file():
         log(f"cannot open a desk window for {session}: {bridge} is missing")
         return False
     inner = f'python "{bridge}" {session} --model {model} --effort {effort}'
+    keep_open = " & if errorlevel 3 if not errorlevel 4 pause"
     wt = shutil.which("wt")
     try:
         if wt:
             subprocess.Popen([wt, "-w", "0", "new-tab", "--title", session,
-                              "-d", str(ROOT), "cmd", "/c", inner + " || pause"])
+                              "-d", str(ROOT), "cmd", "/c", inner + keep_open])
         else:
             # NO `start`. Windows Terminal does not ship with Windows 10, so
             # this branch is the normal one there - and it was broken: `start`
@@ -2398,7 +2520,7 @@ def open_tab(session, cwd, model, effort):
             # (2026-08-15, first desk window on a machine without Windows
             # Terminal). `||` is cmd syntax, so cmd has to parse this line;
             # our own quoting is the only kind it will read correctly.
-            subprocess.Popen(f'cmd /c {inner} || pause', cwd=str(ROOT),
+            subprocess.Popen(f'cmd /c {inner}{keep_open}', cwd=str(ROOT),
                              creationflags=NEW_CONSOLE)
     except OSError as e:
         log(f"desk window failed for {session}: {e}")
@@ -2861,13 +2983,25 @@ def deaf_desk_alarm(session):
             # alive and idle, its TURN had died on an API 529. Telling him the
             # wrong reason sent him looking for a crash that had not happened.
             alive = session_alive(session) or run_active(session)
-            why = ("its turn stopped without finishing — the session is still "
-                   "there but has written nothing since"
-                   if alive else
-                   "no run, no live session, nothing in flight")
-            api.send_message(cid, f"🔇 `{session}`: your message from {int(age // 60)} min "
-                                  f"ago{quote} has **nobody working on it** — {why}. "
-                                  f"`!restart` clears the desk and retries.")
+            # DURING AN OUTAGE THE ADVICE IS WRONG, so it is not given. On
+            # 2026-09-03 this alarm said "nothing alive is handling it -
+            # !restart" while the truth was that Claude's API had been
+            # answering 529 for an hour; he restarted desks on that advice.
+            # Naming the real cause is the whole value of the alarm.
+            if api_outage(session):
+                api.send_message(
+                    cid, f"🔇 `{session}`: your message from {int(age // 60)} min "
+                         f"ago{quote} is still waiting — **Claude's API is failing**, "
+                         f"not this desk. It retries by itself; `!restart` would not "
+                         f"help. I will say when it is back.")
+            else:
+                why = ("its turn stopped without finishing — the session is still "
+                       "there but has written nothing since"
+                       if alive else
+                       "no run, no live session, nothing in flight")
+                api.send_message(cid, f"🔇 `{session}`: your message from {int(age // 60)} min "
+                                      f"ago{quote} has **nobody working on it** — {why}. "
+                                      f"`!restart` clears the desk and retries.")
     except Exception as e:
         log(f"deaf-desk alarm for {session} failed to send: {e}")
     return True
@@ -6855,6 +6989,10 @@ def main():
             sweep_gates(mapping)
             sweep_twofa(mapping)
             check_backlogs()
+            # BEFORE the remedies: api_outage() decides whether ensure_runners
+            # may replace a bridge and whether the deaf-desk alarm may advise
+            # `!restart`, so it has to be current when they run.
+            check_api_outages(mapping)
             reap_runs()
             ensure_runners()
             ensure_telegram_bridge()

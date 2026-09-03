@@ -2750,8 +2750,21 @@ try:
     # behind and they piled up (owner, 2026-08-02: "daybook opened 2 tabs").
     check("a desk window closes with its desk (cmd /c, never /k)",
           "'/c'" in _otcode and "'/k'" not in _otcode)
-    check("...but a failed start still leaves something readable on screen",
-          "|| pause" in _otcode)
+    # `|| pause` was EVERY non-zero exit, so a !kill, a !restart and a bridge
+    # replaced during an API outage each left a dead "Press any key" window -
+    # six in 85 minutes on 2026-09-03. Now only desk_bridge.BOOT_FAILURE keeps
+    # a window, because only then does the window hold the sole copy of why.
+    check("...but a genuine BOOT failure still leaves something readable on screen",
+          "errorlevel 3" in _otcode and "pause" in _otcode)
+    check("...and an ordinary exit - a kill, a restart - closes its window",
+          "|| pause" not in _otcode and "not errorlevel 4" in _otcode)
+    _dbsrc = (_rr / "tools" / "bridge" / "desk_bridge.py").read_text(encoding="utf-8")
+    check("the bridge has ONE distinct code for a boot failure, and uses it",
+          "BOOT_FAILURE = 3" in _dbsrc
+          and "def fail(msg, code=BOOT_FAILURE)" in _dbsrc
+          and "return BOOT_FAILURE" in _dbsrc)
+    check("...and claude's own exit code still passes straight through",
+          "return rc" in _dbsrc)
     _wk = (_rr / "wakeup-omnius.bat").read_text(encoding="utf-8")
     check("the hand launcher does the same", "cmd /c python" in _wk and "cmd /k" not in _wk)
     check("the tab decision needs BOTH terminal mode and no live claim",
@@ -4997,6 +5010,88 @@ try:
               "this is the bit every recovery path reads")
         check("...and the stamp is actually gone, so recovery can proceed",
               not (_tt / "d.k.busy").is_file())
+
+        # == SAY it, and stop treating the outage as a fault of ours ==========
+        # 2026-09-03, 13:37-15:00: the API answered 529 for ~85 minutes. The
+        # watchdog logged "turn ended in an API error" 25 times and said
+        # NOTHING in Discord - while killing a healthy bridge 3x for the
+        # orchestrator and 3x for a second desk, and telling him to
+        # `!restart`. The one thing he could not guess was the one thing no
+        # surface said.
+        _acid, _asent = wd.alert_channel_id, []
+        _rsm4 = api.send_message
+        _real_sessions_dir = wd.SESSIONS
+        try:
+            wd.alert_channel_id = lambda s: "C-api"
+            api.send_message = lambda cid, text, files=None: (
+                _asent.append((cid, text)) or [{"id": "x"}])
+            wd._api_outage.clear()
+            wd.SESSIONS = SAND / "no-claims-here"        # only the inbox drives it
+            _abox = wd.INBOX / "d.k"
+            _abox.mkdir(parents=True, exist_ok=True)
+            (_abox / "1.json").write_text(json.dumps(
+                {"id": "1", "from": "owner", "channelId": "C-api", "text": "hi"}),
+                encoding="utf-8")
+
+            _write("API Error: 529 Overloaded. This is a server-side issue")
+            os.utime(_conv, (time.time() - 600, time.time() - 600))
+            check("an API outage is announced, once, naming the code",
+                  wd.check_api_outage("d.k") == "opened" and
+                  len(_asent) == 1 and "529" in _asent[-1][1]
+                  and "overloaded" in _asent[-1][1].lower(),
+                  f"{len(_asent)} posted")
+            check("...and it says there is nothing for him to do",
+                  "nothing to do" in _asent[-1][1].lower()
+                  and "not stuck" in _asent[-1][1].lower())
+            check("...and the desk is marked as waiting on the API, not broken",
+                  wd.api_outage("d.k") is True)
+            check("...and it is not repeated every three seconds",
+                  wd.check_api_outage("d.k") == "" and len(_asent) == 1)
+
+            # A HEALTHY BRIDGE IS NOT REPLACED DURING AN OUTAGE. This is the
+            # 3+3 window kills of that afternoon: replacing a window cannot
+            # make a remote API answer, it only burns a warm conversation.
+            _bna = wd.bridge_not_delivering("d.k")
+            check("a bridge is never called 'not delivering' during an outage",
+                  _bna is False)
+
+            # ...and the deaf-desk alarm names the real cause instead of
+            # sending him to !restart, which is what he acted on that day.
+            _asent.clear()
+            _da_sa, _da_ra = wd.session_alive, wd.run_active
+            wd.session_alive = lambda s: True
+            wd.run_active = lambda s: False
+            try:
+                os.utime(_abox / "1.json",
+                         (time.time() - (wd.DEAF_DESK_SECONDS + 120),) * 2)
+                wd._deaf_alerted.pop("d.k", None)
+                wd.deaf_desk_alarm("d.k")
+                check("the deaf-desk alarm blames the API, not the desk",
+                      bool(_asent) and "API is failing" in _asent[-1][1],
+                      f"{len(_asent)} posted")
+                check("...and does NOT tell him to restart a desk that is fine",
+                      _asent and "would not help" in _asent[-1][1]
+                      and "clears the desk and retries" not in _asent[-1][1])
+            finally:
+                wd.session_alive, wd.run_active = _da_sa, _da_ra
+
+            # Recovery: the conversation moves on with something that is not an
+            # error. That IS a completed turn - the only honest "back".
+            _asent.clear()
+            _write("Done, here is the answer.")
+            os.utime(_conv, (time.time(), time.time()))
+            check("...and one 'back' notice when a later turn completes",
+                  wd.check_api_outage("d.k") == "closed" and
+                  len(_asent) == 1 and "back" in _asent[-1][1].lower()
+                  and wd.api_outage("d.k") is False)
+            check("...said once, not once per poll",
+                  wd.check_api_outage("d.k") == "" and len(_asent) == 1)
+            for _f in _abox.glob("*.json"):
+                _f.unlink()
+        finally:
+            wd.alert_channel_id, api.send_message = _acid, _rsm4
+            wd.SESSIONS = _real_sessions_dir
+            wd._api_outage.clear()
     finally:
         wd.TURNS, wd.history_dir_for, wd.cwd_for = _t2, _hd, _cf
         wd.session_alive, wd.run_active = _sa2, _ra2
@@ -6278,6 +6373,12 @@ try:
     loop_tail = src_wd2[src_wd2.index(call_site):]
     check("check_backlogs actually runs in the poll loop",
           "check_backlogs()" in loop_tail[:600])
+    # ...and the outage sweep runs BEFORE the remedies, because api_outage()
+    # is what stops them replacing a healthy bridge or advising `!restart`.
+    check("the API-outage sweep runs in the poll loop, before the remedies",
+          "check_api_outages(mapping)" in loop_tail[:900]
+          and loop_tail.index("check_api_outages(mapping)")
+              < loop_tail.index("ensure_runners()"))
 
     print("== alarms for a desk with no channel ==")
     # 2026-09-02, tool.discord: twelve runs failed five minutes apart with

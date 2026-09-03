@@ -122,7 +122,19 @@ def log(msg):
         pass
 
 
-def fail(msg, code=2):
+# A GENUINE BOOT FAILURE, and nothing else, keeps the window open.
+#
+# open_tab used to append `|| pause` to ANY non-zero exit, so every ordinary
+# end of life left a dead "Press any key" window on his desktop: a !kill, a
+# !restart, a bridge replaced during an outage. On 2026-09-03 six such
+# replacements in 85 minutes produced six of them, which is the window pile-up
+# he described. A window is only worth keeping when it holds the ONLY copy of
+# why the desk could not start - and that is this code, nothing else. Anything
+# claude itself exits with passes straight through and closes.
+BOOT_FAILURE = 3
+
+
+def fail(msg, code=BOOT_FAILURE):
     log(f"FATAL: {msg}")
     raise SystemExit(code)
 
@@ -586,7 +598,7 @@ def main(argv=None):
             log(f"FATAL: could not start the pty: {type(e).__name__}: {e}")
             for ln in traceback.format_exc().rstrip().splitlines():
                 log("  " + ln)
-            return 2
+            return BOOT_FAILURE
         print()
         try:
             rc = b.run()
