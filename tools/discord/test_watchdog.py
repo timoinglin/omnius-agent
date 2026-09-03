@@ -6328,7 +6328,9 @@ try:
     # silence again is the same wait he reads as death.
     for _mark in (2, 3):
         _age_env(env2b, _every * _mark + 10)
-        wd._working_notified[_key2b] -= _every      # ...and that interval elapsed
+        # ...and that interval elapsed (the mark is (when, channel, message id))
+        _wn = wd._working_notified[_key2b]
+        wd._working_notified[_key2b] = (_wn[0] - _every, _wn[1], _wn[2])
         wd.check_backlogs()
     check("...and repeats every interval while the work continues - minutes 6 and 9",
           len(sent) == 3)
@@ -7608,6 +7610,74 @@ try:
               sum(1 for p in _dcfg.problems() if "desk id or" in p) >= 3)
     finally:
         _dcfg.load = _dreal
+
+    print("== 👀 received, ✅ answered ==")
+    # His item 5, 2026-09-03. The eyes said "received" and then said nothing
+    # ever again: on a long turn he could not tell an answered message from one
+    # still in flight without scrolling for the reply.
+    _reacts = []
+    _rar = api.add_reaction
+    try:
+        api.add_reaction = lambda cid, mid, emoji="\N{EYES}": _reacts.append((cid, mid, emoji))
+        wd._awaiting_tick.clear()
+        check("nothing to tick when no message of his is outstanding",
+              wd.tick_answered("tick.desk") is False and not _reacts)
+        wd._awaiting_tick["tick.desk"] = ("C-tick", "M-1")
+        check("the reply ticks HIS message, by id",
+              wd.tick_answered("tick.desk") is True
+              and _reacts[-1][:2] == ("C-tick", "M-1")
+              and "\N{WHITE HEAVY CHECK MARK}" in _reacts[-1][2])
+        check("...once - a second post does not re-tick an answered message",
+              wd.tick_answered("tick.desk") is False and len(_reacts) == 1)
+    finally:
+        api.add_reaction = _rar
+        wd._awaiting_tick.clear()
+    # A reply that FAILED to send is not an answer, so the tick hangs off the
+    # actual post, not off "a reply was written".
+    check("the tick fires from the outbox flush, after the post succeeded",
+          "tick_answered(session)" in _wd_src.split("def flush_outboxes")[1]
+          .split("def ")[0])
+    check("...and only his mail is ever marked outstanding",
+          'if sender == "owner":' in _wd_src.split("api.add_reaction(cid, m[\"id\"])")[1]
+          .split("except")[0])
+
+    print("== the progress line is ONE message ==")
+    # The first version posted a new "still working" line every interval, so a
+    # twenty-minute turn stacked seven near-identical messages above the answer
+    # - the channel noise the notices exist to prevent, in another shape.
+    check("a working notice is EDITED in place, not reposted",
+          "api.edit_message(cid, mid, text)" in _wd_src)
+    check("...and falls back to a new message if that edit fails",
+          "mid = None" in _wd_src.split("def send_working_notice")[1].split("def ")[0])
+    check("api can edit a plain message, not only an embed",
+          hasattr(api, "edit_message") and "PATCH" in
+          (real_root / "tools" / "discord" / "api.py").read_text(encoding="utf-8")
+          .split("def edit_message")[1].split("def ")[0])
+    # "3 minutes" alone could be a desk thinking or a desk wedged. The last
+    # tool call is what makes it judgeable from a phone.
+    _lt_hd, _lt_cf = wd.history_dir_for, wd.cwd_for
+    try:
+        _lthist = SAND / "hist-lasttool"; _lthist.mkdir(exist_ok=True)
+        wd.history_dir_for = lambda cwd: _lthist
+        wd.cwd_for = lambda s: SAND
+        (_lthist / "c.jsonl").write_text(json.dumps({
+            "type": "assistant", "message": {"content": [
+                {"type": "tool_use", "name": "Read",
+                 "input": {"file_path": str(wd.ROOT) + "\\tools\\discord\\watchdog.py"}}]}
+        }) + "\n", encoding="utf-8")
+        check("the notice can say what the turn is actually doing",
+              wd.last_tool_use("lt.desk") == "Read tools\\discord\\watchdog.py",
+              wd.last_tool_use("lt.desk"))
+        (_lthist / "c.jsonl").write_text(json.dumps(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}}
+        ) + "\n", encoding="utf-8")
+        check("...and says nothing rather than guessing when there is no tool call",
+              wd.last_tool_use("lt.desk") == "")
+        (_lthist / "c.jsonl").write_text("{ not json\n", encoding="utf-8")
+        check("...and a corrupt transcript costs the detail, never the notice",
+              wd.last_tool_use("lt.desk") == "")
+    finally:
+        wd.history_dir_for, wd.cwd_for = _lt_hd, _lt_cf
 
     print("== mid-turn mail awareness ==")
     # A desk mid-turn could not be TOLD that mail arrived: the watchdog will

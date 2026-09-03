@@ -1850,6 +1850,55 @@ def check_api_outage(session):
     return ""
 
 
+def last_tool_use(session):
+    """-> "Read watchdog.py"-ish: the newest tool call in this desk's transcript.
+
+    What turns "still working" into something he can judge. "3 minutes" alone
+    could be a desk thinking or a desk wedged; "3 minutes — last: Bash pytest"
+    is a turn visibly doing the thing he asked for. Best-effort by design: no
+    transcript, an unreadable one, or a turn that has not called a tool yet all
+    answer "" and the notice simply omits the detail.
+    """
+    try:
+        d = history_dir_for(cwd_for(session))
+        files = [p for p in d.glob("*.jsonl")] if d.is_dir() else []
+        if not files:
+            return ""
+        f = max(files, key=lambda p: p.stat().st_mtime)
+        with open(f, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            fh.seek(max(0, fh.tell() - 65536))
+            tail = fh.read().decode("utf-8", "replace")
+        for line in reversed(tail.splitlines()):
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get("type") != "assistant":
+                continue
+            content = (e.get("message") or {}).get("content")
+            for b in reversed(content if isinstance(content, list) else []):
+                if not isinstance(b, dict) or b.get("type") != "tool_use":
+                    continue
+                name = str(b.get("name") or "").strip()
+                inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+                # The one field that says WHICH thing, per tool. Order matters:
+                # a Bash call has both `command` and sometimes `description`.
+                target = ""
+                for key in ("file_path", "path", "pattern", "command",
+                            "url", "query", "prompt"):
+                    if inp.get(key):
+                        target = str(inp[key])
+                        break
+                target = " ".join(target.split())
+                if target.startswith(str(ROOT)):
+                    target = target[len(str(ROOT)):].lstrip("\\/")
+                return f"{name} {target}".strip()[:80] if name else ""
+        return ""
+    except (OSError, ValueError):
+        return ""
+
+
 def turn_busy(session):
     """True when a turn really is in progress on this desk.
 
@@ -3967,7 +4016,27 @@ def working_notice_seconds():
                                WORKING_NOTICE_DEFAULT_MINUTES, api.ENV)) * 60
 
 
-_working_notified = {}          # "<session>/<key>" -> when its last line went out
+_working_notified = {}          # "<session>/<key>" -> (when, channel id, message id)
+# session -> (channel id, message id) of his message this desk still owes an
+# answer. 👀 goes on at receipt, ✅ when the desk's reply is actually posted.
+_awaiting_tick = {}
+
+
+def tick_answered(session):
+    """Mark his message answered once this desk's reply has really been posted.
+
+    Called from the outbox flush rather than from "a reply was written",
+    because a reply that failed to send is not an answer, and a ✅ on it would
+    be the most confident possible lie.
+    """
+    cid, mid = _awaiting_tick.pop(session, (None, None))
+    if not (cid and mid):
+        return False
+    try:
+        api.add_reaction(cid, mid, "\N{WHITE HEAVY CHECK MARK}")
+        return True
+    except api.ApiError:
+        return False
 
 
 def send_working_notice(cid, session, key, age, tail):
@@ -3977,22 +4046,45 @@ def send_working_notice(cid, session, key, age, tail):
     different wording for the same fact, and only one of them was right. The
     terminal one shipped `!restart` next to honest work, so the remedy on offer
     was the one that destroyed it.
+
+    EDITED IN PLACE, not reposted (2026-09-03). The first version posted a new
+    line every interval, so a twenty-minute turn left seven near-identical
+    messages stacked above the answer - the channel noise these notices exist
+    to prevent, arriving in a different shape. One message that keeps changing
+    says the same thing and costs one line. A failed edit falls back to a new
+    message: a deleted message must not silence the notice for good.
     """
     every = working_notice_seconds()
     if not every or age < every:
         return False
     now = time.time()
-    last = _working_notified.get(key)
-    if last is not None and now - last < every:
+    when, prev_cid, mid = _working_notified.get(key, (None, None, None))
+    if when is not None and now - when < every:
         return False
     mins = int(age // 60)
     waited = f"{mins}m" if mins else f"{int(age)}s"
+    doing = last_tool_use(session)
+    text = (f"⏳ `{session}` is still working ({waited}) "
+            f"— not stuck, no dialog waiting."
+            + (f"\n-# last: {doing}" if doing else "")
+            + f"\n{tail}")
+    if mid and prev_cid == cid:
+        try:
+            api.edit_message(cid, mid, text)
+            _working_notified[key] = (now, cid, mid)
+            return True
+        except api.ApiError:
+            mid = None                 # deleted or unreachable: post a fresh one
     try:
-        api.send_message(cid, f"⏳ `{session}` is still working ({waited}) "
-                              f"— not stuck, no dialog waiting. {tail}")
+        res = api.send_message(cid, text)
     except api.ApiError:
         return False
-    _working_notified[key] = now
+    new_id = None
+    try:
+        new_id = (res or [{}])[0].get("id")
+    except (AttributeError, IndexError, TypeError):
+        pass
+    _working_notified[key] = (now, cid, new_id)
     return True
 
 
@@ -5359,6 +5451,7 @@ def flush_outboxes(mapping):
                     (box / ".last-posted").write_text(now_iso(), encoding="utf-8")
                 except OSError:
                     pass
+                tick_answered(session)      # his message is answered: 👀 -> ✅
                 log(f"posted outbox {session}/{f.name}")
             except api.ApiError as e:
                 log(f"outbox post failed ({session}/{f.name}): {e}")
@@ -6741,6 +6834,12 @@ def handle_message(m, cid, target, me, mapping):
             return "slash-refused"
     try:
         api.add_reaction(cid, m["id"])
+        # ...and remember WHICH message, so the reply can tick it off. 👀 alone
+        # says "received" and then says nothing ever again: on a long turn he
+        # could not tell an answered message from one still in flight without
+        # scrolling for the reply (his item 5, 2026-09-03).
+        if sender == "owner":
+            _awaiting_tick[target.session] = (cid, m["id"])
     except api.ApiError:
         pass
     files = save_attachments(m)

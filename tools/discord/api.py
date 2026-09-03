@@ -787,6 +787,19 @@ def send_message(channel_id, text, files=None):
     return out
 
 
+def edit_message(channel_id, message_id, text):
+    """Rewrite a message we already posted. Redacted like any send.
+
+    A progress line has to be ONE message that changes, not a new message every
+    three minutes: on a twenty-minute turn the reposting version would leave
+    seven near-identical lines above the answer, which is the channel noise the
+    notices exist to avoid. Not chunked - a caller that needs more than 2,000
+    characters of progress is writing the wrong thing.
+    """
+    body = {"content": redact(text or "")[:1990]}
+    return api("PATCH", f"/channels/{channel_id}/messages/{message_id}", body)
+
+
 IS_VOICE_MESSAGE = 1 << 13   # 8192 - the flag that makes Discord draw a player
 
 
