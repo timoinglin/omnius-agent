@@ -24,6 +24,12 @@ Edit this file freely; it is the single source of Omnius' proactive behavior.
   heartbeat named `orchestrator` as stale while it was very much alive; obeying it
   would have freed the desk and invited a SECOND orchestrator. Run `stale_claims()`
   again at the moment you act.
+- **System limits are the watchdog's job, not yours.** It samples RAM, free disk,
+  sustained CPU and GPU memory every minute and posts to `#alerts` when one goes over
+  — once per condition, and again only after it recovers and relapses. So if you see
+  such an alert, treat it as a fact already reported: act on it (what is eating the
+  disk, which process is pinning the CPU), do not re-announce it. It needs `psutil`;
+  without it the check is simply off and nothing else changes.
 
 ## Once per day (first heartbeat after 07:00)
 - Morning briefing: **the `daybook` desk owns this, not the orchestrator.** Proved

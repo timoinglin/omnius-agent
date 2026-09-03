@@ -93,6 +93,14 @@ short. One bullet per incident, dated.
   starting a run that cannot speak. The fix he rejected is worth recording too:
   giving the seven libraries a profile each would have quieted the audit by
   inventing seven desks nobody wants.
+- **2026-09-03** — a new check asserted what a **live `memory\`** file says.
+  `memory\` is gitignored biography, so it does not travel: the suite passed on
+  the machine that wrote the check and went red on every other install, and
+  `update.ps1` correctly rolled the release back. → Assert content against
+  `templates\fresh\memory\`, never the live copy (reading a live file to measure
+  its SIZE is fine — those checks skip an absent file). **The suite that matters
+  is the one inside the zip**, so `release.ps1` now unpacks it and runs it there
+  before publishing.
 - **2026-08-06 / browser** — the Chrome extension refuses to act with more than
   one browser connected and demands a pick, which is a click in Chrome. His
   objection: *"how am i gonna accept if i am on mobile on discord?"* → The

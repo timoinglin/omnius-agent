@@ -51,6 +51,25 @@ def check(name, cond, extra=""):
             enc = getattr(sys.stdout, "encoding", None) or "ascii"
             print(line.encode(enc, "replace").decode(enc, "replace"))
 
+# --- what this TREE is, as opposed to what the code says -----------------------
+#
+# A few checks describe an INSTALL rather than the code: hooks are written per
+# machine by install.bat into the gitignored settings.local.json, and a release
+# zip carries no git history at all. Since 2026-09-03 release.ps1 unpacks the
+# zip and runs this suite inside it - that being the suite a user actually runs
+# after !update - so those checks must not fail merely because the tree has not
+# been installed yet. A check that CANNOT APPLY skips: it neither passes
+# quietly (which would hide a real regression here) nor fails (which would
+# block every release).
+ROOT_TREE = Path(__file__).resolve().parents[2]
+INSTALLED = (ROOT_TREE / ".claude" / "settings.local.json").is_file()
+IS_REPO = (ROOT_TREE / ".git").exists()
+
+
+def skip(name, why):
+    print(f"  [SKIP] {name}  ({why})")
+
+
 SAND = Path(tempfile.mkdtemp(prefix="omnius-wdtest-"))
 try:
     # --- isolate all filesystem touchpoints into the sandbox ------------------
@@ -1779,8 +1798,12 @@ try:
     _fix = _rr2 / "tools" / "discord" / "fix_hook_paths.py"
     check("the hook-path repair tool exists", _fix.is_file())
     _chk = _sp3.run([sys.executable, str(_fix), "--check"], capture_output=True, text=True)
-    check("every desk is wired to THIS machine, and no tracked file holds a path",
-          _chk.returncode == 0, (_chk.stdout + _chk.stderr).strip()[:400])
+    if INSTALLED:
+        check("every desk is wired to THIS machine, and no tracked file holds a path",
+              _chk.returncode == 0, (_chk.stdout + _chk.stderr).strip()[:400])
+    else:
+        skip("every desk is wired to THIS machine",
+             "hooks are written by install.bat; this tree is not installed")
     # THE leak that made the public repo unusable (2026-08-14): six tracked
     # settings.json files carried one machine's home directory, so every prompt
     # typed in a clone died with "UserPromptSubmit operation blocked by hook".
@@ -3104,11 +3127,15 @@ try:
     _gi = (real_root / ".gitignore").read_text(encoding="utf-8")
     _tracked = subprocess.run(["git", "ls-files", "tools/remotion"],
                               capture_output=True, text=True, cwd=str(real_root)).stdout.split()
-    check("git tracks the remotion TOOL and nothing anyone rendered with it",
-          sorted(_tracked) == ["tools/remotion/README.md",
-                               "tools/remotion/package-lock.json",
-                               "tools/remotion/package.json"],
-          f"tracked: {sorted(_tracked)}")
+    if IS_REPO:
+        check("git tracks the remotion TOOL and nothing anyone rendered with it",
+              sorted(_tracked) == ["tools/remotion/README.md",
+                                   "tools/remotion/package-lock.json",
+                                   "tools/remotion/package.json"],
+              f"tracked: {sorted(_tracked)}")
+    else:
+        skip("git tracks the remotion TOOL and nothing else",
+             "no git history here - a release zip ships none")
     check("...and .gitignore keeps it that way, so `git add -A` cannot repeat it",
           "tools/remotion/*" in _gi and "!tools/remotion/README.md" in _gi)
     for _leftover in ("src", "out"):
@@ -5779,6 +5806,38 @@ try:
           always <= ALWAYS_READ_BUDGET,
           "this is paid by every session before it does any work")
 
+    # THE SUITE MUST RUN ON A MACHINE THAT IS NOT THIS ONE.
+    #
+    # `memory\` is gitignored biography (.gitignore), so it does not travel: a
+    # check that asserts what a LIVE memory file SAYS can only pass where it was
+    # written. On 2026-09-03 exactly one such line shipped, the suite went red on
+    # another install, and update.ps1 rolled the release back - the updater
+    # working correctly, on a test that could never have passed there.
+    #
+    # Reading a live memory file to measure its SIZE is fine and is what the
+    # budget checks above do: each is guarded by is_file(), so an absent file
+    # is skipped. What is banned is asserting CONTENT that only ships in
+    # templates\fresh\memory\.
+    _tw_src = (real_root / "tools" / "discord" / "test_watchdog.py").read_text(encoding="utf-8")
+    # Match how such a read is actually WRITTEN, so this scanner does not
+    # match its own source while looking for it.
+    _mem_expr = re.compile(r'real_root\s*/\s*"memory"')
+    _mem_reads = []
+    for _i, _ln in enumerate(_tw_src.splitlines(), 1):
+        if not _mem_expr.search(_ln):
+            continue
+        # The legal shapes: the MEM constant itself (size checks, all guarded
+        # by is_file()), and any read that goes through templates\fresh\.
+        if "templates" in _ln or _ln.strip().startswith("MEM = "):
+            continue
+        _mem_reads.append(f"{_i}: {_ln.strip()[:70]}")
+    check("no check reads this instance's memory\\ for its CONTENT",
+          not _mem_reads,
+          "; ".join(_mem_reads) + " - memory\\ is gitignored, so it does not "
+          "travel; assert against templates\\fresh\\memory\\ instead")
+    check("...and the seed helper that exists for exactly this is still here",
+          "def _mem_file" in _tw_src and "templates" in _tw_src.split("def _mem_file")[1][:600])
+
     print("== check-in only (the watch mode is deleted) ==")
     # 2026-08-01: session-side watchers died at every turn boundary - three
     # times in one evening - and every death either left the desk deaf or
@@ -6081,9 +6140,13 @@ try:
         rootset = json.loads((real_root / ".claude" / "settings.local.json")
                              .read_text(encoding="utf-8")) \
             if (real_root / ".claude" / "settings.local.json").is_file() else {}
-        check("the root workspace has the UserPromptSubmit hook written locally",
-              "turn_start_hook.py" in json.dumps(rootset.get("hooks", {})
-                                                 .get("UserPromptSubmit", [])))
+        if INSTALLED:
+            check("the root workspace has the UserPromptSubmit hook written locally",
+                  "turn_start_hook.py" in json.dumps(rootset.get("hooks", {})
+                                                     .get("UserPromptSubmit", [])))
+        else:
+            skip("the root workspace has the UserPromptSubmit hook written locally",
+                 "install.bat writes it; this tree is not installed")
 
         import turn_start_hook as tsh
         tsh.ROOT, tsh.TURNS = SAND, wd.TURNS
@@ -7712,9 +7775,14 @@ try:
           "SYS_CPU_SUSTAIN_SECONDS" in _wd_src and wd.SYS_CPU_SUSTAIN_SECONDS >= 300)
     check("the real sampler runs without raising on this machine",
           isinstance(wd.system_limits(), list))
+    # The TEMPLATE, not this instance's memory\. memory\ is gitignored
+    # biography, so a check against the live copy passes only on the machine
+    # that wrote it - which is exactly how a release went red on someone else's
+    # PC and rolled itself back (2026-09-03). What ships is what may be tested.
     check("the heartbeat checklist says the watchdog owns this",
           "System limits are the watchdog's job" in
-          (real_root / "memory" / "orchestrator" / "HEARTBEAT.md").read_text(encoding="utf-8"))
+          (real_root / "templates" / "fresh" / "memory" / "orchestrator"
+           / "HEARTBEAT.md").read_text(encoding="utf-8"))
 
     print("== 👀 received, ✅ answered ==")
     # His item 5, 2026-09-03. The eyes said "received" and then said nothing
@@ -8930,8 +8998,12 @@ try:
     _da = subprocess.run([sys.executable,
                           str(real_root / "tools" / "discord" / "desk_audit.py"), "--quiet"],
                          capture_output=True, text=True)
-    check("desk audit: this fleet passes its own stability review",
-          _da.returncode == 0, (_da.stdout or _da.stderr or "").strip()[:300])
+    if INSTALLED:
+        check("desk audit: this fleet passes its own stability review",
+              _da.returncode == 0, (_da.stdout or _da.stderr or "").strip()[:300])
+    else:
+        skip("desk audit: this fleet passes its own stability review",
+             "it audits hooks, which install.bat writes; this tree is not installed")
     # The 2026-09-02 blind spot: a tools\ folder with no permission profile was
     # not merely unaudited, it was *invisible* - and tool.discord, which had
     # lost its profile, could not run its own check-in twelve times while this

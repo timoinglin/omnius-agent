@@ -136,6 +136,39 @@ $sums    = Join-Path (Split-Path $zip -Parent) 'SHA256SUMS'
 Set-Content -LiteralPath $sums -Value ("{0}  {1}" -f $sha, $zipName) -Encoding ASCII
 Write-Host ("[OK] SHA256 {0}" -f $sha) -ForegroundColor Green
 
+# --- 3b. the CLEAN-TREE suite ---------------------------------------------------
+# Step 2 ran the suites in THIS working tree, which is not the tree anybody else
+# gets: `memory\` is gitignored biography, `state\` is this machine's, and both
+# are scrubbed or reseeded by pack.ps1 -Fresh. A check that reads one of those
+# passes here and can only fail there.
+#
+# That shipped on 2026-09-03: one check asserted the CONTENT of a live
+# memory\ file, went red on another install, and update.ps1 correctly rolled the
+# release back. The suite a user actually runs after `!update` is the one inside
+# the zip, so run exactly that before publishing.
+#
+# The watchdog suite only - it is the one that reads the tree - and the temp
+# folder goes away either way.
+Write-Host '[..] unpacking the zip and running its own suite' -ForegroundColor Cyan
+$probe = Join-Path ([IO.Path]::GetTempPath()) ("omnius-clean-{0}" -f ([guid]::NewGuid().ToString('N').Substring(0,8)))
+try {
+  Expand-Archive -LiteralPath $zip -DestinationPath $probe -Force
+  # pack.ps1 writes the tree under a single top folder; take whichever it is
+  # rather than assuming the name, which has changed once already.
+  $root = Get-ChildItem -LiteralPath $probe -Directory | Select-Object -First 1
+  if (-not $root) { Fail 'the zip unpacked to no folder - pack.ps1 changed shape?' }
+  $suite = Join-Path $root.FullName 'tools\discord\test_watchdog.py'
+  if (-not (Test-Path $suite)) { Fail "the zip has no $suite - nothing to verify" }
+  $out = & python $suite 2>&1
+  if ($LASTEXITCODE -ne 0) {
+    $out | Select-Object -Last 25 | ForEach-Object { Write-Host "     $_" -ForegroundColor DarkGray }
+    Fail 'the suite FAILS inside the clean zip' 'this is what a user gets after !update - fix it before publishing, do not ship a release that rolls itself back'
+  }
+  Write-Host ("[OK] clean-tree suite: {0}" -f (($out | Select-String -Pattern '====' | Select-Object -Last 1) -replace '\s+', ' ')) -ForegroundColor Green
+} finally {
+  Remove-Item -LiteralPath $probe -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 # --- 4. publish ----------------------------------------------------------------
 # The tag moves first, force-pushed: `rolling` is a POINTER, not history - the
 # git log is the history. The release object then follows the tag.
