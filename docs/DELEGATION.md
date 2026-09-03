@@ -244,7 +244,7 @@ closed.
 should fail closed. It contradicted a rule that is older and broader — 2026-08-13, after a desk
 stalled on a dialog he could not see: *"Over discord make everything auto allow, no allow
 questions, no matter where … what you can do is that you as LLM ask twice."* The model is the
-brake. What finally settled it (2026-09-03): `the-campus.app-android → orchestrator`, asking for a
+brake. What finally settled it (2026-09-03): a project desk mailing `orchestrator`, asking for a
 category to be created, was held for an ok — *"why did it ask for an ok for a delegation? this
 shouldn't happen."* The fleet was asking permission to talk to itself. `cross_project_requires_ok`
 survives so a cautious install can turn the gate back on; everything below describes it when ON.

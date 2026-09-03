@@ -81,6 +81,9 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 **From any Discord channel**
 - Text, images, files and voice notes in — answers, files and screenshots back. Voice is transcribed locally; nothing leaves the machine for it.
 - Live *typing…* while a desk works, a **fleet board** in `#fleet-status` edited in place, and a deadman alarm that pages you if mail ever sits with nothing alive to take it.
+- **👀 when your message lands, ✅ when the answer is actually posted**, and in between one progress line — *"still working (6m) — last: Read watchdog.py"* — edited in place every `[bus] working_notice_minutes` rather than reposted.
+- **When the fault is Claude's, it says so**: an API outage is announced once per desk, no healthy window is replaced while it lasts, and the deadman names the real cause instead of suggesting a restart that cannot help.
+- **`#alerts` watches the machine too** — RAM, free disk, sustained CPU and GPU memory, once per condition and again only after it recovers.
 - Push delivery over Discord's Gateway websocket, with a REST sweep as the authority behind it — a dropped frame costs latency, never a message.
 - **Thirteen instant control commands**, handled by the watchdog itself: `!status` `!model` `!restart` `!stop` `!kill` `!killall` `!cron` `!config` `!screen` `!desktop` `!reload` `!update` `!trace`.
 - **Guests**: give a client or collaborator write access to exactly the channels you list — one project's or several — and nothing else. They're answered in their own language.
@@ -88,7 +91,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 
 **Running the fleet**
 - Create, archive and reopen whole projects by asking. Desks spawn on demand, one per component, each with its own Discord channel.
-- Switch any desk's **model and effort from Discord** (`!model sonnet low`, `!restart opus`), per desk, persisted.
+- Switch any desk's **model and effort from Discord** (`!model sonnet low`), per desk, persisted. Both are pinned when a process launches, so a change lands on the next run — add `now` (`!model sonnet low now`) to set it and cut over in one command.
 - A **shared memory layer** every desk reads, per-project memory its desks write, and read-transparency across projects — solutions travel, conventions stay aligned.
 - Several machines? Each runs its own Omnius on its own Discord server, and your phone drives them all — every claim, topic and `!status` names its machine.
 
@@ -97,7 +100,8 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 - **Hop budgets** with free replies stop runaway chains. An optional **cross-project gate** (`[delegation] cross_project_requires_ok`, off by default since 2026-09-03) can hold mail that crosses a project boundary for your ok/no; mail to the orchestrator is never held.
 - **Budgeted work loops**: a desk grinds toward a checkable done-condition across runs — five by default, then it must report what exists and ask. Loops never extend themselves.
 - **Workflows** *(2026-09-02)*: a chain that crosses desks gets one goal, one run budget and one deadline on its thread — inside it desks re-queue and delegate freely, a chain that stops moving for three hours pages you by itself, and when it runs dry the desk that started it reports what exists, once. `!status` lists the open ones.
-- **You always know a desk is working**: while one is on your message, a one-line notice every three minutes until it answers. Advice to `!restart` appears only when a turn is genuinely silent or parked on a dialog.
+- **You always know a desk is working**: while one is on your message, a single progress line that updates every three minutes until it answers. Advice to `!restart` appears only when a turn is genuinely silent or parked on a dialog.
+- **Mail that arrives mid-turn is not stuck behind it**: a running desk is told between tool calls that envelopes are waiting, so it can re-drain before it finishes instead of answering twenty minutes late.
 - **Slash pass-through**: `/goal <objective>`, `/status`, `/watch <url>` — every installed skill runs *as that skill* on the desk, on by default; narrow it in `config\skills.ini` if you want, and guests never pass one whatever it says.
 
 **Automation**

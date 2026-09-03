@@ -27,7 +27,7 @@ Project categories appear only when projects are stamped (§3); nothing exists "
 | `#daybook` | the **`daybook` desk** | text/voice → note or task in `daybook\` (voice transcribed first). The orchestrator never posts here — its outbox to this channel is refused by design |
 | `#fleet-status` | `tool.fleet` | one embed, edited in place by the watchdog itself; treat as read-only |
 | `#transcribe` | `tool.transcribe` | recordings become detached zero-token jobs; the result comes back here |
-| `#alerts` | the session that asked | errors, permission asks (`ok`/`no`, with a 6-char code when several are pending), cross-project gate asks |
+| `#alerts` | the session that asked | errors, permission asks (`ok`/`no`, with a 6-char code when several are pending), cross-project gate asks, and **system-limit warnings** — RAM > 90%, free disk < 5 GB or 5%, CPU > 95% sustained five minutes, GPU memory > 95%. One line per condition, and again only after it recovers and happens once more |
 | `#<address>` | `tool.email` | one per account in `config\email.ini`, created automatically when you add one |
 
 ## 2. Conventions

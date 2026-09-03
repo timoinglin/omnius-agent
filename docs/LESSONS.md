@@ -114,8 +114,17 @@ short. One bullet per incident, dated.
   mattered is ignored too.
 - **Loops** (docs\DELEGATION.md D5) replaced the two-continuation honor system:
   an uncounted self-addressed continuation is refused outright.
+- **2026-09-03** — Claude's API answered 529 for 85 minutes. The watchdog logged
+  "turn ended in an API error" 25 times and said nothing in Discord, so the one
+  fact he could not have guessed — that none of it was his fleet's fault — was
+  the only one no surface carried. Worse, it *acted*: a healthy bridge was
+  killed and reopened six times, each kill leaving a dead "Press any key"
+  window, and the deadman advised `!restart`, which he followed. → Say when the
+  fault is Claude's, hold every remedy while it lasts, and keep a window open
+  only for a genuine boot failure. **An alarm whose advice is wrong is worse
+  than silence: it spends the trust the next real one needs.**
 - **2026-09-03** — *"why did it ask for an ok for a delegation? this shouldn't
-  happen."* `the-campus.app-android → orchestrator`, asking for a category to be
+  happen."* A project desk mailing `orchestrator`, asking for a category to be
   created, sat behind the D4 cross-project gate waiting for `ok ff5ff9`. Two
   faults in one prompt: escalating to the orchestrator was never a boundary
   breach — it is the only route for a request only that desk can act on — and

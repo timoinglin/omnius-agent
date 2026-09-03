@@ -60,7 +60,7 @@ Handled by the always-on watchdog itself, never by a model:
 |---|---|
 | `!status` | Fleet overview: every desk, queue depths, stalls, notes freshness |
 | `!kill` / `!restart [model] [effort]` | Kill / restart **this channel's** desk; `!restart sonnet low` also persists the model dial |
-| `!model [reset\|<model>] [effort]` | Show or set this desk's model + effort, with provenance |
+| `!model [reset\|<model>] [effort] [now]` | Show or set this desk's model + effort, with provenance. `now` also restarts the desk, so the change is live instead of waiting for its next run |
 | `!stop` | Cancel this desk: kill the run, park its queued mail in `state\dropped\` (kept, not deleted) |
 | `!killall` | Everything down (only in the agent's own channel — `#omnius` by default, or whatever you renamed it to) |
 | `!cron [list\|pause\|resume\|rm\|adopt <id>]` | Routines — and the work-loop ledgers ride along in the same listing |

@@ -146,7 +146,7 @@ files over, or use `/update-config`.
 
 **The staged files carry no `hooks` block, and neither does any tracked
 settings.json (2026-08-14).** A hook command is an absolute path, so it is
-machine state: `install.bat` writes the three hooks into every desk's
+machine state: `install.bat` writes the five hooks into every desk's
 `.claude\settings.local.json` (gitignored, excluded from release zips) via
 `tools\discord\fix_hook_paths.py`. Copying a staged profile over therefore
 changes permissions only and leaves the hooks alone. Before this split, the

@@ -218,8 +218,14 @@ for a desk that just files notes. In that desk's own channel:
 !model sonnet low      set it (persists, and travels with your workspace)
 !model effort max      change only the effort
 !model reset           back to the default
-!restart sonnet low    change it AND restart now, keeping the conversation
+!model sonnet low now  set it AND cut over immediately
+!model now             cut over to the setting already recorded
+!restart sonnet low    the same thing from the other end
 ```
+
+Model and effort are fixed for the life of a Claude process, so a plain
+`!model` lands on that desk's **next** run and says so. `now` is what saves you
+the follow-up `!restart`.
 
 `!status` shows the whole fleet's models at a glance — a bare `opus/xhigh` is
 what that desk's run actually launched on, `(in parens)` is the config waiting
