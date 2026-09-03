@@ -80,6 +80,14 @@ HOOK_SPEC = (
     ("UserPromptSubmit", DISCORD / "turn_start_hook.py", 10, None, None),
     ("PreToolUse", DISCORD / "secret_guard.py", 10, None,
      "Bash|PowerShell|Read|Grep|Glob|Edit|Write|MultiEdit|NotebookEdit"),
+    # PostToolUse/mail_notice_hook.py lets a RUNNING turn learn that mail
+    # arrived (2026-09-03). Nothing else could tell it: the watchdog will not
+    # start a --continue run against a live turn, and the bridge's nudge is
+    # keystrokes that only land when the CLI reads again - so an envelope
+    # arriving one minute into a twenty-minute turn waited for all of it.
+    # PostToolUse, not Pre: a Pre hook can block the call it precedes, and a
+    # lost notice is a far better worst case than a wedged turn.
+    ("PostToolUse", DISCORD / "mail_notice_hook.py", 10, None, None),
 )
 
 

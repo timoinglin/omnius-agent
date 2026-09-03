@@ -1555,6 +1555,7 @@ try:
     _b.session, _b.box = "bridged.desk", wd.INBOX / "bridged.desk"
     _b.last_human = _b.last_nudge = 0.0
     _b.nudge_took = False
+    _b.last_nudge_count, _b.nudge_tries = -1, 0
     _b.started_at = _bt.time() - 60          # booted a minute ago
     wd.TURNS.mkdir(parents=True, exist_ok=True)
     check("bridge: empty inbox -> no nudge", _b.may_nudge()[0] is False)
@@ -1584,7 +1585,28 @@ try:
     _b.last_nudge = _bt.time() - 6; _b.nudge_took = True
     check("bridge: waits the long floor only when the nudge actually landed",
           _b.may_nudge()[0] is False)
+    # THE 90-MINUTE STORM, 2026-09-03. The API was down, so no nudge ever
+    # started a turn, so nudge_took stayed False and this 4-second retry ran
+    # for the whole outage: 1,577 lines typed into a session that could not
+    # answer. The fast retry is right for what it was measured on and wrong
+    # forever, so it is now BOUNDED per unread count.
+    _b.nudge_took = False
+    _b.last_nudge_count, _b.nudge_tries = 1, _db.NUDGE_FAST_TRIES
+    _b.last_nudge = _bt.time() - 6
+    check("bridge: the same unread count stops buying a nudge every 4 seconds",
+          _b.may_nudge()[0] is False)
+    _b.last_nudge = _bt.time() - (_db.NUDGE_REPEAT_SECONDS + 1)
+    check("...but one a minute still gets through while mail sits there",
+          _b.may_nudge()[0] is True)
+    # New mail is a new reason: the budget resets on any change in the count.
+    (_b.box / "2.json").write_text("{}", encoding="utf-8")
+    _b.nudge_tries = _db.NUDGE_FAST_TRIES
+    _b.last_nudge = _bt.time() - 6
+    check("bridge: a CHANGE in the count nudges again immediately",
+          _b.may_nudge()[0] is True and _b.nudge_tries == 0)
+    (_b.box / "2.json").unlink()
     _b.nudge_took = False; _b.last_nudge = 0.0
+    _b.last_nudge_count, _b.nudge_tries = -1, 0
     for f in _b.box.glob("*.json"):
         f.unlink()
 
@@ -1768,9 +1790,9 @@ try:
     check("no settings file has gone back to a depth-relative hook path",
           not any("${CLAUDE_PROJECT_DIR}" in p.read_text(encoding="utf-8")
                   for p in _fhp.tracked_settings()))
-    check("the hooks written are all four (permission relay, both turn stamps, secret guard)",
-          set(_fhp.hooks_block()) == {"PermissionRequest", "Stop",
-                                      "UserPromptSubmit", "PreToolUse"})
+    check("the hooks written are all five (relay, both turn stamps, guard, mail notice)",
+          set(_fhp.hooks_block()) == {"PermissionRequest", "Stop", "UserPromptSubmit",
+                                      "PreToolUse", "PostToolUse"})
     check("...and every one points at a script this checkout actually has",
           not _fhp.missing_scripts(), f"missing: {_fhp.missing_scripts()}")
     # A desk is a CWD, not a settings file: the watchdog starts a component in
@@ -7586,6 +7608,66 @@ try:
               sum(1 for p in _dcfg.problems() if "desk id or" in p) >= 3)
     finally:
         _dcfg.load = _dreal
+
+    print("== mid-turn mail awareness ==")
+    # A desk mid-turn could not be TOLD that mail arrived: the watchdog will
+    # not start a --continue run against a live turn, and the bridge's nudge is
+    # keystrokes that only land when the CLI reads again. So an envelope
+    # arriving one minute into a twenty-minute turn waited for all of it, and
+    # /omnius's "re-drain between major steps" was advice nothing could act on.
+    _mnh = real_root / "tools" / "discord" / "mail_notice_hook.py"
+    _mnbox = wd.INBOX / "hooky.desk"
+    _mnbox.mkdir(parents=True, exist_ok=True)
+    for _f in _mnbox.glob("*.json"):
+        _f.unlink()
+    _mn_marks = SAND / "turns"
+    _mn_marks.mkdir(parents=True, exist_ok=True)
+
+    def _run_mail_hook(session="hooky.desk"):
+        """Drive the real hook as Claude Code does: JSON on stdin, JSON out."""
+        env = dict(os.environ, OMNIUS_TEST_STATE=str(SAND))
+        r = subprocess.run([sys.executable, str(_mnh)],
+                           input=json.dumps({"cwd": str(wd.cwd_for(session)),
+                                             "tool_name": "Read"}),
+                           capture_output=True, text=True, env=env, timeout=60)
+        return r
+
+    _mn_empty = _run_mail_hook()
+    check("mail notice: an empty inbox says nothing at all",
+          _mn_empty.returncode == 0 and not _mn_empty.stdout.strip(),
+          _mn_empty.stdout[:120])
+    check("mail notice: it never blocks a turn, whatever happens",
+          "sys.exit(0)" in _mnh.read_text(encoding="utf-8"))
+    _mnsrc = _mnh.read_text(encoding="utf-8")
+    check("mail notice: PostToolUse, not PreToolUse - it must not block a call",
+          '"hookEventName": "PostToolUse"' in _mnsrc
+          and "PostToolUse" in str(_fhp.HOOK_SPEC))
+    check("mail notice: ONE directory listing, no envelope reads",
+          "iterdir()" in _mnsrc and "read_text" not in _mnsrc.split("def waiting")[1]
+          .split("def already_said")[0])
+    # The rate limit is not a nicety: a long turn makes hundreds of tool calls
+    # and the same line in every one would crowd out the work it interrupts.
+    check("mail notice: the same count is not repeated on every tool call",
+          "NOTICE_SECONDS" in _mnsrc and "already_said" in _mnsrc)
+
+    print("== the nudge storm ==")
+    # 2026-09-03: the API was down 85 minutes, so no nudge ever started a turn,
+    # so nudge_took stayed False, so the 4-second retry floor applied for the
+    # whole outage - 1,577 "mail waiting" lines typed into a session that could
+    # not answer.
+    _dbsrc2 = (real_root / "tools" / "bridge" / "desk_bridge.py").read_text(encoding="utf-8")
+    check("nudge: the same unread count buys one nudge a minute, not one per 4s",
+          "NUDGE_REPEAT_SECONDS = 60.0" in _dbsrc2
+          and "self.nudge_tries < NUDGE_FAST_TRIES" in _dbsrc2)
+    check("nudge: a CHANGE in the count is a new reason and resets the budget",
+          "if n != self.last_nudge_count" in _dbsrc2
+          and "self.nudge_tries = 0" in _dbsrc2)
+    # The fast retry is kept, bounded: it was measured on 2026-08-03, when a
+    # nudge typed into a not-yet-ready session cost 25s of a 48s reply.
+    check("nudge: ...but the measured fast retry survives, for a few tries",
+          "NUDGE_FAST_TRIES = 3" in _dbsrc2 and "NUDGE_RETRY = 4.0" in _dbsrc2)
+    check("nudge: the count comes from ONE listing, like the hook's",
+          "def mail_count" in _dbsrc2)
 
     print("== cross-project gate ==")
     F = wd.free_pair

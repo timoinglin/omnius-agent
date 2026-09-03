@@ -79,6 +79,8 @@ HUMAN_QUIET_SECONDS = 4.0    # never type into a line the owner is still writing
 NUDGE = "/omnius"            # what the bus types; the skill does the rest
 NUDGE_COOLDOWN = 20.0        # after a nudge that actually STARTED a turn
 NUDGE_RETRY = 4.0            # after a nudge that vanished (session not ready)
+NUDGE_FAST_TRIES = 3         # ...and only this many times for one unread count
+NUDGE_REPEAT_SECONDS = 60.0  # then: one nudge a minute while nothing changes
 OUTPUT_STAMP_SECONDS = 5.0   # how often the desk says "still printing" (see _note_output)
 BOOT_ALLOWANCE = 9.0         # claude needs this long before it can read a keystroke
 # Measured on the first real takeover (2026-08-03): the bridge typed the nudge
@@ -225,6 +227,8 @@ class Bridge:
         self.last_human = 0.0        # monotonic-ish stamp of the last keystroke
         self.last_nudge = 0.0
         self.nudge_took = False      # did the last nudge actually start a turn?
+        self.last_nudge_count = -1   # unread count the last nudge was aimed at
+        self.nudge_tries = 0         # fast retries spent on THAT count
         self.started_at = time.time()
         self.box = INBOX / self.session
         self.title_seq = f"\x1b]0;{session}\x07"
@@ -404,6 +408,14 @@ class Bridge:
         except OSError:
             return False
 
+    def mail_count(self):
+        """-> how many envelopes are queued. The nudge's rate limit keys on it:
+        NEW mail is a new reason to type, the same mail is not."""
+        try:
+            return sum(1 for _ in self.box.glob("*.json"))
+        except OSError:
+            return 0
+
     def turn_running(self):
         """True while this desk is mid-turn.
 
@@ -429,7 +441,21 @@ class Bridge:
         quiet = time.time() - self.last_human
         if quiet < HUMAN_QUIET_SECONDS:
             return False, f"owner typing ({quiet:.1f}s ago)"
-        floor = NUDGE_COOLDOWN if self.nudge_took else NUDGE_RETRY
+        # THE SAME MAIL IS NOT A NEW REASON TO TYPE. On 2026-09-03 the API was
+        # down for 85 minutes: no nudge ever started a turn, so nudge_took
+        # stayed False, so the 4-second retry floor applied for the whole
+        # outage - 1,577 "mail waiting" lines typed into a session that could
+        # not answer. The fast retry is still right for the case it was
+        # measured on (2026-08-03: a nudge typed into a session that was not
+        # ready yet, resolved in seconds), so it survives as a BOUNDED number
+        # of tries; after that the same unread count buys one nudge a minute.
+        # A change in the count is always a new reason and resets the budget.
+        n = self.mail_count()
+        if n != self.last_nudge_count:
+            self.last_nudge_count = n
+            self.nudge_tries = 0
+        floor = NUDGE_COOLDOWN if self.nudge_took else (
+            NUDGE_RETRY if self.nudge_tries < NUDGE_FAST_TRIES else NUDGE_REPEAT_SECONDS)
         if time.time() - self.last_nudge < floor:
             return False, "cooling down"
         return True, ""
@@ -451,6 +477,7 @@ class Bridge:
             if ok:
                 self.last_nudge = time.time()
                 self.nudge_took = False
+                self.nudge_tries += 1
                 last_why = None
                 if self.write(NUDGE + "\r"):
                     log("mail waiting -> typed the nudge into the live session")
