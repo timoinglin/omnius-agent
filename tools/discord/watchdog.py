@@ -5271,9 +5271,21 @@ def _hop_ttl():
 
 
 def _gate_required():
-    """Is cross-project desk mail held for an ok? Default ON - fail closed."""
+    """Is cross-project desk mail held for an ok? Default OFF since 2026-09-03.
+
+    It shipped ON, reasoning that an authorisation gate should fail closed. But
+    the standing instruction it contradicts is older and broader (2026-08-13,
+    after a desk stalled on a dialog he could not see): "Over discord make
+    everything auto allow, no allow questions, no matter where … what you can
+    do is that you as LLM ask twice." The model is the brake, not a prompt -
+    and a gate that interrupts him to approve his own fleet's routine traffic
+    is the friction he removed everywhere else.
+
+    The key stays, so a cautious install can turn it back on; when it is ON,
+    replies and free_pair() are ungated exactly as before.
+    """
     return ocfg.get_bool(OMNIUS_CFG, "delegation", "cross_project_requires_ok",
-                         "OMNIUS_CROSS_PROJECT_OK", True, env=api.ENV)
+                         "OMNIUS_CROSS_PROJECT_OK", False, env=api.ENV)
 
 
 def legal_desk_shape(s):
@@ -5310,12 +5322,22 @@ def is_fleet_sender(who):
 
 
 def free_pair(sender, to):
-    """Desk mail that skips the gate: the orchestrator delegating downward (its
-    whole job, and the pre-desk-mail hand path was never gated), or two desks
-    of the SAME project. Everything else - project<->project, anything->
-    orchestrator, tool desks, daybook - holds for an ok. Ambiguity fails
-    closed."""
-    if sender == "orchestrator":
+    """Desk mail that skips the gate even when it is ON.
+
+    - the orchestrator delegating DOWNWARD: its whole job, and the pre-desk-mail
+      hand path was never gated;
+    - anything escalating UP to the orchestrator;
+    - two desks of the SAME project.
+
+    Escalation home was the omission, and it cost him a prompt on 2026-09-03:
+    `the-campus.app-android -> orchestrator`, asking to create a category, was
+    held for an ok - "why did it ask for an ok for a delegation? this shouldn't
+    happen." A desk asking the owner's own agent for something fleet-level is
+    not conscripting another project's context; it is the normal route for a
+    request only the orchestrator can act on. Gating it made the fleet ask
+    permission to talk to itself.
+    """
+    if sender == "orchestrator" or to == "orchestrator":
         return True
     sp, sdot, _ = sender.partition(".")
     tp, tdot, _ = to.partition(".")

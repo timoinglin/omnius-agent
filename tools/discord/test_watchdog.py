@@ -7481,9 +7481,31 @@ try:
     F = wd.free_pair
     check("gate: same-project mail passes free", F("alpha.app", "alpha.web") is True)
     check("gate: orchestrator mail is never gated", F("orchestrator", "beta.app") is True)
-    check("gate: cross-project, orchestrator, tool and daybook targets all hold",
-          F("alpha.app", "beta.app") is False and F("alpha.app", "orchestrator") is False
+    check("gate: cross-project, tool and daybook targets hold",
+          F("alpha.app", "beta.app") is False
           and F("tool.email", "tool.whisper") is False and F("alpha.app", "daybook") is False)
+    # ESCALATION HOME IS NEVER A BOUNDARY BREACH. 2026-09-03, on his other PC:
+    # `the-campus.app-android -> orchestrator`, asking for a category to be
+    # created, was held for an ok - "why did it ask for an ok for a delegation?
+    # this shouldn't happen." A desk asking the owner's own agent for something
+    # only that agent can do is the fleet asking permission to talk to itself.
+    check("gate: mail TO the orchestrator is free - escalation is not a breach",
+          F("alpha.app", "orchestrator") is True
+          and F("tool.email", "orchestrator") is True
+          and F("daybook", "orchestrator") is True)
+    # ...and the gate is OFF by default now. It contradicted the older, broader
+    # rule (2026-08-13: auto-allow everything, the model is the brake), and the
+    # key survives only so a cautious install can put it back.
+    _rgr_real = wd._gate_required
+    try:
+        wd._gate_required = _real_gatereq          # the real config reader
+        check("gate: OFF by default - the key exists, the interruption does not",
+              wd._gate_required() is False)
+        check("gate: ...and SPEC agrees, so !config shows the same answer",
+              any(r[1] == "cross_project_requires_ok" and r[2] == "0"
+                  for r in _dcfg.effective()))
+    finally:
+        wd._gate_required = _rgr_real
     # A REPLY IS NEVER GATED. This is the bug that made delegation from the
     # orchestrator useless: he asked #omnius for one daybook note, the
     # orchestrator delegated it, daybook WROTE the note and answered - and the
@@ -7526,6 +7548,29 @@ try:
     check("gate: a NEW cross-boundary errand is still held",
           _dmgNewRc == "held" and len(wd.pending_gates()) == 1)
     wd.answer_gate("no", dm)
+    # A desk escalating to the orchestrator delivers even with the gate ON -
+    # the 2026-09-03 case, tested against the setting rather than the default.
+    sent.clear()
+    _dmgUp = dmail("beta.app", {"to": "orchestrator",
+                                "text": "please create the category"},
+                   "1700000000033")
+    _dmgUpRc = wd.deliver_desk_mail(dm, "beta.app", _dmgUp,
+                                    json.loads(_dmgUp.read_text(encoding="utf-8")))
+    check("gate: escalation to the orchestrator delivers even with the gate ON",
+          _dmgUpRc == "delivered" and not wd.pending_gates(), f"r={_dmgUpRc}")
+    # ...and with the gate OFF, the cross-boundary errand that was held above
+    # simply goes through: same mail, same desks, no question.
+    _rgr2 = wd._gate_required
+    wd._gate_required = lambda: False
+    try:
+        _dmgOff = dmail("daybook", {"to": "alpha.app", "text": "same errand, gate off"},
+                        "1700000000034")
+        _dmgOffRc = wd.deliver_desk_mail(dm, "daybook", _dmgOff,
+                                         json.loads(_dmgOff.read_text(encoding="utf-8")))
+        check("gate: with the gate off, that same errand is delivered, not held",
+              _dmgOffRc == "delivered" and not wd.pending_gates(), f"r={_dmgOffRc}")
+    finally:
+        wd._gate_required = _rgr2
     sent.clear()
     sent.clear()
     pg = dmail("alpha.app", {"to": "beta.app", "text": "cross the border"}, "1700000000020")

@@ -287,10 +287,13 @@ SPEC = [
     # may spend (replies are free); loop_budget = scheduled continuation runs
     # before a loop must checkpoint with the owner (consumed by schedule.py in
     # Phase D); cross_project_requires_ok = hold cross-project desk mail for an
-    # ok in Discord - ON by default, an authorisation gate fails closed.
+    # ok in Discord - OFF by default since 2026-09-03, because it contradicted
+    # his older and broader rule (auto-allow everything, the model is the
+    # brake) and asked him to approve his own fleet's routine traffic. Set it
+    # to 1 to gate.
     ("omnius", "delegation", "hop_ttl", "OMNIUS_HOP_TTL", "3", "int"),
     ("omnius", "delegation", "loop_budget", "OMNIUS_LOOP_BUDGET", "5", "int"),
-    ("omnius", "delegation", "cross_project_requires_ok", "OMNIUS_CROSS_PROJECT_OK", "1", "bool"),
+    ("omnius", "delegation", "cross_project_requires_ok", "OMNIUS_CROSS_PROJECT_OK", "0", "bool"),
     # Workflows (docs\DELEGATION.md D11): a chain that must keep running across
     # desks and runs. The budget is per WORKFLOW, not per hop - inside an open
     # one the depth cap stops biting, and these three are what end it instead.

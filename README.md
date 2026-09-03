@@ -94,7 +94,7 @@ Both tools left fingerprints here happily: the proactive heartbeat is OpenClaw-i
 
 **Desks delegating to desks** *(live-proven 2026-08-15 — [docs/DELEGATION.md](docs/DELEGATION.md))*
 - A desk hands work to a sibling by **addressing an envelope to it**; the watchdog validates the target, delivers, and mirrors every hop into the recipient's channel — the fleet talking to itself is always on your screen. Fan-out workflows are just envelopes in sequence.
-- **Hop budgets** with free replies stop runaway chains; a **cross-project gate** holds anything that crosses a project boundary for your ok/no, failing closed on silence.
+- **Hop budgets** with free replies stop runaway chains. An optional **cross-project gate** (`[delegation] cross_project_requires_ok`, off by default since 2026-09-03) can hold mail that crosses a project boundary for your ok/no; mail to the orchestrator is never held.
 - **Budgeted work loops**: a desk grinds toward a checkable done-condition across runs — five by default, then it must report what exists and ask. Loops never extend themselves.
 - **Workflows** *(2026-09-02)*: a chain that crosses desks gets one goal, one run budget and one deadline on its thread — inside it desks re-queue and delegate freely, a chain that stops moving for three hours pages you by itself, and when it runs dry the desk that started it reports what exists, once. `!status` lists the open ones.
 - **You always know a desk is working**: while one is on your message, a one-line notice every three minutes until it answers. Advice to `!restart` appears only when a turn is genuinely silent or parked on a dialog.

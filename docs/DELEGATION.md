@@ -236,14 +236,25 @@ posted to the origin channel — and nothing posted anywhere by B directly.
 ## D4 — The cross-project gate: intra-project is free, everything else asks first
 
 **Problem.** Inside one project, desks delegating to each other is the whole point. Across
-projects — or at the orchestrator, or at tool desks — an unasked envelope is one desk conscripting
-another's context on nobody's authority. The owner's rule (2026-08-15): cross-project delegation
-requires his ok, fail closed.
+projects — or at tool desks — an unasked envelope is one desk conscripting another's context on
+nobody's authority. The owner's rule (2026-08-15): cross-project delegation requires his ok, fail
+closed.
+
+**OFF BY DEFAULT SINCE 2026-09-03.** The gate shipped on, reasoning that an authorisation gate
+should fail closed. It contradicted a rule that is older and broader — 2026-08-13, after a desk
+stalled on a dialog he could not see: *"Over discord make everything auto allow, no allow
+questions, no matter where … what you can do is that you as LLM ask twice."* The model is the
+brake. What finally settled it (2026-09-03): `the-campus.app-android → orchestrator`, asking for a
+category to be created, was held for an ok — *"why did it ask for an ok for a delegation? this
+shouldn't happen."* The fleet was asking permission to talk to itself. `cross_project_requires_ok`
+survives so a cautious install can turn the gate back on; everything below describes it when ON.
 
 **Fix.** `free_pair(sender, to)` is true iff the sender is the orchestrator (delegating downward is
-its job; today's hand-path is already ungated), or both are project desks of the **same** project.
-Everything else — project→project, project→orchestrator, anything↔tool, anything↔daybook — holds
-the mail and asks. Ambiguity fails closed.
+its job; today's hand-path is already ungated), **the recipient is the orchestrator** (escalation
+home is never a boundary breach — it is the normal route for a request only the orchestrator can
+act on), or both are project desks of the **same** project. Everything else — project→project,
+anything↔tool, anything↔daybook — holds the mail and asks. A **reply** along an existing chain is
+never gated. Ambiguity fails closed.
 
 The hold reuses the permission relay's *interaction* (ok/no words, 6-char codes) but **holds a file
 instead of blocking a hook** — nothing anywhere waits in-process:
@@ -366,7 +377,7 @@ is invisible to `!config` and the validators):
 [delegation]
 # hop_ttl = 3                    ; how many desks DEEP a chain may travel (breadth and replies are free)
 # loop_budget = 5                ; scheduled continuation runs before a loop must checkpoint
-# cross_project_requires_ok = 1  ; hold cross-project desk mail for an ok in Discord (fail closed)
+# cross_project_requires_ok = 0  ; hold cross-project desk mail for an ok in Discord (off since 2026-09-03)
 ```
 
 Env overrides: `OMNIUS_HOP_TTL`, `OMNIUS_LOOP_BUDGET`, `OMNIUS_CROSS_PROJECT_OK` — env beats file

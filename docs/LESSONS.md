@@ -114,3 +114,13 @@ short. One bullet per incident, dated.
   mattered is ignored too.
 - **Loops** (docs\DELEGATION.md D5) replaced the two-continuation honor system:
   an uncounted self-addressed continuation is refused outright.
+- **2026-09-03** — *"why did it ask for an ok for a delegation? this shouldn't
+  happen."* `the-campus.app-android → orchestrator`, asking for a category to be
+  created, sat behind the D4 cross-project gate waiting for `ok ff5ff9`. Two
+  faults in one prompt: escalating to the orchestrator was never a boundary
+  breach — it is the only route for a request only that desk can act on — and
+  the gate itself contradicted his older, broader rule (2026-08-13: auto-allow
+  everything, the model is the brake). → Mail **to** the orchestrator is always
+  free, and `cross_project_requires_ok` defaults to **0**. The key survives for
+  anyone who wants the boundary back. The fleet must never ask permission to
+  talk to itself.
