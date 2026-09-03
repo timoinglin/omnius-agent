@@ -37,7 +37,19 @@ def check(name, cond, extra=""):
     if cond:
         passed += 1; print(f"  [PASS] {name}")
     else:
-        failed += 1; print(f"  [FAIL] {name}  {extra}")
+        failed += 1
+        # A FAILING check must not take the runner down with it. `extra` is
+        # usually the offending value, and product text is full of emoji and
+        # box characters this console's cp1252 cannot encode - so the one
+        # thing that printed the reason raised UnicodeEncodeError instead,
+        # killing the process and hiding every test after it (2026-09-03,
+        # twice while building Stage E). Report what can be encoded.
+        line = f"  [FAIL] {name}  {extra}"
+        try:
+            print(line)
+        except UnicodeEncodeError:
+            enc = getattr(sys.stdout, "encoding", None) or "ascii"
+            print(line.encode(enc, "replace").decode(enc, "replace"))
 
 SAND = Path(tempfile.mkdtemp(prefix="omnius-wdtest-"))
 try:
@@ -4320,6 +4332,38 @@ try:
               "don't recognise" in out and wd.desk_config("demo-app.app")["model"] == "gpt-5",
               "never silently: a typo would surface as a failed run much later")
         check("a real model id is not warned about", "recognise" not in _model("!model claude-opus-5"))
+
+        # SET AND CUT OVER IN ONE. A model is pinned for the life of a process,
+        # so every plain !model honestly answers "next run" - which he then has
+        # to follow with !restart, twice in two minutes on 2026-09-03 (13:15,
+        # 13:17). `now` is the spelling he reached for.
+        check("plain !model says WHEN it takes effect, and how to cut over now",
+              "next run" in _model("!model sonnet medium")
+              and "!restart" in _sent[0] and "now" in _sent[0])
+        _killed, _started = [], []
+        _rks, _rsr = wd.kill_session, wd.start_run
+        try:
+            wd.kill_session = lambda s: _killed.append(s) or f"killed {s}"
+            wd.start_run = lambda s, model=None, effort=None: _started.append(s) or True
+            out = _model("!model fable medium now")
+            d = wd.desk_config("demo-app.app")
+            check("!model <m> <e> now sets the desk AND restarts it",
+                  d["model"] == "fable" and d["effort"] == "medium"
+                  and _killed == ["demo-app.app"] and _started == ["demo-app.app"])
+            check("...and says the new run is on the new setting, not 'next run'",
+                  "fresh run started" in out and "next run" not in out, out[:150])
+            _killed.clear(); _started.clear()
+            _model("!model sonnet low")
+            check("...while a plain !model still restarts NOTHING",
+                  not _killed and not _started)
+            # `now` must not be swallowed as a model name.
+            _killed.clear(); _started.clear()
+            out = _model("!model now")
+            check("a bare `!model now` cuts over without changing the setting",
+                  _killed == ["demo-app.app"]
+                  and wd.desk_config("demo-app.app")["model"] == "sonnet", out[:120])
+        finally:
+            wd.kill_session, wd.start_run = _rks, _rsr
 
         _model("!model reset")
         d = wd.desk_config("demo-app.app")

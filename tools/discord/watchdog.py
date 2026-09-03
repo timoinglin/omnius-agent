@@ -428,7 +428,8 @@ def _model_when(session):
                     "`!restart` cuts over now and keeps the conversation.")
     except Exception:                                            # noqa: BLE001
         pass
-    return "\n-# Applies to this desk's next run."
+    return ("\n-# Takes effect at this desk's next run — "
+            "`!restart` to cut over now, or add `now` to set and cut over in one.")
 
 
 def model_looks_known(name):
@@ -5122,9 +5123,18 @@ def handle_control(text, cid, target, mapping):
             api.send_message(cid, "this channel has no desk — run `!model` in a desk's own channel")
             return
         args = text.split()[1:]
+        # `!model fable medium now` = set AND cut over, in one command. Without
+        # it the honest answer to every !model is "applies to the next run",
+        # which he then has to follow with !restart - he did exactly that twice
+        # in two minutes on 2026-09-03 (13:15 and 13:17). `!restart <model>
+        # <effort>` already existed and is the same thing from the other end;
+        # this is the spelling he reached for.
+        cut_over = bool(args) and args[-1].lower() == "now"
+        if cut_over:
+            args = args[:-1]
         cur, src = desk_config(session), desk_config_source(session)
 
-        if not args:                                   # show, with provenance
+        if not args and not cut_over:                  # show, with provenance
             live = running_model(session)
             # The alias is what we asked for; this is what answered. Shown
             # whenever it adds information - "opus" does not tell you which
@@ -5149,11 +5159,11 @@ def handle_control(text, cid, target, mapping):
             lines.append(f"• model — `{cur['model']}`{alias_note}  ({src['model']})")
             lines.append(f"• effort — `{cur['effort']}`  ({src['effort']})")
             lines.append("-# `!model sonnet` · `!model sonnet low` · `!model effort low` "
-                         "· `!model reset` · `!restart sonnet low`")
+                         "· `!model sonnet low now` (set + cut over) · `!model reset`")
             api.send_message(cid, "\n".join(lines))
             return
 
-        if args[0].lower() == "reset":
+        if args and args[0].lower() == "reset":
             try:
                 fleet_set_desk(session, clear=True)
             except (OSError, ValueError) as e:
@@ -5165,7 +5175,10 @@ def handle_control(text, cid, target, mapping):
             log(f"!model reset {session}")
             return
 
-        model, effort, err = parse_model_effort(args)
+        # `!model now` on its own is a bare cut-over: keep the setting, restart
+        # on it. Falling through to parse_model_effort([]) would have been an
+        # empty change reported as a change.
+        model, effort, err = (None, None, None) if not args else parse_model_effort(args)
         if err:
             api.send_message(cid, err)
             return
@@ -5177,13 +5190,25 @@ def handle_control(text, cid, target, mapping):
             warn = (f"\n⚠ I don't recognise **{model}** — using it as given. If it is "
                     f"wrong the next run will fail; `!model reset` undoes this.")
 
-        try:
-            fleet_set_desk(session, model=model, effort=effort)
-        except (OSError, ValueError) as e:
-            api.send_message(cid, f"could not write fleet.json: {type(e).__name__}: {e}")
-            return
+        if model is not None or effort is not None:
+            try:
+                fleet_set_desk(session, model=model, effort=effort)
+            except (OSError, ValueError) as e:
+                api.send_message(cid, f"could not write fleet.json: {type(e).__name__}: {e}")
+                return
         new = desk_config(session)
-        log(f"!model {session} -> {new['model']} / {new['effort']}")
+        log(f"!model {session} -> {new['model']} / {new['effort']}"
+            + (" (cutting over now)" if cut_over else ""))
+        if cut_over:
+            result = kill_session(session)
+            ok = start_run(session)
+            api.send_message(
+                cid, f"✓ `{session}` → **{new['model']}** / **{new['effort']}**\n"
+                     + result
+                     + (" -> fresh run started on the new setting" if ok else
+                        " -> RUN COULD NOT START (see watchdog log)")
+                     + warn)
+            return
         api.send_message(cid, f"✓ `{session}` → **{new['model']}** / **{new['effort']}**"
                               f"{_model_when(session)}{warn}")
 
