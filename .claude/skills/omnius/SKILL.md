@@ -279,6 +279,10 @@ inside it the hop cap stops biting, `--loop <thread-id>` counts against the chai
 instead of this desk, and when its budget or deadline runs out you report what
 EXISTS to the desk that started the chain — that one answers him, once.
 
+**Mail can arrive WHILE you work.** A hook tells you between tool calls when
+envelopes are waiting; when you see that, re-drain before you finish. It is the
+mechanism behind "re-drain between major steps" above.
+
 Then:
 
 - **Long task? Re-drain between major steps** — run the check-in again. A queued

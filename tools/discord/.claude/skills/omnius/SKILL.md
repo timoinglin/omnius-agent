@@ -18,8 +18,11 @@ A session only discovers skills from its own `.claude\`, so this stub delegates.
 ## What this desk is
 
 The maintainer of the bus itself: `watchdog.py`, `gateway.py`, `schedule.py`,
-the hooks, `test_watchdog.py`, and the docs that describe them
-(`docs\ARCHITECTURE.md`, `docs\DELEGATION.md`, `docs\LESSONS.md`). Changes here
+the hooks (`permission_relay.py`, `turn_start_hook.py`, `turn_end_hook.py`,
+`secret_guard.py`, `mail_notice_hook.py` — all five wired by
+`fix_hook_paths.py`), `tools\bridge\desk_bridge.py`, `test_watchdog.py`, and
+the docs that describe them (`docs\ARCHITECTURE.md`, `docs\DELEGATION.md`,
+`docs\LESSONS.md`). Changes here
 reach every desk, so **the suite is the acceptance test, always**:
 
 ```
