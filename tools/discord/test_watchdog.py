@@ -7611,6 +7611,67 @@ try:
     finally:
         _dcfg.load = _dreal
 
+    print("== system limits ==")
+    # Every other alarm watches a desk, a chain or an API. None could see the
+    # thing that takes all of them down at once: the machine running out of
+    # RAM, disk, CPU or VRAM (his item 6, 2026-09-03).
+    _sl_posts = []
+    _sl_rsm, _sl_fci = api.send_message, wd.fleet_channel_id
+    _sl_real = wd.system_limits
+    try:
+        api.send_message = lambda cid, text, files=None: (
+            _sl_posts.append((cid, text)) or [{"id": "x"}])
+        wd.fleet_channel_id = lambda m, name, session=None: "C-alerts"
+        wd._sys_alerted.clear()
+        wd._sys_last_check = 0.0
+        wd.system_limits = lambda: [("ram", "**RAM 94%** - over 90%")]
+        wd.check_system_limits({})
+        check("a machine past a limit is reported to #alerts, once",
+              len(_sl_posts) == 1 and _sl_posts[-1][0] == "C-alerts"
+              and "RAM 94%" in _sl_posts[-1][1])
+        wd._sys_last_check = 0.0
+        wd.check_system_limits({})
+        check("...and NOT again while it stays over", len(_sl_posts) == 1)
+        # Recovery re-arms it, so a second message always means something changed.
+        wd.system_limits = lambda: []
+        wd._sys_last_check = 0.0
+        wd.check_system_limits({})
+        check("recovery is silent - nothing to do is not news", len(_sl_posts) == 1)
+        wd.system_limits = lambda: [("ram", "**RAM 96%** - over 90%")]
+        wd._sys_last_check = 0.0
+        wd.check_system_limits({})
+        check("...but a RELAPSE is reported again", len(_sl_posts) == 2)
+        # A machine at 91% for a day is one message, not 1,440.
+        wd.system_limits = lambda: [("ram", "x"), ("disk", "y")]
+        wd._sys_alerted.clear(); wd._sys_last_check = 0.0
+        wd.check_system_limits({})
+        check("several limits at once are ONE message, not one each",
+              len(_sl_posts) == 3)
+        wd._sys_last_check = time.time()
+        wd.system_limits = lambda: [("cpu", "z")]
+        wd.check_system_limits({})
+        check("the sampler is throttled - it does not run every 3s poll",
+              len(_sl_posts) == 3)
+    finally:
+        api.send_message, wd.fleet_channel_id = _sl_rsm, _sl_fci
+        wd.system_limits = _sl_real
+        wd._sys_alerted.clear(); wd._sys_last_check = 0.0
+    check("the system check runs in the poll loop",
+          "check_system_limits(mapping)" in _wd_src)
+    # psutil is OPTIONAL: without it this feature is off and nothing else is.
+    check("no psutil -> the check is simply off, never an error",
+          "except ImportError" in _wd_src.split("def system_limits")[1].split("def ")[0])
+    check("...and nvidia-smi is asked for only if it is installed",
+          'shutil.which("nvidia-smi")' in _wd_src
+          and "return None" in _wd_src.split("def gpu_memory_pct")[1].split("def ")[0])
+    check("a CPU SPIKE is not an alert - only sustained load is",
+          "SYS_CPU_SUSTAIN_SECONDS" in _wd_src and wd.SYS_CPU_SUSTAIN_SECONDS >= 300)
+    check("the real sampler runs without raising on this machine",
+          isinstance(wd.system_limits(), list))
+    check("the heartbeat checklist says the watchdog owns this",
+          "System limits are the watchdog's job" in
+          (real_root / "memory" / "orchestrator" / "HEARTBEAT.md").read_text(encoding="utf-8"))
+
     print("== 👀 received, ✅ answered ==")
     # His item 5, 2026-09-03. The eyes said "received" and then said nothing
     # ever again: on a long turn he could not tell an answered message from one

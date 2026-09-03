@@ -6223,6 +6223,135 @@ def sweep_gates(mapping):
     sweep_threads()
 
 
+# --- system limits: the machine itself, not the fleet on it ---------------------
+#
+# Every other alarm here watches a desk, a chain or an API. None of them can see
+# the thing that takes all of them down at once: the PC running out of RAM,
+# disk, CPU or VRAM. His item 6, 2026-09-03.
+#
+# psutil is OPTIONAL. A fresh install without it loses exactly this feature and
+# nothing else - the same rule the AI capabilities follow.
+SYS_CHECK_SECONDS = 60          # sampling interval; also the CPU sustain window's step
+SYS_RAM_PCT = 90
+SYS_DISK_FREE_GB = 5
+SYS_DISK_FREE_PCT = 5
+SYS_CPU_PCT = 95
+SYS_CPU_SUSTAIN_SECONDS = 5 * 60   # a spike is not a problem; five minutes is
+SYS_GPU_PCT = 95
+
+_sys_alerted = set()            # condition keys already reported, until they clear
+_sys_cpu_since = None           # when CPU first went over, or None
+_sys_last_check = 0.0
+
+
+def gpu_memory_pct():
+    """-> highest GPU memory use across cards, or None when there is no GPU.
+
+    nvidia-smi if it is there, nothing if it is not. No dependency, no failure
+    mode beyond "we do not know", which is the honest answer on a machine
+    without an NVIDIA card.
+    """
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return None
+    try:
+        out = subprocess.run(
+            [exe, "--query-gpu=memory.used,memory.total",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=10,
+            creationflags=NO_WINDOW).stdout      # once a minute: never a flash
+    except (OSError, subprocess.SubprocessError):
+        return None
+    best = None
+    for line in out.splitlines():
+        try:
+            used, total = (float(x) for x in line.split(",")[:2])
+        except (ValueError, IndexError):
+            continue
+        if total > 0:
+            best = max(best or 0.0, used * 100.0 / total)
+    return best
+
+
+def system_limits():
+    """-> [(key, message)] for every resource currently past its limit.
+
+    Keys are stable so the reporter can tell "still over" from "over again".
+    """
+    global _sys_cpu_since
+    try:
+        import psutil
+    except ImportError:
+        return []                    # optional dependency: the feature is simply off
+    out = []
+    try:
+        ram = psutil.virtual_memory().percent
+        if ram > SYS_RAM_PCT:
+            out.append(("ram", f"**RAM {ram:.0f}%** — over {SYS_RAM_PCT}%"))
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        # The disk the workspace is ON. A full C: matters because that is where
+        # the conversations, the logs and the state live.
+        du = psutil.disk_usage(str(ROOT))
+        free_gb = du.free / (1024 ** 3)
+        free_pct = 100.0 - du.percent
+        if free_gb < SYS_DISK_FREE_GB or free_pct < SYS_DISK_FREE_PCT:
+            out.append(("disk", f"**disk {free_gb:.1f} GB free** ({free_pct:.0f}%) "
+                                f"on {Path(str(ROOT)).drive or str(ROOT)}"))
+    except Exception:                                            # noqa: BLE001
+        pass
+    try:
+        # interval=None reads since the previous call - the poll loop IS the
+        # interval, and a blocking sample would stall the bus for a second.
+        cpu = psutil.cpu_percent(interval=None)
+        if cpu > SYS_CPU_PCT:
+            _sys_cpu_since = _sys_cpu_since or time.time()
+            held = time.time() - _sys_cpu_since
+            if held >= SYS_CPU_SUSTAIN_SECONDS:
+                out.append(("cpu", f"**CPU {cpu:.0f}%** for {int(held // 60)} min"))
+        else:
+            _sys_cpu_since = None          # a spike is not a problem
+    except Exception:                                            # noqa: BLE001
+        pass
+    gpu = gpu_memory_pct()
+    if gpu is not None and gpu > SYS_GPU_PCT:
+        out.append(("gpu", f"**GPU memory {gpu:.0f}%** — over {SYS_GPU_PCT}%"))
+    return out
+
+
+def check_system_limits(mapping):
+    """One line to #alerts per condition, and not again until it has recovered.
+
+    "Again only after recovery + relapse" is the whole design: a machine that
+    sits at 91% RAM for a day is one message, not 1,440. Recovery is what re-arms
+    it, so the second message means something changed.
+    """
+    global _sys_last_check
+    now = time.time()
+    if now - _sys_last_check < SYS_CHECK_SECONDS:
+        return
+    _sys_last_check = now
+    hits = system_limits()
+    keys = {k for k, _m in hits}
+    _sys_alerted.intersection_update(keys)      # recovered: re-arm for next time
+    fresh = [(k, m) for k, m in hits if k not in _sys_alerted]
+    if not fresh:
+        return
+    _sys_alerted.update(k for k, _m in fresh)
+    body = "\n".join(f"- {m}" for _k, m in fresh)
+    log("system limits: " + "; ".join(k for k, _m in fresh))
+    cid = fleet_channel_id(mapping, "alerts")
+    if not cid:
+        return
+    try:
+        api.send_message(cid, f"🖥️ **this machine is running out of room**\n{body}\n"
+                              f"-# `{api.MACHINE}` · I will say again only if it "
+                              f"recovers and happens once more")
+    except api.ApiError:
+        pass
+
+
 def open_workflows():
     """-> [(ledger, workflow)] for every chain with live work, newest last."""
     out = []
@@ -7092,6 +7221,7 @@ def main():
             # may replace a bridge and whether the deaf-desk alarm may advise
             # `!restart`, so it has to be current when they run.
             check_api_outages(mapping)
+            check_system_limits(mapping)
             reap_runs()
             ensure_runners()
             ensure_telegram_bridge()
