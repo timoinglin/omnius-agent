@@ -1254,6 +1254,20 @@ def ensure_trusted(folder):
         return False
 
 
+def ensure_trusted_for(session, cwd):
+    """Stamp trust on EVERY folder the CLI will look at for this desk: the
+    desk's own cwd (the one the trust dialog is actually about), the project
+    folder above it (--settings lives there) and the workspace root
+    (--add-dir). 2026-09-03: only cwd.parent was stamped, so the first spawn on
+    a never-opened component folder showed the dialog with 'No, exit'
+    preselected - and the bridge's mail nudge pressed Enter into it."""
+    folders = [ROOT] if session == "orchestrator" else [cwd, cwd.parent, ROOT]
+    ok = True
+    for f in dict.fromkeys(Path(p).resolve() for p in folders):
+        ok = ensure_trusted(f) and ok
+    return ok
+
+
 # --- headless runs --------------------------------------------------------------
 #
 # THE simplification of 2026-08-01, bought with a night of duplicate
@@ -2460,7 +2474,7 @@ def start_run(session, model=None, effort=None):
         alert_no_cli()
         return _unrunnable(session, "claude CLI not found (PATH, registry, or "
                                     "the known install locations)")
-    ensure_trusted(ROOT if session == "orchestrator" else cwd.parent)
+    ensure_trusted_for(session, cwd)
     # A fresh run on this desk means any earlier stall is over. Mechanical
     # clear - see stall_note(); nothing is left for an agent to remember.
     (PERMS / f"{session}.stalled").unlink(missing_ok=True)

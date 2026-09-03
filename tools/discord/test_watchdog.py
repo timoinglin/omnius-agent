@@ -649,6 +649,15 @@ try:
           cfg["projects"].get(key, {}).get("hasTrustDialogAccepted") is True)
     check("ensure_trusted idempotent", wd.ensure_trusted(SAND / "projects" / "demo-app"))
     check("other config keys preserved", "projects" in cfg)
+    # 2026-09-03: the desk's OWN folder must be stamped, not only its parent.
+    comp = SAND / "projects" / "demo-app" / "thing"
+    comp.mkdir(parents=True, exist_ok=True)
+    check("ensure_trusted_for stamps the component folder", wd.ensure_trusted_for("demo-app.thing", comp))
+    cfg = json.loads(wd.CLAUDE_CFG.read_text(encoding="utf-8"))
+    for name, p in (("component", comp.resolve()), ("project", comp.resolve().parent), ("root", Path(wd.ROOT).resolve())):
+        k = str(p).replace("\\", "/")
+        check(f"ensure_trusted_for trusted the {name} folder",
+              cfg["projects"].get(k, {}).get("hasTrustDialogAccepted") is True)
 
     print("== renaming a channel in Discord (pins) ==")
     # The owner asked for this on 2026-08-24: "i want to be able to change a

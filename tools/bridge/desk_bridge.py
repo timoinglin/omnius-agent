@@ -494,7 +494,11 @@ class Bridge:
         cmd = [sys.executable, str(ROOT / "tools" / "discord" / "inbox_watch.py"),
                self.session, "--once"] + (["--pid", str(pid)] if pid else [])
         try:
+            # utf-8 explicitly: the check-in prints the agent's name and emoji;
+            # under the ANSI codepage the reader thread died on byte 0x81 and
+            # the output was silently lost (2026-09-03).
             r = subprocess.run(cmd, capture_output=True, text=True, timeout=90,
+                               encoding="utf-8", errors="replace",
                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
             if r.returncode == 0:
                 log(f"desk claimed (session pid {pid})")
@@ -587,7 +591,9 @@ def main(argv=None):
         try:
             rc = b.run()
         finally:
-            log("desk closed")
+            # rc and uptime belong in the log: a desk that dies inside the boot
+            # window with rc=0 is the CLI answering a dialog, not a crash.
+            log(f"desk closed (rc={rc}, alive {int(time.time() - b.started_at)}s)")
         alive = time.time() - b.started_at
         if retry_without_continue(attempt, cmd, b.saw_continue_refusal, alive):
             # The 2026-08-18 boot loop: the CLI refused --continue (transcript

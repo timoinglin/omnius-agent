@@ -292,7 +292,7 @@ def open_desk(session, model=None, effort=None, force=False):
         return {"session": session, "spawned": False, "note": f"folder missing: {cwd}"}
     if not shutil.which("claude"):
         return {"session": session, "spawned": False, "note": "claude CLI not found on PATH"}
-    wd.ensure_trusted(wd.ROOT if session == "orchestrator" else cwd.parent)
+    wd.ensure_trusted_for(session, cwd)
     desk = wd.desk_config(session)
     model = str(model or desk["model"] or wd.DEFAULT_MODEL).strip()
     effort = str(effort or desk["effort"] or wd.DEFAULT_EFFORT).strip().lower()
