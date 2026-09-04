@@ -70,6 +70,19 @@ gets `*_selector` entries in its registry block. **Honest limit:** scripted logi
 detection on some sites — those belong in the Chrome extension (Antonio signs in by hand once, the
 session persists, the desk drives the logged-in page), where only W3 is needed.
 
+**Two-step forms** (Zoho, Google, Microsoft) put the email on page one and the password on page
+two. The tool fills the email, clicks `next_selector` (or presses Enter), waits, and only then looks
+for the password field. Before 2026-09-04 it reached page two having typed nothing and reported
+"still not signed in" — which is why a failure now also prints the final URL and what the page says.
+
+**The limit that no selector fixes: corporate SSO.** If typing the email redirects to
+`login.microsoftonline.com` or `accounts.google.com`, the site's own password is irrelevant — the
+credential is a corporate account, the second factor is usually a *push to a phone* rather than six
+digits W3 can relay, and Conditional Access commonly blocks automated browsers on principle. That
+is not a bug to work around; it is the signal to make the site a **sign-in-by-hand** site (no
+`password_env`, Chrome extension, session in the profile). Found the hard way on 2026-09-04: Zoho
+People for a tenant federated to Entra ID.
+
 **Done when:** with a valid saved session the tool reports logged-in without touching the password;
 with a fresh session it drives the login and, on a 2FA wall, blocks on W3 rather than failing.
 

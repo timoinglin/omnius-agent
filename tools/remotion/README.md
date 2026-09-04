@@ -88,6 +88,24 @@ real `pack.ps1` archive, 2026-07-25. Never vendor it, never commit it.
 
 ## Gotchas found the hard way
 
+- **The bundled ffmpeg does not start on this machine (2026-09-03).** A direct
+  `npx remotion render` dies with `FFmpeg quit with code 3236495362 while piping
+  frame 0` — that is `0xC0000142`, STATUS_DLL_INIT_FAILED, and `npx remotion
+  ffmpeg -version` prints nothing at all. Stills are unaffected (they never
+  touch ffmpeg). **Workaround: render the frames, then encode with the system
+  ffmpeg** (`ffmpeg 9.0`, on PATH via winget):
+
+  ```
+  npx remotion render <Id> out\seq --sequence --image-format png --concurrency 4
+  ffmpeg -y -framerate 30 -i "out\seq\element-%03d.png" -c:v libx264 -preset slow ^
+         -crf 16 -pix_fmt yuv420p -movflags +faststart "out\<name>.mp4"
+  ```
+
+  This also gives a genuinely silent file — no padded AAC track, so `ffprobe`
+  reports exactly `30.000000` rather than `30.05`.
+- **Run Remotion from PowerShell, not the Bash tool.** Under the Bash sandbox the
+  compositor cannot be spawned at all (`Error: spawn UNKNOWN`).
+
 - **`margin` on a flex child that is being centred only moves it half as far.**
   `justify-content: center` centres the box *including* its margin. Use
   `transform: translateY(...)` for deliberate offsets — and put the translate

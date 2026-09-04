@@ -212,6 +212,19 @@ ocfg.browser_device_id()      # "" means one browser, nothing to choose
 Empty *and* several connected is worth a message: give him the ids and tell him
 `config\omnius.ini` `[browser] device_id` settles it for good.
 
+**Chrome closed? Never run bare `chrome`.** With several profiles Chrome shows a
+picker, and a picker is a click he cannot make from a phone. Launch it on the
+configured profile instead — and only then list browsers:
+
+```
+python <root>\tools\browser\open_chrome.py                 launch (waits for the extension)
+python <root>\tools\browser\open_chrome.py --url <url>     ... straight to a page
+python <root>\tools\browser\open_chrome.py --list          profiles, and which one is configured
+```
+
+`[browser] profile_directory` decides it. `--list` saying it is EMPTY, on a
+machine with several profiles, is worth a message — not a guess.
+
 ## 5. Routines — when he asks for something recurring
 
 You create it; you do not ask permission first.

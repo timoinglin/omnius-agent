@@ -279,6 +279,7 @@ SPEC = [
     ("omnius", "omnius", "gateway", "DISCORD_GATEWAY", "1", "bool"),
     ("omnius", "backup", "folder", "OMNIUS_BACKUP_DIR", "", "str"),
     ("omnius", "browser", "device_id", "OMNIUS_BROWSER_DEVICE_ID", "", "str"),
+    ("omnius", "browser", "profile_directory", "OMNIUS_BROWSER_PROFILE_DIR", "", "str"),
     # The bus talking about itself. working_notice_minutes = how often the
     # watchdog says "still working" while a desk is provably working with his
     # mail queued behind it; 0 turns the notices off entirely.
@@ -508,7 +509,7 @@ def websites(env=None):
             "selectors": {k: str(body.get(k) or "").strip()
                           for k in ("user_selector", "pass_selector",
                                     "submit_selector", "otp_selector",
-                                    "success_selector")
+                                    "success_selector", "next_selector")
                           if str(body.get(k) or "").strip()},
         }
     return out
@@ -842,6 +843,25 @@ def browser_device_id(env=None):
     anyway.
     """
     return get(load("omnius"), "browser", "device_id", "OMNIUS_BROWSER_DEVICE_ID", "", env).strip()
+
+
+def browser_profile_directory(env=None):
+    """-> the Chrome profile directory name to launch, or "".
+
+    Chrome with several profiles and no flag shows a PICKER, and a picker is a
+    click on this machine - the same unreachable click as the device_id above
+    (2026-09-04: Chrome was closed, a desk launched it, and the run only saw
+    the site because he happened to be sitting there to click "Tu Chrome").
+
+    The value is a directory name under Chrome's User Data, not the display
+    name: "Default", "Profile 2", ... `open_chrome.py --list` prints both.
+    Empty means "launch Chrome with no profile flag", which is right only on an
+    install with a single profile.
+    """
+    return get(
+        load("omnius"), "browser", "profile_directory",
+        "OMNIUS_BROWSER_PROFILE_DIR", "", env,
+    ).strip()
 
 
 def agent_name(env=None):

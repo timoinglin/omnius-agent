@@ -164,14 +164,36 @@ def run(site_name, check_only=False, headed=False):
             fail(f"{env_key} is not set in .env - add it there, never here")
 
         u = first_visible(page, sel.get("user_selector"), USER_GUESSES)
-        pw = first_visible(page, sel.get("pass_selector"), PASS_GUESSES)
-        if not (u and pw):
+        pw = first_visible(page, sel.get("pass_selector"), PASS_GUESSES, timeout=4000)
+
+        # TWO-STEP LOGINS (Zoho, Google, Microsoft): the first page has only the
+        # email and a "Next" button; the password field does not exist yet.
+        # Filling what is there and pressing Enter walks to step two, and only
+        # then is there a password to type. Without this, weblogin reached the
+        # password page with nothing filled and reported "still not signed in"
+        # - a confusing way to say "this form has two pages" (2026-09-04, Zoho).
+        if u and not pw:
+            if user:
+                u.fill(user)
+            nxt = first_visible(page, sel.get("next_selector"), SUBMIT_GUESSES, timeout=2000)
+            if nxt:
+                nxt.click()
+            else:
+                u.press("Enter")
+            try:
+                page.wait_for_load_state("networkidle", timeout=20000)
+            except Exception:                                # noqa: BLE001
+                pass
+            pw = first_visible(page, sel.get("pass_selector"), PASS_GUESSES, timeout=10000)
+            u = None                     # already submitted; do not retype it
+
+        if not pw:
             browser.close()
             fail(f"could not find the login form on {url}. Add user_selector / "
                  f"pass_selector to [{site_name}] in config\\websites.ini")
-        if user:
+        if u and user:
             u.fill(user)
-        pw.fill(password)                       # the ONLY place the secret is used
+        pw.fill(password)                     # the ONLY place the secret is used
         del password
         btn = first_visible(page, sel.get("submit_selector"), SUBMIT_GUESSES, timeout=2000)
         if btn:
@@ -203,6 +225,20 @@ def run(site_name, check_only=False, headed=False):
                 pass
 
         if not logged_in(page, sel.get("success_selector")):
+            # "Still not signed in" alone sends the reader guessing. Say WHERE
+            # the browser ended up and what the page is showing - a wrong
+            # password, a captcha and a push-approval wall all look identical
+            # from the outside otherwise (2026-09-04).
+            try:
+                where = page.url
+                shown = " / ".join(
+                    t.strip() for t in page.locator("body").inner_text().splitlines()
+                    if t.strip()
+                )[:300]
+            except Exception:                                # noqa: BLE001
+                where, shown = "?", "?"
+            say(f"    ended at: {where}")
+            say(f"    page says: {shown}")
             browser.close()
             say(f"[X] {site_name}: still not signed in. Add success_selector to its "
                 f"block so this can tell, or the site may be refusing scripted logins "
