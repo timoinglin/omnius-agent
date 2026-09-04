@@ -6736,10 +6736,29 @@ try:
     try:
         orch = wd.desk_config("orchestrator")
         proj = wd.desk_config("demo-proj.democomp")
-        check("orchestrator does NOT bypass (keeps its rails)", orch["permissionMode"] is None)
-        # Reversed 2026-08-01: bypassPermissions HANGS an interactive spawn.
-        check("no desk bypasses - it hangs interactive spawns", proj["permissionMode"] is None)
-        check("daybook does not bypass either", wd.desk_config("daybook")["permissionMode"] is None)
+        # Two traps, one assertion each, and they pull in opposite directions.
+        #
+        # 2026-08-01: bypassPermissions HANGS an interactive spawn - it draws a
+        # confirmation screen that `-p` skips, so the desk sits idle forever.
+        # 2026-09-04: the OPPOSITE failure. permissionMode was `None` ("pass no
+        # flag"), Claude Code 2.1.261 made `auto` the default, and auto's
+        # classifier judges each command itself and IGNORES the allow-list -
+        # then blocks outright after five in a row, on a dialog no Discord
+        # reply can reach. Four days of the owner answering `ok` to a fleet
+        # whose settings files were already perfect.
+        #
+        # So the mode must be NAMED. `None` is not neutral: it delegates the
+        # decision to whatever the CLI defaults to next release.
+        _daybook = wd.desk_config("daybook")
+        _modes = {"orchestrator": orch["permissionMode"],
+                  "project": proj["permissionMode"],
+                  "daybook": _daybook["permissionMode"]}
+        check("every desk NAMES its permission mode - null inherits the CLI's default",
+              all(m for m in _modes.values()), repr(_modes))
+        check("no desk bypasses - it hangs interactive spawns",
+              all(m != "bypassPermissions" for m in _modes.values()), repr(_modes))
+        check("no desk starts in auto - its classifier overrides the allow-list",
+              all(m != "auto" for m in _modes.values()), repr(_modes))
         check("shipped defaults are opus/xhigh for every desk",
               orch["model"] == "opus" and orch["effort"] == "xhigh"
               and proj["model"] == "opus" and proj["effort"] == "xhigh")
@@ -6783,12 +6802,12 @@ try:
         try:
             cap.clear(); _real_start_run("demo-app.app")
             proj_cmd = " ".join(cap[-1]) if cap else ""
-            check("a project run carries NO --permission-mode (profile + relay are the rails)",
-                  "--permission-mode" not in proj_cmd)
+            check("a project run carries --permission-mode (never the CLI's default)",
+                  "--permission-mode" in proj_cmd and " auto" not in proj_cmd, proj_cmd)
             cap.clear(); _real_start_run("orchestrator")
             orch_cmd = " ".join(cap[-1]) if cap else ""
-            check("the orchestrator run carries NO --permission-mode",
-                  "--permission-mode" not in orch_cmd)
+            check("the orchestrator run carries it too",
+                  "--permission-mode" in orch_cmd and " auto" not in orch_cmd, orch_cmd)
         finally:
             _sp.Popen, _sh.which = _rp, _rw
             wd.RUNNING.clear()
@@ -6802,6 +6821,15 @@ try:
     src_wd = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
     check("unknown permissionMode is validated before reaching the CLI",
           "VALID_PERMISSION_MODES" in src_wd and "mode in VALID_PERMISSION_MODES" in src_wd)
+    # The 2026-09-04 hole was not the headless path - it was the other two. A
+    # desk he SITS at is launched by desk_bridge, and it passed --add-dir,
+    # --settings, --model, --effort, --continue and never the mode; fleet_ops
+    # (the /spawn-session door) had the same gap. So the desks with a human in
+    # front of them were the ones that silently drifted onto the CLI default.
+    for _rel in ("tools/bridge/desk_bridge.py", "tools/orchestrator/fleet_ops.py"):
+        _p = real_root / _rel
+        check(f"{_rel} passes --permission-mode too",
+              _p.is_file() and "--permission-mode" in _p.read_text(encoding="utf-8"))
 
     print("== reload loop regression ==")
     wd_src = (real_root / "tools" / "discord" / "watchdog.py").read_text(encoding="utf-8")
