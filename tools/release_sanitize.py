@@ -61,6 +61,12 @@ IDENTIFYING = {
     # nothing in THIS gate would have refused a real one in a doc or example.
     "github token": re.compile(r"gh[pousr]_[A-Za-z0-9]{16,}"),
     "github fine-grained pat": re.compile(r"github_pat_[A-Za-z0-9_]{20,}"),
+    # NOTE: these run against the PATH as well as the content, and a kebab-case
+    # filename can trip one by accident - "...desk-dies-on-trust-dialog.md"
+    # contains "sk-dies-on-trust-dial..." and refused a release on 2026-09-04.
+    # The fix is to rename the file, not to loosen the pattern: this list is
+    # pinned to api.redact by the suite, and a boundary added here alone would
+    # let the two drift.
     "openai/anthropic key": re.compile(r"sk-(?:proj-|ant-)?[A-Za-z0-9_-]{16,}"),
     "google api key": re.compile(r"AIza[A-Za-z0-9_-]{30,}"),
     "aws access key id": re.compile(r"AKIA[0-9A-Z]{16}"),
