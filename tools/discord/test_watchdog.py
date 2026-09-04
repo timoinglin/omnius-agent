@@ -6501,6 +6501,44 @@ try:
     wd.check_backlogs()
     check("the same envelope is never announced twice", len(sent) == 1)
 
+    # 2026-09-04: a BRIDGED envelope (source: "wl", a support desk's public
+    # community guild) names a thread full of strangers as channelId. The
+    # watchdog posted "`<desk>` is still working ... last: Bash python
+    # /w/omnius/tools/... `!stop <desk>`" under a member's post in a public
+    # server. Fleet notices never follow a bridged id.
+    _own = wd.primary_channel_id(wd.build_map(api.load_schema()), "demo-app.app") \
+        or wd.fleet_channel_id(wd.build_map(api.load_schema()), "alerts")
+    env_wl = box / "998.json"
+    env_wl.write_text(json.dumps({"id": "998", "from": "wl:stranger", "source": "wl",
+                                  "channelId": "T-public-thread", "text": "help"}),
+                      encoding="utf-8")
+    _os.utime(env_wl, (old_t, old_t))
+    sent.clear()
+    wd.check_backlogs()
+    check("a bridged envelope's notice never goes to the foreign thread",
+          sent and all(m[0] != "T-public-thread" for m in sent), str(sent))
+    check("...it goes to the desk's own fleet channel (or #alerts)",
+          sent and sent[-1][0] == _own, f"{sent[-1][0] if sent else None} != {_own}")
+    wd.RUNNING["demo-app.app"] = FakeProc()
+    sent.clear(); wd._backlog_notified.discard("demo-app.app/998"); wd._working_notified.clear()
+    _os.utime(env_wl, (_time.time() - wd.working_notice_seconds() - 10,) * 2)
+    wd.check_backlogs()
+    check("...and the working notice (the one with shell paths) stays home too",
+          sent and all(m[0] != "T-public-thread" for m in sent)
+          and any("still working" in m[1] for m in sent), str(sent))
+    wd.RUNNING.pop("demo-app.app", None)
+    check("foreign_origin: source wl is foreign, no source / discord is not",
+          wd.foreign_origin({"source": "wl"}) and not wd.foreign_origin({})
+          and not wd.foreign_origin({"source": "discord"}))
+    check("alert_channel_id never falls back onto a bridged thread",
+          wd.alert_channel_id("demo-app.app") != "T-public-thread")
+    _m = wd.build_map(api.load_schema())
+    check("fleet_only_channel: an id the map does not know is replaced by the desk's own",
+          wd.fleet_only_channel(_m, "demo-app.app", "T-public-thread") != "T-public-thread")
+    env_wl.unlink()
+    wd._backlog_notified.discard("demo-app.app/998"); wd._working_notified.clear()
+    sent.clear()
+
     # A run actively working must not be described as asleep - "will answer
     # when it wakes" next to a working run read as a broken system (2026-08-01).
     env2b = box / "997.json"

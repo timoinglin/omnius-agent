@@ -1172,6 +1172,53 @@ def fleet_channel_id(mapping, name, session=None):
     return next((c for c, t in mapping.items() if t.channel_name == name), None)
 
 
+def foreign_origin(env):
+    """True when this envelope was BRIDGED IN from somewhere that is not our bus.
+
+    2026-09-04: a project's support desk receives community messages from a
+    PUBLIC guild as envelopes with `source: "wl"` and the real thread id in
+    `channelId`. The watchdog answered its own notices to that id - "`<desk>`
+    is still working (3m) ... last: Bash python /w/omnius/tools/...", "`!stop
+    <desk>` to cancel it" - under a stranded member's post, in a server full
+    of strangers. Internal desk status, shell paths and control verbs,
+    published.
+
+    `channelId` is where a DESK answers a person; it is not where the FLEET
+    talks about itself. Anything a bridge marks with a source of its own is a
+    foreign channel, and fleet notices about it belong on our side of the wall
+    (notice_channel_id). An envelope the watchdog wrote carries no `source`.
+    """
+    src = str((env or {}).get("source") or "").strip().lower()
+    return bool(src) and src not in ("discord", "bus", "omnius")
+
+
+def fleet_only_channel(mapping, session, cid):
+    """`cid` if it is a channel of OUR guild, else the desk's own channel.
+
+    A loop opened by a support desk that bridges a public guild carries a
+    community thread as its channelId (`--channel <thread>`), so "loop used
+    its budget - write in this channel" would have gone to strangers. Same
+    rule as resolve_outbox_target: an id the map does not know is never posted
+    to. No map at all (the guild unreadable) keeps the old behaviour: better
+    one line in the wrong room than a budget that runs out in silence."""
+    cid = str(cid or "").strip()
+    if not mapping:
+        return cid or None
+    if cid in mapping:
+        return cid
+    return primary_channel_id(mapping, session)
+
+
+def notice_channel_id(session, env):
+    """Where a fleet notice ABOUT an envelope goes: its channel, unless the
+    envelope came through a bridge - then the desk's own fleet channel, or
+    #alerts. -> cid or None. Never a foreign guild (see foreign_origin)."""
+    if not foreign_origin(env):
+        return str(env.get("channelId") or "").strip() or None
+    mapping = build_map(api.load_schema())
+    return primary_channel_id(mapping, session) or fleet_channel_id(mapping, "alerts")
+
+
 def alert_channel_id(session):
     """Where a MECHANICAL alarm about this desk must land. -> cid or None.
 
@@ -1202,6 +1249,8 @@ def alert_channel_id(session):
             env = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        if foreign_origin(env):
+            continue                     # a bridged thread is not ours to alarm in
         cid = str(env.get("channelId") or "").strip() or \
             str((env.get("origin") or {}).get("channelId") or "").strip()
         if cid:
@@ -3638,8 +3687,7 @@ def fire_due_schedules(mapping=None):
                         pass
                 log(f"loop {job.get('loop')}: over budget or closed - job "
                     f"{job.get('id')} dropped, nothing fired")
-                cid = job.get("channelId") or (
-                    primary_channel_id(mapping, session) if mapping else None)
+                cid = fleet_only_channel(mapping, session, job.get("channelId"))
                 if cid:
                     try:
                         api.send_message(cid, f"⏸ loop `{job.get('loop')}` on "
@@ -3669,9 +3717,10 @@ def fire_due_schedules(mapping=None):
                         pass
                 log(f"workflow {job.get('workflow')}: over budget or closed - job "
                     f"{job.get('id')} dropped, nothing fired")
-                cid = job.get("channelId") or (
-                    (wf_led or {}).get("origin") or {}).get("channelId") or (
-                    primary_channel_id(mapping, session) if mapping else None)
+                cid = fleet_only_channel(
+                    mapping, session,
+                    job.get("channelId")
+                    or ((wf_led or {}).get("origin") or {}).get("channelId"))
                 if cid:
                     try:
                         api.send_message(
@@ -4306,8 +4355,17 @@ def check_backlogs():
                 env = json.loads(env_file.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 continue
-            cid = env.get("channelId")
+            if not env.get("channelId"):
+                continue
+            # A bridged envelope (source: "wl") names a thread in a PUBLIC
+            # guild. Notices about the fleet never go there (2026-09-04).
+            try:
+                cid = notice_channel_id(session, env)
+            except Exception as e:                                  # noqa: BLE001
+                log(f"backlog notice: no channel for {session}: {e}")
+                cid = None
             if not cid:
+                _backlog_notified.add(key)
                 continue
             if not is_human_sender(env.get("from")):
                 # Loop envelopes carry a channelId since D5, but the fleet
