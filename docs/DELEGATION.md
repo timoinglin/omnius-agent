@@ -508,10 +508,12 @@ no-envelope-no-post applies unchanged — receiving one is not permission to pos
 
 - **Desks already receive native messages; nothing needed enabling.** With no `crossSessionInbound`
   value applying, Claude Code decides per message from the two sessions' permission classes. Every
-  desk runs `defaultMode: acceptEdits` and no desk in `config\fleet.json` sets
-  `permissionMode: bypassPermissions` — and `acceptEdits` counts as *prompting*, the class that is
+  desk runs `acceptEdits` — named in `config\fleet.json` and passed as `--permission-mode` by all
+  three launch paths since 2026-09-04, not merely `defaultMode` in a settings file — and no desk
+  sets `permissionMode: bypassPermissions`. `acceptEdits` counts as *prompting*, the class that is
   **delivered**. A headless `claude -p` run binds a socket like any other session, so a running
-  desk is both listed and reachable.
+  desk is both listed and reachable. (Between 2.1.261 and that fix the desks were silently in
+  `auto`, which this paragraph never contemplated — the reason the mode is now named explicitly.)
 - **`crossSessionInbound` is deliberately NOT stamped into desk settings.** It is one of the
   security-sensitive keys with inverted precedence: from `.claude\settings.json` Claude Code honors
   only a *stricter* value on the `accept < hold < refuse` ladder, so a desk file can carry `refuse`

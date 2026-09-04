@@ -10,6 +10,18 @@
 > about, a standing authorisation in `autoMode`, and every installed skill reachable as a
 > slash command with no `config\skills.ini` needed.
 >
+> **And the MODE is named, not inherited — added 2026-09-04, because that file only decides
+> anything if the session runs in a mode that consults it.** `config\fleet.json` now sets
+> `permissionMode: "acceptEdits"` on the defaults and every role, and all three launch paths
+> pass `--permission-mode` (`watchdog.start_run`, `desk_bridge.claude_argv`,
+> `fleet_ops.open_desk`). It used to be `null` — *pass no flag* — which was fine until Claude
+> Code 2.1.261 made **`auto`** the default: the auto-mode classifier judges each command on
+> its own and **ignores the allow-list entirely**, then blocks outright after five in a row.
+> Two gates ran at once — the `PermissionRequest` hook answered *allow* from Discord and the
+> classifier asked again on a dialog no Discord reply can reach — and the owner spent four
+> days answering `ok` to a fleet whose settings files were already perfect. A desk is only as
+> permissive as the mode it starts in; `desk_audit.py` now asserts both halves.
+>
 > The deny list is `.env` (read, edit and write, at every depth a desk can sit at) plus
 > `AskUserQuestion`. None of the fine-grained denies written below (`git push`, `rm -rf`,
 > `npm publish`, `curl`, `iwr`, `taskkill`) exist in any shipped file.
