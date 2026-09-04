@@ -39,7 +39,7 @@ actually displaying when the nudge arrived:
 
 ```
 Accessing workspace:
-C:\Users\timoi\omnius\projects\sandbox\silver-android
+<root>\projects\sandbox\silver-android
 
 Quick safety check: Is this a project you created or one you trust?
 ...
@@ -68,8 +68,8 @@ But a desk's cwd is the **component folder**, and Claude Code stores trust
 the folder the CLI opens. Verified in that file, same machine, same minute:
 
 ```
-TRUSTED   C:/Users/timoi/omnius/projects/sandbox        <- what ensure_trusted() stamped
-untrusted C:/Users/timoi/omnius/projects/sandbox/silver-android   <- where the desk runs
+TRUSTED   <root>/projects/sandbox        <- what ensure_trusted() stamped
+untrusted <root>/projects/sandbox/silver-android   <- where the desk runs
 ```
 
 Existing desks are unaffected only because a human once accepted the dialog in
@@ -130,7 +130,7 @@ collecting is silently lost. Needs `encoding="utf-8", errors="replace"`.
 
 ## 7. Environment
 
-- `LENOVO`, Windows 11, Python 3.14, Claude Code at `C:\Users\timoi\.local\bin\claude.EXE`
+- `LENOVO`, Windows 11, Python 3.14, Claude Code at `%USERPROFILE%\.local\bin\claude.EXE`
 - Desk argv: `claude --add-dir <root> --settings <project>\.claude\settings.json --model opus --effort xhigh [--continue]`
 - Evidence: `state\logs\watchdog.log` and `state\logs\bridge-sandbox.silver-android.log`, 2026-09-03 13:03–13:09Z.
 
