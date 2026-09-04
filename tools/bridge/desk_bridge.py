@@ -169,15 +169,29 @@ def claude_argv(session, cwd, model=None, effort=None):
     if not exe:
         fail("claude CLI not found on PATH")
     resume_mode = "transcript"
+    perm_mode = None
     try:
         import watchdog as wd
         desk = wd.desk_config(session)
         model = model or desk.get("model")
         effort = effort or desk.get("effort")
         resume_mode = str(desk.get("resume") or "transcript").strip().lower()
+        pm = str(desk.get("permissionMode") or "").strip()
+        if pm in wd.VALID_PERMISSION_MODES:
+            perm_mode = pm
     except Exception:
         pass                                   # fleet.json must never block a desk
     argv = [exe, "--add-dir", str(ROOT)]
+    # --permission-mode: this path ignored it until 2026-09-04, and that was the
+    # whole bug. A terminal desk is the one he actually sits at, and it was the
+    # only launch path that never passed the flag - so it took Claude Code's
+    # DEFAULT mode, which 2.1.261 changed to `auto`. The auto-mode classifier
+    # then asked for confirmation on its own judgement, ignoring the allow-list,
+    # and froze the desk on a dialog no Discord reply can reach ("5 consecutive
+    # actions were blocked"). fleet.json now names the mode; all three launch
+    # paths pass it.
+    if perm_mode:
+        argv += ["--permission-mode", perm_mode]
     proj_settings = cwd.parent / ".claude" / "settings.json"
     if session != "orchestrator" and proj_settings.is_file():
         argv += ["--settings", str(proj_settings)]

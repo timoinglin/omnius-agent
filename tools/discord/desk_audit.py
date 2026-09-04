@@ -183,6 +183,32 @@ def fleet_checks():
     out.append(("a library folder cannot be run as a desk, or addressed as one",
                 "unprofiled_tool_desk" in wd
                 and wd.count("unprofiled_tool_desk(") >= 3))
+    # THE INVARIANT THIS FILE WAS MISSING ON 2026-09-04, and it printed
+    # "no prompts can hang them" while a desk sat frozen on a dialog.
+    #
+    # Every check above reads a settings FILE. None asked whether the desk is
+    # launched in a mode where that file decides anything. Claude Code 2.1.261
+    # made `auto` the default mode, fleet.json said permissionMode:null ("pass
+    # no flag"), and auto's CLASSIFIER asks on its own judgement over the top of
+    # the allow-list - then blocks outright after five in a row. The dialog has
+    # no Discord route: the PermissionRequest hook had already answered allow.
+    #
+    # So: the mode must be NAMED, must not be `auto`, and all three launch paths
+    # must pass it. A desk is only as permissive as the mode it starts in.
+    try:
+        fleet = json.loads((ROOT / "config" / "fleet.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        fleet = {}
+    modes = [(fleet.get("defaults") or {}).get("permissionMode")]
+    modes += [(v or {}).get("permissionMode") for k, v in (fleet.get("roles") or {}).items()]
+    out.append(("no desk starts in auto mode (its classifier overrides the allow-list)",
+                bool(modes) and all(m and m != "auto" for m in modes)))
+    paths = [ROOT / "tools" / "bridge" / "desk_bridge.py",
+             ROOT / "tools" / "orchestrator" / "fleet_ops.py"]
+    out.append(("every launch path passes --permission-mode, not just headless runs",
+                "--permission-mode" in wd
+                and all(p.is_file() and "--permission-mode" in p.read_text(encoding="utf-8")
+                        for p in paths)))
     return out
 
 

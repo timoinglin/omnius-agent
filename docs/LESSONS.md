@@ -101,6 +101,22 @@ short. One bullet per incident, dated.
   its SIZE is fine — those checks skip an absent file). **The suite that matters
   is the one inside the zip**, so `release.ps1` now unpacks it and runs it there
   before publishing.
+- **2026-09-04** — *"why so many fukun permissions prompts?"*, his fourth
+  complaint in four days, and every settings file was correct: the audit printed
+  18/18 green while a desk sat frozen on `Auto mode classifier requires
+  confirmation for this command. 5 consecutive actions were blocked.` **Claude
+  Code 2.1.261 made `auto` the default mode**, `fleet.json` said
+  `permissionMode: null` — "pass no flag" — and auto's classifier judges each
+  command itself, over the top of the allow-list. Two independent gates: the
+  `PermissionRequest` hook had already answered *allow* from Discord and the
+  classifier asked again, on a dialog no Discord reply can reach. Worse, the
+  terminal path (`desk_bridge`) never passed `--permission-mode` at all, so the
+  desks he actually sits at were the ones that drifted. → The mode is **named**
+  in `fleet.json` (`acceptEdits`), all three launch paths pass it, and
+  `desk_audit` now asserts it — because a desk is only as permissive as the mode
+  it starts in, and every check before this one read a settings *file* while
+  nothing asked whether that file still decided anything. **A default that
+  changes under you is not visible in your own config.**
 - **2026-08-06 / browser** — the Chrome extension refuses to act with more than
   one browser connected and demands a pick, which is a click in Chrome. His
   objection: *"how am i gonna accept if i am on mobile on discord?"* → The

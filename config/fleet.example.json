@@ -4,28 +4,29 @@
   "defaults": {
     "model": "opus",
     "effort": "xhigh",
-    "permissionMode": null,
+    "permissionMode": "acceptEdits",
+    "_why_permissionMode": "NEVER null. null means 'pass no flag', and Claude Code 2.1.261 (2026-09-04) made AUTO the default mode - so every desk silently moved onto the auto-mode CLASSIFIER, which asks for confirmation on its own judgement, ignores the allow-list, and blocks outright after five in a row. That dialog has NO Discord route: the PermissionRequest hook had already answered allow and the classifier asked again on top of it. acceptEdits is a plain mode with no classifier and no confirmation screen, so the profile in the desk settings file (bare Bash/PowerShell, every tool name) decides again and routine work stops asking.",
     "resume": "transcript",
     "window": "terminal",
     "_why_window": "Owner's model, 2026-08-03: a Discord message OPENS that desk's bridge window and it stays open, because he must be as efficient from Discord as at the keyboard - headless costs a cold boot per message (~30-45s vs ~15s warm). Boot opens NOTHING but the watchdog and daybook; at the desk he starts `claude` himself. If mail arrives for a desk where you left your own window open, the watchdog does NOT take it: it ASKS in that channel, once per message you send, and closes the window only after you reply `ok`. Silence leaves it alone and the mail keeps waiting - answering at the desk with /omnius clears it too. (Auto-closing an idle window was the 2026-08-03 policy and was retired the same day: it took a desk its owner was working in.)"
   },
   "roles": {
     "orchestrator": {
-      "permissionMode": null,
+      "permissionMode": "acceptEdits",
       "_why": "KEEPS ITS RAILS. The orchestrator can !killall, git push, pack the workspace and delete projects - its blast radius is the whole fleet, not one folder. It stays on the permission profile so anything unlisted escalates to #alerts and can be approved from Discord. Since 2026-08-19 that profile allows essentially everything (.claude\\settings.json: 60+ tools, defaultMode acceptEdits, project MCP servers trusted), so escalations are rare by design - the one standing refusal is .env, which holds the tokens.",
       "resume": "fresh",
       "_why_fresh": "Measured 2026-08-01: the orchestrator's dev transcript was 11.2 MB while the actual Discord conversation (state\\transcripts\\) was 52 KB. Every --continue run paid a ~200x context tax to answer a chat message - the owner's 'really slow'. Fresh runs read memory + the bus transcript tail instead (see /omnius). Component desks KEEP transcript resume: their in-flight build context genuinely lives there."
     },
     "project": {
-      "permissionMode": null,
+      "permissionMode": "acceptEdits",
       "_why": "DO NOT set bypassPermissions here. Proved by A/B test 2026-08-01: with it, an INTERACTIVE spawn hangs idle forever - no children, never runs /omnius, never claims - because Claude Code shows a confirmation screen that -p skips. Without it the same desk claimed in 16 seconds. Desks rely on the profile in .claude\\settings.json instead, which since 2026-08-19 allows everything except reading .env (defaultMode acceptEdits, so file edits never prompt either). Bypass would also switch the deny list OFF, taking the .env rule with it."
     },
     "daybook": {
-      "permissionMode": null,
+      "permissionMode": "acceptEdits",
       "_why": "DO NOT set bypassPermissions here. Proved by A/B test 2026-08-01: with it, an INTERACTIVE spawn hangs idle forever - no children, never runs /omnius, never claims - because Claude Code shows a confirmation screen that -p skips. Without it the same desk claimed in 16 seconds. Desks rely on the profile in .claude\\settings.json instead, which since 2026-08-19 allows everything except reading .env (defaultMode acceptEdits, so file edits never prompt either). Bypass would also switch the deny list OFF, taking the .env rule with it."
     },
     "tool": {
-      "permissionMode": null,
+      "permissionMode": "acceptEdits",
       "_why": "DO NOT set bypassPermissions here. Proved by A/B test 2026-08-01: with it, an INTERACTIVE spawn hangs idle forever - no children, never runs /omnius, never claims - because Claude Code shows a confirmation screen that -p skips. Without it the same desk claimed in 16 seconds. Desks rely on the profile in .claude\\settings.json instead, which since 2026-08-19 allows everything except reading .env (defaultMode acceptEdits, so file edits never prompt either). Bypass would also switch the deny list OFF, taking the .env rule with it."
     }
   },

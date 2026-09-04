@@ -299,6 +299,13 @@ def open_desk(session, model=None, effort=None, force=False):
     if effort not in wd.VALID_EFFORTS:
         effort = "xhigh"
     flags = f'--add-dir "{wd.ROOT}" --model {model} --effort {effort}'
+    # --permission-mode, for the reason desk_bridge.claude_argv spells out:
+    # passing no flag means Claude Code's default, and 2.1.261 made that `auto`,
+    # whose classifier asks over the top of the allow-list and freezes a desk on
+    # a dialog Discord cannot answer (2026-09-04). fleet.json names the mode.
+    pm = str(desk.get("permissionMode") or "").strip()
+    if pm in wd.VALID_PERMISSION_MODES:
+        flags += f" --permission-mode {pm}"
     proj_settings = cwd.parent / ".claude" / "settings.json"
     if session != "orchestrator" and proj_settings.is_file():
         flags += f' --settings "{proj_settings}"'
