@@ -2024,8 +2024,29 @@ def turn_hung(session):
     what, when = last_tool_activity(session)
     if not what or when is None:
         return False, "", 0.0
+    # The newest tool call in the transcript may belong to the PREVIOUS turn.
+    # 2026-09-04, four times in one morning: mail arrived, the hook stamped
+    # the new turn, and three seconds later the watchdog killed it as "hung
+    # for 96 minutes" - the 96 minutes were the gap since the LAST turn's
+    # final call, and the fresh one had not had time to make its first. Idle
+    # is measured from whichever is later: that call, or the moment this turn
+    # began. A turn that thinks for 20 minutes without one call is still hung.
+    started = turn_started_at(session)
+    if started is not None:
+        when = max(when, started)
     idle = time.time() - when
     return idle > hung_turn_seconds(), what, idle
+
+
+def turn_started_at(session):
+    """-> epoch seconds this desk's current turn began (the busy stamp's `at`),
+    or None when the stamp is missing or carries no readable time."""
+    try:
+        data = json.loads((TURNS / f"{session}.busy").read_text(encoding="utf-8"))
+        age = iso_age(data.get("at")) if isinstance(data, dict) else None
+        return None if age is None else time.time() - age
+    except (OSError, ValueError):
+        return None
 
 
 def recover_hung_turns(mapping):

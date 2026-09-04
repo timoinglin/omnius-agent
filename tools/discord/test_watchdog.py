@@ -5246,6 +5246,25 @@ try:
               f"what={_what!r}")
         check("...and the timestamp is read from the transcript, fractional seconds and all",
               int(_idle) >= wd.hung_turn_seconds() + 60)
+        # THE PREVIOUS TURN'S LAST CALL IS NOT THIS TURN'S SILENCE. 2026-09-04,
+        # four desks in one morning: mail arrived, the hook stamped a new turn,
+        # and 3 s later the watchdog restarted it as "hung for 96 minutes" -
+        # the gap since the LAST turn ended, before the fresh one could call
+        # anything. Idle starts at the stamp when the stamp is newer.
+        _now = datetime.now(timezone.utc)
+        (_ht / "h.desk.busy").write_text(json.dumps({
+            "session": "h.desk",
+            "at": (_now - timedelta(seconds=5)).strftime("%Y-%m-%dT%H:%M:%SZ")}),
+            encoding="utf-8")
+        check("a turn that began 5 s ago is NOT hung because the last turn's call is old",
+              wd.turn_hung("h.desk")[0] is False)
+        (_ht / "h.desk.busy").write_text(json.dumps({
+            "session": "h.desk",
+            "at": (_now - timedelta(seconds=wd.hung_turn_seconds() + 90)
+                   ).strftime("%Y-%m-%dT%H:%M:%SZ")}), encoding="utf-8")
+        check("...but one that began past the limit and never called a tool IS hung",
+              wd.turn_hung("h.desk")[0] is True)
+        (_ht / "h.desk.busy").write_text("{}", encoding="utf-8")
         # A QUESTION IS NOT A HANG. Restarting a desk parked on a permission ask
         # throws away the answer he is in the middle of giving.
         wd.permission_pending = lambda s: True
