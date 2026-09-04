@@ -131,6 +131,21 @@ short. One bullet per incident, dated.
   `[delegation] hung_turn_minutes` is restarted automatically, and the
   still-working notice now carries that deadline. **Recovery he has to perform
   himself is not recovery**; and a notice with no end to it teaches him to wait.
+- **2026-09-04** — four desks were restarted 2–5 seconds into a fresh turn
+  ("no tool activity for 96 minutes"). The hung-turn check measured idle from
+  the newest tool call in the transcript — which, right after a new prompt, is
+  the *previous* turn's final call. → Idle starts at the busy stamp when the
+  stamp is newer. **A remedy that fires on the wrong evidence is a new fault
+  wearing the old one's name**: the fix for "never restarted" became "restarted
+  every fresh turn" for a morning.
+- **2026-09-04** — a support desk bridging a public guild got the watchdog's
+  own notices — "still working … last: Bash python /w/omnius/tools/…", "`!stop
+  <desk>` to cancel it" — posted to the community thread in `channelId`, under
+  a stranded member's post, in a server full of strangers. → `foreign_origin()`
+  / `notice_channel_id()`: anything a bridge stamped with a source of its own is
+  a foreign channel, and fleet talk about it stays on our side of the wall.
+  **Where a desk answers a person and where the fleet talks about itself are
+  two different addresses**, even when one envelope carries both.
 - **2026-09-04** — a workflow could END three ways (budget, deadline, stall) and
   never FINISH, so a chain whose work had shipped stalled at 3 h, 6 h and 9 h
   and had to be closed by hand. → `workflow close`. **Every state a thing can
