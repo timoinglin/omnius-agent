@@ -5192,6 +5192,121 @@ try:
           "its turn stopped without finishing" in _wd_src,
           "it sent him hunting a crash that had not happened")
 
+    # == a turn that hung, and said nothing at all =============================
+    # 2026-09-04, owner: "this cannot happen, it needs to catch up on its own".
+    # A desk wrote its last tool call at 05:11 and then nothing - no error, no
+    # reply, no exit. The busy stamp stood, so every remedy stood down with it:
+    # no headless run (a live turn owns the desk), one nudge then "cooling down"
+    # forever, and "still working (30m)" with no escalation. Three messages sat
+    # unread for two hours until he restarted it by hand. turn_died covers a
+    # turn that reported its own death; this covers one that reported nothing.
+    print("== a turn that hung ==")
+    _h_t, _h_hd, _h_cf = wd.TURNS, wd.history_dir_for, wd.cwd_for
+    _h_pp, _h_ts = wd.permission_pending, wd.turn_stalled
+    _h_sa, _h_ra = wd.session_alive, wd.run_active
+    try:
+        # turn_hung goes through turn_busy(), which believes a stamp only while
+        # something alive could have written it - so the desk has to look alive.
+        wd.session_alive = lambda s: True
+        wd.run_active = lambda s: False
+        _ht = SAND / "turns-hung"; _ht.mkdir(exist_ok=True)
+        _hhist = SAND / "hist-hung"; _hhist.mkdir(exist_ok=True)
+        wd.TURNS = _ht
+        wd.history_dir_for = lambda cwd: _hhist
+        wd.cwd_for = lambda s: SAND
+        wd.permission_pending = lambda s: False
+        wd.turn_stalled = lambda s: False
+        wd._api_outage.clear()
+        _hconv = _hhist / "c.jsonl"
+
+        def _tool_at(ago):
+            """A transcript whose newest tool call is `ago` seconds old."""
+            when = datetime.now(timezone.utc) - timedelta(seconds=ago)
+            _hconv.write_text(json.dumps({
+                "type": "assistant",
+                "timestamp": when.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+                "message": {"content": [
+                    {"type": "tool_use", "name": "Bash",
+                     "input": {"command": "date '+%H:%M local'"}}]}}) + "\n",
+                encoding="utf-8")
+
+        check("no busy stamp means nothing to recover",
+              wd.turn_hung("h.desk")[0] is False)
+        (_ht / "h.desk.busy").write_text("{}", encoding="utf-8")
+        check("a busy turn with NO transcript is never called hung",
+              wd.turn_hung("h.desk")[0] is False,
+              "cannot tell is not the same as stopped - a desk is never killed on a guess")
+        _tool_at(60)
+        check("a turn that called a tool a minute ago is working",
+              wd.turn_hung("h.desk")[0] is False)
+        _tool_at(wd.hung_turn_seconds() + 120)
+        _hung, _what, _idle = wd.turn_hung("h.desk")
+        check("a busy turn with no tool call past the limit IS hung",
+              _hung is True and "Bash" in _what and _idle > wd.hung_turn_seconds(),
+              f"what={_what!r}")
+        check("...and the timestamp is read from the transcript, fractional seconds and all",
+              int(_idle) >= wd.hung_turn_seconds() + 60)
+        # A QUESTION IS NOT A HANG. Restarting a desk parked on a permission ask
+        # throws away the answer he is in the middle of giving.
+        wd.permission_pending = lambda s: True
+        check("a turn parked on a permission ask is NEVER restarted",
+              wd.turn_hung("h.desk")[0] is False)
+        wd.permission_pending = lambda s: False
+        wd._api_outage["h.desk"] = time.time()
+        check("...and neither is one waiting on a failing API",
+              wd.turn_hung("h.desk")[0] is False)
+        wd._api_outage.clear()
+        _rhts = wd.hung_turn_seconds
+        wd.hung_turn_seconds = lambda: 0
+        check("hung_turn_minutes = 0 turns the recovery off entirely",
+              wd.turn_hung("h.desk")[0] is False)
+        wd.hung_turn_seconds = _rhts
+
+        # The remedy: exactly what he had to type by hand.
+        _hkilled, _hstarted, _hsent = [], [], []
+        _rks2, _rsr2, _rsm5, _rac2 = (wd.kill_session, wd.start_run,
+                                      api.send_message, wd.alert_channel_id)
+        try:
+            wd.kill_session = lambda s: _hkilled.append(s) or f"killed {s}"
+            wd.start_run = lambda s, model=None, effort=None: _hstarted.append(s) or True
+            api.send_message = lambda cid, text, files=None: (
+                _hsent.append((cid, text)) or [{"id": "x"}])
+            wd.alert_channel_id = lambda s: "C-hung"
+            wd._hung_restarted.clear()
+            _hbox = wd.INBOX / "h.desk"
+            _hbox.mkdir(parents=True, exist_ok=True)
+            (_hbox / "1.json").write_text(json.dumps(
+                {"id": "1", "from": "owner", "channelId": "C-hung", "text": "morning"}),
+                encoding="utf-8")
+            wd.recover_hung_turns({})
+            check("a hung desk is restarted by the watchdog, not by him",
+                  _hkilled == ["h.desk"] and _hstarted == ["h.desk"])
+            check("...and ONE line says what happened and why",
+                  len(_hsent) == 1 and "restarted" in _hsent[-1][1]
+                  and "Bash" in _hsent[-1][1] and "no tool activity" in _hsent[-1][1],
+                  f"{len(_hsent)} posted")
+            check("...naming the waiting mail, which is the point of restarting",
+                  "waiting message" in _hsent[-1][1])
+            wd.recover_hung_turns({})
+            check("...and it is not restarted again on the next poll",
+                  _hkilled == ["h.desk"] and len(_hsent) == 1)
+            for _f in _hbox.glob("*.json"):
+                _f.unlink()
+        finally:
+            (wd.kill_session, wd.start_run,
+             api.send_message, wd.alert_channel_id) = _rks2, _rsr2, _rsm5, _rac2
+            wd._hung_restarted.clear()
+    finally:
+        wd.TURNS, wd.history_dir_for, wd.cwd_for = _h_t, _h_hd, _h_cf
+        wd.permission_pending, wd.turn_stalled = _h_pp, _h_ts
+        wd.session_alive, wd.run_active = _h_sa, _h_ra
+        wd._api_outage.clear()
+    check("hung-turn recovery runs in the poll loop, before the runners",
+          "recover_hung_turns(mapping)" in _wd_src)
+    check("the working notice says WHEN it will restart the desk by itself",
+          "restarting it automatically in" in _wd_src,
+          "'still working (30m)' with no end to it is what he read for two hours")
+
     # == "Omnius is typing..." while a desk works =============================
     # His ask, 2026-08-13: 👀 says received, then nothing moves for minutes and
     # a long turn is indistinguishable from a dead one. These pin the two
@@ -7031,6 +7146,39 @@ try:
           wd.workflow_of(wd._load_thread(_wtid))["status"] == "exhausted"
           and any("used its" in s[1] for s in sent),
           "; ".join(s[1][:60] for s in sent)[:200])
+    # --- workflow close: D11 had no way to say FINISHED ----------------------
+    # It shipped with three ways for a workflow to END - budget, deadline,
+    # stall - and none for the ordinary one. So a chain whose work had shipped
+    # nagged the owner at 3h, 6h and 9h, and the only cure was hand-editing the
+    # ledger (2026-09-04).
+    _wled2 = wd._load_thread(_wtid)
+    _wled2["workflow"].update({"status": "open", "runs": 1,
+                               "deadline": wd.iso_in(hours=5),
+                               "lastAt": "2000-01-01T00:00:00Z",
+                               "stalledNotifiedAt": None})
+    _wled2["closed"] = None
+    wd._save_thread(_wled2)
+    check("workflow list shows a chain that carries one",
+          sch.main(["workflow", "list"]) == 0)
+    check("workflow close wants an id", sch.main(["workflow", "close"]) == 2)
+    check("...and refuses an id that is not a chain",
+          sch.main(["workflow", "close", "t-no-such-chain"]) == 2)
+    check("workflow close marks it done, on the ledger and on the block",
+          sch.main(["workflow", "close", _wtid]) == 0
+          and wd.workflow_of(wd._load_thread(_wtid))["status"] == "done"
+          and wd._load_thread(_wtid).get("closed") == "done")
+    # Refused rather than re-closed: a second close would overwrite HOW it
+    # really ended, and "already done" is information.
+    check("...and refuses to close it twice",
+          sch.main(["workflow", "close", _wtid]) == 2)
+    # The nagging is the whole reason this verb exists.
+    sent.clear()
+    wd.check_workflow_stalls({})
+    check("a DONE workflow never stalls again - that was the 3h/6h/9h nagging",
+          sent == [], "; ".join(t[1][:50] for t in sent)[:150])
+    check("...and !status stops listing it",
+          not any(_wtid in r for r in wd.describe_open_workflows()))
+
     sch.THREADS = _real_sch_threads
     wd._thread_path(_wtid).unlink(missing_ok=True)
 

@@ -30,7 +30,7 @@ import argparse
 import json
 import re
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -64,6 +64,21 @@ def thread_workflow(tid):
     """-> the workflow block on that chain, or None."""
     wf = (load_thread(tid) or {}).get("workflow")
     return wf if isinstance(wf, dict) else None
+
+
+def save_thread(led):
+    """Write a thread ledger back. Atomic, the same idiom save_loop uses.
+
+    The ONE place this CLI writes a ledger the watchdog otherwise owns, and it
+    writes a terminal state (`closed: done`) that nothing else will overwrite -
+    the watchdog only ever moves a workflow between open, stalled and
+    exhausted, and every one of those checks steps aside once it is closed.
+    """
+    THREADS.mkdir(parents=True, exist_ok=True)
+    p = THREADS / f"{led['id']}.json"
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(led, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(p)
 
 
 def desk_cwd(session):
@@ -576,6 +591,9 @@ def main(argv):
     p = sub.add_parser("loop", help="work-loop ledgers: list them, close one")
     p.add_argument("action", choices=["list", "close"])
     p.add_argument("id", nargs="?", help="loop id (for close)")
+    p = sub.add_parser("workflow", help="D11 workflows: list them, close one")
+    p.add_argument("action", choices=["list", "close"])
+    p.add_argument("id", nargs="?", help="thread id (for close)")
     sub.add_parser("list", help="show scheduled jobs")
     p = sub.add_parser("remove", help="delete a job"); p.add_argument("id")
     p = sub.add_parser("pause", help="stop a job without losing it"); p.add_argument("id")
@@ -710,6 +728,49 @@ def main(argv):
                   f"/{_wf.get('budget')} (fires are counted at delivery)")
         for when in upcoming(job)[1:]:
             print(f"  then {when.strftime(FMT)}")
+        return 0
+
+    if a.cmd == "workflow":
+        # D11 shipped with three ways for a workflow to END - budget, deadline,
+        # stall - and no way to say it FINISHED. So a chain whose work had
+        # shipped went on nagging the owner at 3h, 6h and 9h, and the only cure
+        # was hand-editing the ledger (2026-09-04). Done is a state the fleet
+        # must be able to record for itself.
+        if a.action == "list":
+            rows = [(f.stem, thread_workflow(f.stem))
+                    for f in sorted(THREADS.glob("*.json"))] if THREADS.is_dir() else []
+            rows = [(tid, wf) for tid, wf in rows if wf]
+            if not rows:
+                print("no workflows")
+                return 0
+            for tid, wf in rows:
+                print(f"{tid:<40} {str(wf.get('status') or '?'):<10} "
+                      f"run {wf.get('runs', 0)}/{wf.get('budget', 0)}  "
+                      f"{str(wf.get('goal') or '')[:44]}")
+            return 0
+        if not a.id:
+            print("[X] workflow close wants the thread id (`workflow list` shows them)")
+            return 2
+        led = load_thread(a.id)
+        if led is None:
+            print(f"[X] no chain with id {a.id} - `workflow list` shows them")
+            return 2
+        wf = led.get("workflow")
+        if not isinstance(wf, dict):
+            print(f"[X] chain {a.id} carries no workflow - nothing to close")
+            return 2
+        # Refused rather than re-closed: "already done" is information, and a
+        # second close would overwrite how it really ended (exhausted, stalled).
+        if led.get("closed") or wf.get("status") not in (None, "open", "stalled"):
+            print(f"[X] workflow {a.id} is already {wf.get('status') or led.get('closed')}")
+            return 2
+        wf["status"] = "done"
+        wf["lastStep"] = "closed: done"
+        wf["lastAt"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        led["closed"] = "done"
+        save_thread(led)
+        print(f"closed workflow {a.id} (done) after "
+              f"{wf.get('runs', 0)}/{wf.get('budget', 0)} runs")
         return 0
 
     if a.cmd == "loop":

@@ -453,9 +453,15 @@ def iso_age(stamp):
     None means "cannot tell", and every caller treats that as "not yet", never
     as "long ago": a deadline nobody can parse must not end a chain by accident.
     """
+    raw = str(stamp or "")
+    # Ours are whole seconds; Claude Code writes fractional ones into the
+    # transcript (…T05:11:46.123Z). Reading both matters since 2026-09-04, when
+    # the hung-turn check started measuring from a transcript timestamp - a
+    # parse failure there falls back to a coarser clock, silently.
+    raw = re.sub(r"\.\d+(?=Z?$)", "", raw.strip())
     try:
         return (datetime.now(timezone.utc) - datetime.strptime(
-            str(stamp), "%Y-%m-%dT%H:%M:%SZ").replace(
+            raw, "%Y-%m-%dT%H:%M:%SZ").replace(
                 tzinfo=timezone.utc)).total_seconds()
     except (TypeError, ValueError):
         return None
@@ -1852,20 +1858,34 @@ def check_api_outage(session):
 
 
 def last_tool_use(session):
-    """-> "Read watchdog.py"-ish: the newest tool call in this desk's transcript.
+    """-> "Read watchdog.py"-ish: the newest tool call in this desk's transcript."""
+    return last_tool_activity(session)[0]
 
-    What turns "still working" into something he can judge. "3 minutes" alone
-    could be a desk thinking or a desk wedged; "3 minutes — last: Bash pytest"
-    is a turn visibly doing the thing he asked for. Best-effort by design: no
-    transcript, an unreadable one, or a turn that has not called a tool yet all
-    answer "" and the notice simply omits the detail.
+
+def last_tool_activity(session):
+    """-> (what, when) for the newest tool call. ("", None) when unknown.
+
+    `what` is what turns "still working" into something he can judge: "3
+    minutes" alone describes a desk thinking and a desk wedged equally well,
+    "3 minutes - last: Bash pytest" does not.
+
+    `when` is the epoch seconds of that call, and it is the signal
+    hung_turn_seconds() acts on. Taken from the entry's own timestamp where the
+    CLI wrote one, else the transcript's mtime - a turn that has stopped
+    calling tools has also stopped writing, so the two agree in the case that
+    matters and the fallback only loses precision.
+
+    Best-effort by design: no transcript, an unreadable one, or a turn that has
+    not called a tool yet all answer ("", None), and every caller treats that
+    as "cannot tell" rather than as "hung". A desk is never killed on a guess.
     """
     try:
         d = history_dir_for(cwd_for(session))
         files = [p for p in d.glob("*.jsonl")] if d.is_dir() else []
         if not files:
-            return ""
+            return "", None
         f = max(files, key=lambda p: p.stat().st_mtime)
+        mtime = f.stat().st_mtime
         with open(f, "rb") as fh:
             fh.seek(0, os.SEEK_END)
             fh.seek(max(0, fh.tell() - 65536))
@@ -1894,10 +1914,111 @@ def last_tool_use(session):
                 target = " ".join(target.split())
                 if target.startswith(str(ROOT)):
                     target = target[len(str(ROOT)):].lstrip("\\/")
-                return f"{name} {target}".strip()[:80] if name else ""
-        return ""
+                if not name:
+                    return "", None
+                when = iso_age(e.get("timestamp"))
+                when = (time.time() - when) if when is not None else mtime
+                return f"{name} {target}".strip()[:80], when
+        return "", None
     except (OSError, ValueError):
-        return ""
+        return "", None
+
+
+# --- the hung turn: a desk that stopped, without saying so ----------------------
+#
+# 2026-09-04, owner: *"this cannot happen, it needs to catch up on its own"*. A
+# desk's turn wrote its last tool call at 05:11 and then nothing - no error, no
+# reply, no exit. The busy stamp stood, so every remedy stood down with it: no
+# headless run (a live turn owns the desk), one bridge nudge and then "cooling
+# down" forever. The watchdog said "still working (30m)" and never escalated,
+# and three messages sat unread for two hours until he restarted it by hand.
+#
+# The gap was that "working" and "stopped" had the same evidence. `turn_died`
+# covers a turn that reported its own death; this covers one that reported
+# nothing at all. The remedy is the one he used: restart the desk.
+HUNG_TURN_DEFAULT_MINUTES = 20
+_hung_restarted = {}       # session -> when we last restarted it for this
+
+
+def hung_turn_seconds():
+    """How long a busy turn may make no tool call before it is restarted."""
+    return max(0, ocfg.get_int(OMNIUS_CFG, "delegation", "hung_turn_minutes",
+                               "OMNIUS_HUNG_TURN_MINUTES",
+                               HUNG_TURN_DEFAULT_MINUTES, env=api.ENV)) * 60
+
+
+def turn_hung(session):
+    """-> (True, what, idle_seconds) when this desk's turn has stopped moving.
+
+    Deliberately narrow, because the remedy destroys work in flight:
+
+    - the turn must be BUSY (a stamp we believe);
+    - it must have made a tool call we can date, and that call must be older
+      than hung_turn_seconds(). No transcript, no tool call, or an unreadable
+      timestamp answers "cannot tell", never "hung";
+    - a PENDING PERMISSION ASK is excluded - that desk is parked on a question,
+      which is a different state with its own handling, and restarting it would
+      throw away the answer he is about to give;
+    - an API outage is excluded for the same reason it holds every other
+      remedy: the desk is fine and the CLI is retrying.
+    """
+    if not hung_turn_seconds():
+        return False, "", 0.0
+    # turn_busy(), never the raw stamp: it validates the stamp against a live
+    # process and releases one whose turn already reported its own death. A
+    # hung turn on a session that is GONE is not a hung turn - it is litter,
+    # and the paths that clean up litter are not this one.
+    if not turn_busy(session):
+        return False, "", 0.0
+    if permission_pending(session) or turn_stalled(session) or api_outage(session):
+        return False, "", 0.0
+    what, when = last_tool_activity(session)
+    if not what or when is None:
+        return False, "", 0.0
+    idle = time.time() - when
+    return idle > hung_turn_seconds(), what, idle
+
+
+def recover_hung_turns(mapping):
+    """Restart desks whose turn has stopped, so mail flows again by itself.
+
+    Exactly what `!restart` does, which is what he had to type by hand: kill the
+    session (that clears the busy stamp, the lease and the bridge), then start a
+    fresh run. The queued envelopes are untouched and the new run drains them.
+    """
+    if not TURNS.is_dir():
+        return
+    for stamp in sorted(TURNS.glob("*.busy")):
+        session = stamp.stem
+        hung, what, idle = turn_hung(session)
+        if not hung:
+            continue
+        # One restart per hung turn, not one per poll: if the desk comes back
+        # up and hangs again that is a new stamp and a new decision, but a
+        # restart that did not take must not become a loop.
+        last = _hung_restarted.get(session)
+        if last is not None and time.time() - last < hung_turn_seconds():
+            continue
+        _hung_restarted[session] = time.time()
+        mins = int(idle // 60)
+        log(f"{session}: turn hung - no tool activity for {mins}m "
+            f"(last: {what}) - restarting it")
+        result = kill_session(session)
+        started = start_run(session)
+        n, _oldest = inbox_backlog(session)
+        cid = alert_channel_id(session)
+        if not cid:
+            continue
+        try:
+            api.send_message(
+                cid, f"🔄 restarted `{session}` — no tool activity for "
+                     f"**{mins} minutes** (last: `{what}`). "
+                     + (f"Its {n} waiting message(s) are being picked up now."
+                        if started and n else
+                        "A fresh run is picking up where it left off." if started else
+                        f"⚠️ the fresh run did NOT start — {result}"))
+        except api.ApiError:
+            pass
 
 
 def turn_busy(session):
@@ -4064,10 +4185,19 @@ def send_working_notice(cid, session, key, age, tail):
         return False
     mins = int(age // 60)
     waited = f"{mins}m" if mins else f"{int(age)}s"
-    doing = last_tool_use(session)
+    doing, when = last_tool_activity(session)
+    # Say when it stops being patient. "Still working (30m)" with no end to it
+    # is what he read for two hours on 2026-09-04 before restarting by hand;
+    # the notice should carry its own deadline so waiting is a choice.
+    deadline = ""
+    every_hung = hung_turn_seconds()
+    if every_hung and when is not None:
+        left = int((every_hung - (time.time() - when)) // 60)
+        deadline = (f" · restarting it automatically in ~{left}m if nothing moves"
+                    if left > 0 else " · restarting it automatically now")
     text = (f"⏳ `{session}` is still working ({waited}) "
             f"— not stuck, no dialog waiting."
-            + (f"\n-# last: {doing}" if doing else "")
+            + (f"\n-# last: {doing}{deadline}" if doing else "")
             + f"\n{tail}")
     if mid and prev_cid == cid:
         try:
@@ -7247,6 +7377,10 @@ def main():
             # `!restart`, so it has to be current when they run.
             check_api_outages(mapping)
             check_system_limits(mapping)
+            # AFTER the outage check, which is one of the states that excludes a
+            # desk from being called hung, and BEFORE ensure_runners, so the
+            # fresh run it starts is the one that drains the waiting mail.
+            recover_hung_turns(mapping)
             reap_runs()
             ensure_runners()
             ensure_telegram_bridge()

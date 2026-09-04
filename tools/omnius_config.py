@@ -300,6 +300,10 @@ SPEC = [
     ("omnius", "delegation", "workflow_budget", "OMNIUS_WORKFLOW_BUDGET", "25", "int"),
     ("omnius", "delegation", "workflow_deadline_hours", "OMNIUS_WORKFLOW_DEADLINE_HOURS", "24", "int"),
     ("omnius", "delegation", "workflow_stall_hours", "OMNIUS_WORKFLOW_STALL_HOURS", "3", "int"),
+    # How long a BUSY turn may make no tool call before the watchdog restarts
+    # that desk by itself. 0 turns the recovery off. A turn parked on a
+    # permission ask is excluded - that is a question, not a hang.
+    ("omnius", "delegation", "hung_turn_minutes", "OMNIUS_HUNG_TURN_MINUTES", "20", "int"),
     # Does THIS instance own the public repo? Off by default, because almost
     # every instance is somebody's install rather than the source of the
     # project. It changes one thing only: whether a desk may push. Committing

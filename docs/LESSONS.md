@@ -122,6 +122,20 @@ short. One bullet per incident, dated.
   mattered is ignored too.
 - **Loops** (docs\DELEGATION.md D5) replaced the two-continuation honor system:
   an uncounted self-addressed continuation is refused outright.
+- **2026-09-04** — *"this cannot happen, it needs to catch up on its own."* A desk
+  wrote its last tool call and then nothing: no error, no reply, no exit. The
+  busy stamp stood, so every remedy stood down with it — no headless run (a
+  live turn owns the desk), one nudge then "cooling down", and "still working
+  (30m)" that never escalated. Three messages waited two hours until he
+  restarted it by hand. → A busy turn with no tool call for
+  `[delegation] hung_turn_minutes` is restarted automatically, and the
+  still-working notice now carries that deadline. **Recovery he has to perform
+  himself is not recovery**; and a notice with no end to it teaches him to wait.
+- **2026-09-04** — a workflow could END three ways (budget, deadline, stall) and
+  never FINISH, so a chain whose work had shipped stalled at 3 h, 6 h and 9 h
+  and had to be closed by hand. → `workflow close`. **Every state a thing can
+  reach needs a way to record it**, or the fleet keeps reporting the one state
+  it can still name.
 - **2026-09-03** — Claude's API answered 529 for 85 minutes. The watchdog logged
   "turn ended in an API error" 25 times and said nothing in Discord, so the one
   fact he could not have guessed — that none of it was his fleet's fault — was

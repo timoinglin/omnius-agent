@@ -320,7 +320,9 @@ nothing is counted by honor system. The prose cap retires.
 - **The done-condition is checkable, not felt.** The loop text carries it — *"Done when
   `<command>` exits 0"* — and each fired run checks it **first**: green → `loop close <id>` + final
   report (to `--channel` if set); not green → one step of work, one re-`add`, end the turn.
-- `loop list` joins `!cron`'s read-only output; closed or week-idle ledgers are swept.
+- `loop list` joins `!cron`'s read-only output; closed or week-idle ledgers are swept. A **workflow**
+  (D11) has the same pair for the same reason — `workflow close <thread-id>` / `workflow list` —
+  because a chain that cannot be marked finished goes on reporting itself unfinished.
 
 **Done when:** the loop tests in D9 pass — including "the add past budget is refused with the
 checkpoint instruction" and "a typo cannot invent a desk".
@@ -605,6 +607,12 @@ chain holding still looked exactly like a chain thinking. A workflow whose last 
 marked `stalled`, and repeats at most every 6 h. `stalled` is a silence, not a verdict: the next
 step puts it back to `open`. The alarm is **the watchdog's own voice** — mechanical, so no
 mid-chain desk ever speaks to a human.
+
+**Finishing one.** `schedule.py workflow close <thread-id>` sets `closed: done` and
+`workflow.status: done`; `workflow list` shows every chain that carries a block. Closing is
+refused if it is already closed, because a second close would overwrite *how* it really ended.
+Until this existed a workflow could only END (budget, deadline, stall) and never FINISH, so a chain
+whose work had shipped went on stalling at 3 h, 6 h and 9 h.
 
 **Where it shows.** `!status` lists open workflows (id, goal, holder, runs/budget, last step);
 `/brief` reports them under *in flight*; `!trace <thread>` already tells the chain's story.
