@@ -6783,18 +6783,30 @@ try:
 
         # A broken config must never stop a spawn - shipped behaviour is the floor.
         wd.FLEET_CFG = SAND / "does-not-exist.json"
+        # The fallback is SAFE, not neutral: it runs when config is missing or
+        # corrupt - a fresh install before install.ps1 copies the example - and
+        # `None` there would hand the least-supervised desk on the machine to
+        # whatever the CLI defaults to that month (2026-09-04: `auto`).
         check("missing fleet.json falls back to built-in defaults",
               wd.desk_config("x.y") == {"model": "opus", "effort": "xhigh",
-                                        "permissionMode": None, "resume": "transcript",
+                                        "permissionMode": "acceptEdits",
+                                        "resume": "transcript",
                                         "window": "headless"})
         bad = SAND / "bad-fleet.json"; bad.write_text("{ not json", encoding="utf-8")
         wd.FLEET_CFG = bad
         check("corrupt fleet.json falls back instead of wedging the fleet",
               wd.desk_config("x.y")["model"] == "opus")
 
-        # Resolution is not the command line. Assert the flag actually reaches claude,
-        # and - just as important - that it does NOT reach the orchestrator.
-        wd.FLEET_CFG = real_root / "config" / "fleet.json"
+        # Resolution is not the command line. Assert the flag actually reaches
+        # claude - on every desk, the orchestrator included.
+        #
+        # Point at the file that SHIPS. config\* is gitignored, so inside the
+        # release zip `fleet.json` does not exist and this block used to measure
+        # the built-in fallback while claiming to measure the shipped config
+        # (the LESSONS.md trap: assert against what travels, never the live copy).
+        wd.FLEET_CFG = real_root / "config" / "fleet.example.json"
+        if not wd.FLEET_CFG.is_file():
+            wd.FLEET_CFG = real_root / "config" / "fleet.json"
         _rp, _rw = _sp.Popen, _sh.which
         cap = []
         _sp.Popen = lambda args, **kw: (cap.append(args), FakeProc())[1]

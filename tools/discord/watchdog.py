@@ -164,6 +164,9 @@ VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultracode")
 VALID_PERMISSION_MODES = ("acceptEdits", "auto", "bypassPermissions", "manual", "dontAsk", "plan")
 DEFAULT_MODEL = (api.ENV.get("OMNIUS_MODEL") or "opus").strip()
 DEFAULT_EFFORT = (api.ENV.get("OMNIUS_EFFORT") or "xhigh").strip().lower()
+# Never None. See desk_config() - "pass no flag" means "take the CLI's default",
+# and that default changed under the fleet on 2026-09-04.
+DEFAULT_PERMISSION_MODE = "acceptEdits"
 def _fleet_cfg():
     """config\\fleet.json, falling back to the pre-2026-08-05 root path.
 
@@ -239,8 +242,17 @@ def desk_config(session):
     desks[<id>] -> roles[<role>] -> defaults -> the constants above. A missing or
     broken fleet.json must never stop a spawn: the fallbacks are the shipped
     behaviour, and a config file that can wedge the fleet is worse than none.
+
+    The permissionMode fallback is `acceptEdits`, NOT None (2026-09-04). None
+    means "pass no flag", which hands the decision to whatever the CLI defaults
+    to - and 2.1.261 changed that to `auto`, whose classifier ignores the
+    allow-list and freezes a desk on a dialog Discord cannot answer. This
+    fallback runs exactly when config is missing or corrupt, which is a fresh
+    install before install.ps1 copies the example: the least-supervised moment
+    there is. A fallback has to be SAFE, not neutral.
     """
-    resolved = {"model": DEFAULT_MODEL, "effort": DEFAULT_EFFORT, "permissionMode": None,
+    resolved = {"model": DEFAULT_MODEL, "effort": DEFAULT_EFFORT,
+                "permissionMode": DEFAULT_PERMISSION_MODE,
                 "resume": "transcript", "window": "headless"}
     try:
         cfg = json.loads(FLEET_CFG.read_text(encoding="utf-8"))
